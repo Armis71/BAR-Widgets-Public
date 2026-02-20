@@ -118,10 +118,10 @@ local function DrawButton(x1, y1, label, enabled)
 
     if enabled then
         glColor(0, 1, 0, 1)
-        glText("ON", cx, cy - 12, 26, "oc")
+        glText("ON", cx, cy - 20, 26, "oc")
     else
         glColor(1, 0, 0, 1)
-        glText("OFF", cx, cy - 12, 26, "oc")
+        glText("OFF", cx, cy - 20, 26, "oc")
     end
 end
 
