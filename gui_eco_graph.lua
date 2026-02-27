@@ -1,19 +1,17 @@
 function widget:GetInfo()
     return {
         name      = "Eco Graph",
-        desc      = "Tweaked Wind Stats and heigh of Windbar. Matched Metal/Energy Heigh of Full and Compact mode",
+        desc      = "Top Bar widget replacement. Tracks your Metal and Energy economy in real time, helping you monitor income, storage, and usage so you can make better macro decisions.",
         author    = "Copilot + Armis71",
         date      = "2026-01-05",
-        version   = "v2.0",
+        version   = "v3.0",
         license   = "GPL v2 or later",
         layer     = -999999,
         enabled   = true,
     }
 end
 
-------------------------------------------------------------
 -- LOCAL STATE (Option A — single correct alias)
-------------------------------------------------------------
 local spGetLocalAllyTeamID    = Spring.GetLocalAllyTeamID
 local spGetMyTeamID           = Spring.GetMyTeamID
 local spGetViewGeometry       = Spring.GetViewGeometry
@@ -30,20 +28,14 @@ local spGetSpectatingState    = Spring.GetSpectatingState
 local spGetTeamUnits          = Spring.GetTeamUnits
 local spGetUnitDefID          = Spring.GetUnitDefID
 local spGetTeamAllyTeamID     = Spring.GetTeamAllyTeamID
-energyConversionPercent 	  = energyConversionPercent or 0
 
+energyConversionPercent 	  = energyConversionPercent or 0
 
 -- REQUIRED FOR COMMANDER COUNT
 local spGetTeamList           = Spring.GetTeamList
 local spGetTeamUnitDefCount   = Spring.GetTeamUnitDefCount
 local spGetTeamRulesParam     = Spring.GetTeamRulesParam
-
--- local spGetMyTeamID           = Spring.GetMyTeamID
 local spGetMyAllyTeamID       = Spring.GetMyAllyTeamID
--- local spGetTeamList           = Spring.GetTeamList
--- local spGetTeamUnitDefCount   = Spring.GetTeamUnitDefCount
--- local spGetTeamRulesParam     = Spring.GetTeamRulesParam
--- local spGetTeamInfo           = Spring.GetTeamInfo
 
 -- To refresh Smoothing stats in Spectator mode for Metal and Energy Tooltips
 local lastTeamID = Spring.GetMyTeamID()
@@ -51,7 +43,6 @@ local lastTeamID = Spring.GetMyTeamID()
 -- HistorySecond Config
 local historyButtons = {}
 local historyOptions = {20, 30, 40, 50, 60}
-
 
 -- Energy Share Button stuff
 energyShareDropdown       = energyShareDropdown or false
@@ -61,11 +52,7 @@ energySharePercent        = energySharePercent or 0
 energyConversionPercent   = energyConversionPercent or 0
 energyShareButton         = energyShareButton or {x1=0,y1=0,x2=0,y2=0}
 
-
-------------------------------------------------------------
 -- PINPOINTER TRACKING (embedded from PinPointer widget)
-------------------------------------------------------------
-
 local isPinPointerDef = {}
 local allyPinCount = {}
 local myAllyTeamID = Spring.GetLocalAllyTeamID()
@@ -152,7 +139,6 @@ function widget:GameFrame(f)
     end
 end
 
-------------------------------------------------------------
 -- COMMANDER UNIT DEF IDS (STATIC LIST)
 commanderUnitDefIDs = {}
 
@@ -169,11 +155,7 @@ add("armcom_scav")
 add("corcom_scav")
 add("legcom_scav")     -- only added if Legion is enabled
 
-
-------------------------------------------------------------
 -- CORE STATE
-------------------------------------------------------------
-
 local showWidget  = true
 local compactMode = false
 local dragLocked  = false
@@ -181,19 +163,14 @@ local dragLocked  = false
 -- Hide / Unhide system
 local fullyHidden = false   -- true = widget invisible, only unhide button shows
 
-------------------------------------------------------------
 -- STATUS SMOOTHING STATE (5-second stability window)
-------------------------------------------------------------
 local currentStatus        = "ECO STABLE"
 local pendingStatus        = nil
 local pendingStartTime     = 0
 local lastStatusChangeTime = 0
 local STATUS_HOLD_TIME     = 10  -- seconds
 
-------------------------------------------------------------
 -- GRAPH SMOOTHING STATE (EMA)
-------------------------------------------------------------
-
 local smoothMetal  = nil
 local smoothEnergy = nil
 
@@ -210,10 +187,7 @@ local smoothEnergyUsage  = nil
 local smoothEnergyCur = nil
 local smoothMetalCur  = nil
 
-------------------------------------------------------------
 -- CONFIG
-------------------------------------------------------------
-
 local cfg = {
     width  = 0.46,
     height = 0.16,
@@ -244,9 +218,7 @@ local cfg = {
     yPaddingFraction = 0.10,
 }
 
-------------------------------------------------------------
 -- STATUS COLORS
-------------------------------------------------------------
 local statusColors = {
     ["STALLING"]        = {1.0, 0.2, 0.2, 1.0},  -- red
     ["METAL STARVED"]   = {1.0, 0.5, 0.0, 1.0},  -- orange
@@ -264,7 +236,6 @@ local statusColors = {
     ["FLOATING"]        = {0.9, 0.9, 0.9, 1.0},  -- light
 }
 
-
 local lastViewedTeam  = nil
 local fadeAlpha       = 1
 local fadeStartTime   = 0
@@ -280,14 +251,10 @@ local glCreateList = gl.CreateList
 local glDeleteList = gl.DeleteList
 local glText       = gl.Text
 
-------------------------------------------------------------
 -- OPENGL BINDINGS (PATCH INSERTED HERE)
-------------------------------------------------------------
 local glGetTextWidth = gl.GetTextWidth   -- REQUIRED FIX
 
-------------------------------------------------------------
 -- WIND AVERAGE STATE (PATCH INSERTED HERE)
-------------------------------------------------------------
 local windSum     = 0
 local windSamples = 0
 
@@ -298,10 +265,8 @@ local function UpdateFade()
     end
 end
 
-------------------------------------------------------------
--- FADE-AWARE COLOR OVERRIDE
-------------------------------------------------------------
 
+-- FADE-AWARE COLOR OVERRIDE
 local _glColor = glColor
 glColor = function(r, g, b, a)
     if type(r) == "table" then
@@ -352,18 +317,15 @@ local titleSize      = 16
 local resizeHandleSize = 14
 local emptyColor     = {0.4, 0.4, 0.4, 0.9}
 
-------------------------------------------------------------
+
 -- ENERGY SHARE STATE
-------------------------------------------------------------
 local energyShareDropdown = false
 local energySharePercent  = 0   -- 0–90
 local energyShareButton   = {x1=0, y1=0, x2=0, y2=0}
 local energyShareTicks    = {10,20,30,40,50,60,70,80,90}
 
-------------------------------------------------------------
--- METAL SHARE STATE (BUTTON + DROPDOWN)
-------------------------------------------------------------
 
+-- METAL SHARE STATE (BUTTON + DROPDOWN)
 local metalSharePercent       = 0.0      -- 0.0 = off, 0.3 = 30%
 local metalShareButtonRect    = { x1 = 0, y1 = 0, x2 = 0, y2 = 0 }
 local metalShareDropdownOpen  = false
@@ -380,14 +342,10 @@ local metalShareOptions = {
     0.90,
 }
 
-
 local metalShareOptionRects   = {}      -- index → {x1,y1,x2,y2}
 
 local spGetMouseState   = Spring.GetMouseState
 local spShareResources  = Spring.ShareResources
--- local spGetTeamList     = Spring.GetTeamList
-
-
 
 local function PointInRect(mx, my, x1, y1, x2, y2)
     return mx >= x1 and mx <= x2 and my >= y1 and my <= y2
@@ -424,11 +382,7 @@ local function GetEnergyShareLabel()
 end
 
 
-
-------------------------------------------------------------
 -- TEAM VIEW HELPERS (ACTUAL VS SAFE)
-------------------------------------------------------------
-
 -- Actual engine-reported viewed team (used for detecting switches)
 local function GetActualViewedTeamID()
     return spGetLocalTeamID() or 0
@@ -457,10 +411,8 @@ local function GetSafeViewedTeamID()
     return myTeam
 end
 
-------------------------------------------------------------
--- FACTION DETECTION (COMMANDER-BASED, WORKS FOR AI & EVOLVED COMS)
-------------------------------------------------------------
 
+-- FACTION DETECTION (COMMANDER-BASED, WORKS FOR AI & EVOLVED COMS)
 local factionByTeam = {}
 
 local function DetectFaction(teamID)
@@ -495,10 +447,7 @@ local function DetectFaction(teamID)
     return "armada"
 end
 
-------------------------------------------------------------
 -- UTIL
-------------------------------------------------------------
-
 local function GetPlayerNameFromTeam(teamID)
     local players = spGetPlayerList(teamID, true)
     for _, pid in ipairs(players) do
@@ -547,15 +496,11 @@ local function FormatTime(seconds)
     return string.format("%ds", s)
 end
 
-------------------------------------------------------------
 -- SMOOTHED ECO STATUS (5-second stability window)
-------------------------------------------------------------
-
 local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, eStorage)
-    --------------------------------------------------------
+    
     -- 1. RAW STATUS DETECTION (instantaneous)
-    --------------------------------------------------------
-    local rawStatus
+        local rawStatus
 
     -- Hard failures first
     if mNet < 0 and eNet < 0 then
@@ -589,9 +534,7 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         end
     end
 
-    --------------------------------------------------------
     -- 2. STATUS SMOOTHING LOGIC (5-second hold)
-    --------------------------------------------------------
     local now = spGetTimer()
 
     -- If raw status matches current → accept immediately
@@ -620,35 +563,29 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
     return currentStatus
 end
 
-------------------------------------------------------------
 -- REPLAY-AWARE VIEWED TEAM DETECTOR (SAFE FOR LIVE GAMES)
-------------------------------------------------------------
-
 local function GetViewedTeamID()
     -- Get local player info
     local myPlayerID = Spring.GetMyPlayerID()
     local name, active, spectator, teamID = Spring.GetPlayerInfo(myPlayerID, false)
 
-    --------------------------------------------------------
+    
     -- CASE A: LIVE GAME (not spectator)
-    --------------------------------------------------------
-    if not spectator then
+        if not spectator then
         -- Must NOT reveal enemy eco
         return teamID
     end
 
-    --------------------------------------------------------
+    
     -- CASE B: REPLAY POV TEAM
-    --------------------------------------------------------
     -- In replays, the engine sets a POV team for the camera
     local _, _, _, povTeam = Spring.GetPlayerInfo(Spring.GetMyPlayerID(), false)
     if povTeam then
         return povTeam
     end
 
-    --------------------------------------------------------
+    
     -- CASE C: SPECTATOR CLICKING UNITS
-    --------------------------------------------------------
     local sel = Spring.GetSelectedUnits()
     if sel and #sel > 0 then
         local uTeam = Spring.GetUnitTeam(sel[1])
@@ -657,33 +594,25 @@ local function GetViewedTeamID()
         end
     end
 
-    --------------------------------------------------------
     -- CASE D: Fallback
-    --------------------------------------------------------
     return teamID
 end
 
-------------------------------------------------------------
 -- SAMPLE ECO
-------------------------------------------------------------
-
 local function SampleEco()
     if paused then return end
 
     local teamID = GetViewedTeamID()
     local t      = spDiffTimers(spGetTimer(), startTimer)
 
-    ------------------------------------------------------------
+    
     -- SAMPLE RATE LIMIT (~20 Hz)
-    ------------------------------------------------------------
     if lastSampleTime > 0 and (t - lastSampleTime) < (1/20) then
         return
     end
     lastSampleTime = t
 
-    ------------------------------------------------------------
     -- RAW RESOURCE PULLS
-    ------------------------------------------------------------
     local _, _, _, mInc, mExp, _, mOther = spGetTeamResources(teamID, "metal")
     local _, _, _, eInc, eExp            = spGetTeamResources(teamID, "energy")
 
@@ -693,9 +622,7 @@ local function SampleEco()
     eExp   = eExp   or 0
     mOther = mOther or 0
 
-    ------------------------------------------------------------
     -- RESET SMOOTHING WHEN SWITCHING VIEWED TEAM
-    ------------------------------------------------------------
     if teamID ~= lastTeamID then
         -- Metal breakdown smoothing
         smoothMexIncome        = nil
@@ -723,9 +650,7 @@ local function SampleEco()
         lastTeamID = teamID
     end
 
-    ------------------------------------------------------------
     -- REAL MEX INCOME (extractor-based)
-    ------------------------------------------------------------
     local mexIncomeRaw = 0
     local units = Spring.GetTeamUnits(teamID)
 
@@ -740,20 +665,14 @@ local function SampleEco()
 
     local mexIncome = mexIncomeRaw
 
-    ------------------------------------------------------------
     -- METAL: ENERGY CONVERSION INCOME
-    ------------------------------------------------------------
     local conversionIncome = WG.convMetal or 0
 
-    ------------------------------------------------------------
     -- METAL: OTHER (reclaim + share)
-    ------------------------------------------------------------
     local otherIncome = mInc - mexIncome - conversionIncome
     if otherIncome < 0 then otherIncome = 0 end
 
-    ------------------------------------------------------------
     -- SMOOTH MEX / CONVERSION / OTHER
-    ------------------------------------------------------------
     if not smoothMexIncome then smoothMexIncome = mexIncome end
     smoothMexIncome = smoothingAlpha * mexIncome + (1 - smoothingAlpha) * smoothMexIncome
 
@@ -763,10 +682,8 @@ local function SampleEco()
     if not smoothOtherIncome then smoothOtherIncome = otherIncome end
     smoothOtherIncome = smoothingAlpha * otherIncome + (1 - smoothingAlpha) * smoothOtherIncome
 
-    ------------------------------------------------------------
-    -- ENERGY INCOME BREAKDOWN (Generators + Reclaim + Share)
-    ------------------------------------------------------------
 
+    -- ENERGY INCOME BREAKDOWN (Generators + Reclaim + Share)
     -- Energy received from allies
     local shareIn = Spring.GetTeamRulesParam(teamID, "energyReceived") or 0
 
@@ -784,9 +701,7 @@ local function SampleEco()
     local reclaimEnergy = eInc - generatorEnergy - shareIn
     if reclaimEnergy < 0 then reclaimEnergy = 0 end
 
-    ------------------------------------------------------------
     -- SMOOTH ENERGY GEN / SHARE / RECLAIM
-    ------------------------------------------------------------
     if not smoothEnergyGen then smoothEnergyGen = generatorEnergy end
     smoothEnergyGen = smoothingAlpha * generatorEnergy + (1 - smoothingAlpha) * smoothEnergyGen
 
@@ -799,9 +714,7 @@ local function SampleEco()
     -- True energy income (your own total)
     rawEnergyTotal = smoothEnergyGen + smoothEnergyReclaim + smoothEnergyShare
 
-    ------------------------------------------------------------
     -- STORAGE VALUES (existing logic)
-    ------------------------------------------------------------
     local mCur, mStorage = spGetTeamResources(teamID, "metal")
     local eCur, eStorage = spGetTeamResources(teamID, "energy")
 
@@ -816,9 +729,7 @@ local function SampleEco()
     smoothEnergyCur = smoothingAlpha * eCur + (1 - smoothingAlpha) * smoothEnergyCur
     smoothMetalCur  = smoothingAlpha * mCur + (1 - smoothingAlpha) * smoothMetalCur
 
-    ------------------------------------------------------------
     -- SMOOTH ENGINE TOTALS (existing logic)
-    ------------------------------------------------------------
     if not smoothMetalIncome then
         smoothMetalIncome  = mInc
         smoothMetalUsage   = mExp
@@ -836,9 +747,7 @@ local function SampleEco()
     smoothMetal  = smoothMetalIncome  - smoothMetalUsage
     smoothEnergy = smoothEnergyIncome - smoothEnergyUsage
 
-    ------------------------------------------------------------
     -- HISTORY PUSH
-    ------------------------------------------------------------
     history.metal[#history.metal+1] = {
         t      = t,
         income = smoothMetalIncome,
@@ -853,9 +762,7 @@ local function SampleEco()
         net    = smoothEnergy,
     }
 
-    ------------------------------------------------------------
     -- HISTORY TRIM
-    ------------------------------------------------------------
     if #history.metal > historyMaxSamples  then table.remove(history.metal, 1) end
     if #history.energy > historyMaxSamples then table.remove(history.energy, 1) end
 
@@ -894,20 +801,14 @@ local function BuildEnergyTooltip()
     }, "\n")
 end
 
-------------------------------------------------------------
 -- PANEL STATS
-------------------------------------------------------------
-
 local function DrawPanelStats(label, income, usage, xCenter, yTop, incomeColor, usageColor)
     local net = income - usage
 
-    ------------------------------------------------------------
     -- ROW 1: Metal Inc / Energy Inc
-    ------------------------------------------------------------
     glColor(incomeColor)
-------------------------------------------------------------
+
 -- ROW 1: Metal Inc / Energy Inc  +  HOVER HITBOX
-------------------------------------------------------------
 local incStr = string.format("%s Inc: %.1f", label, income)
 local incW   = glGetTextWidth(incStr) * fontSize
 local incX1  = xCenter - incW * 0.5
@@ -935,9 +836,7 @@ end
 glColor(incomeColor)
 glText(incStr, xCenter, yTop, fontSize, "oc")
 
-    ------------------------------------------------------------
     -- ROW 2: Use | Net  (auto‑sizing)
-    ------------------------------------------------------------
     local rowY = yTop - 18
 
     -- Build strings
@@ -963,31 +862,23 @@ glText(incStr, xCenter, yTop, fontSize, "oc")
     local barX = leftX + useW + pad + barW * 0.5
     local netX = leftX + useW + pad + barW + pad + netW * 0.5
 
-    ------------------------------------------------------------
     -- Draw Use (left)
-    ------------------------------------------------------------
     glColor(usageColor)
     glText(useStr, useX, rowY, fontSize, "oc")
 
-    ------------------------------------------------------------
     -- Draw separator bar
-    ------------------------------------------------------------
     glColor(1, 1, 1, 0.8)
     glText("|", barX, rowY, fontSize, "oc")
 
-    ------------------------------------------------------------
     -- Draw Net (right)
-    ------------------------------------------------------------
     if net >= 0 then
         glColor(cfg.netPosColor)
     else
         glColor(cfg.netNegColor)
     end
     glText(netStr, netX, rowY, fontSize, "oc")
-	
-	    ------------------------------------------------------------
+
     -- PAUSE BUTTON (between Energy Inc and [X])
-    ------------------------------------------------------------
     if label == "Energy" then
         local pauseLabel = "[Pause]"
         local pauseSize  = 14
@@ -1012,15 +903,9 @@ glText(incStr, xCenter, yTop, fontSize, "oc")
             y2 = py + pauseSize
         }
     end
-	
-	
-	
-	
 end
 
-------------------------------------------------------------
--- GRAPH BUILDING (CLEAN, OPTION B, FULL FUNCTION)
-------------------------------------------------------------
+-- GRAPH BUILDING (CLEAN, OPTION B, FULL FUNCTION
 local function BuildGraphList()
     if compactMode then
         if graphList then glDeleteList(graphList) graphList = nil end
@@ -1041,9 +926,7 @@ local function BuildGraphList()
     local margin = cfg.innerMargin
     local mid    = x1 + w * 0.5
 
-    --------------------------------------------------------
     -- PANEL DEFINITIONS
-    --------------------------------------------------------
     local panels = {
         {
             name        = "Metal",
@@ -1066,9 +949,8 @@ local function BuildGraphList()
     if graphList then glDeleteList(graphList) end
 
     graphList = glCreateList(function()
-        --------------------------------------------------------
+        
         -- BACKGROUND + BORDER
-        --------------------------------------------------------
         glColor(cfg.bgColor)
         glRect(x1,y1,x2,y2)
 
@@ -1081,9 +963,7 @@ local function BuildGraphList()
             glVertex(x1,y2); glVertex(x1,y1)
         end)
 
-        --------------------------------------------------------
         -- PANEL LOOP
-        --------------------------------------------------------
         for _, panel in ipairs(panels) do
             local px1 = panel.x1
             local px2 = panel.x2
@@ -1092,9 +972,8 @@ local function BuildGraphList()
             local gx1 = px1 + pw * margin
             local gx2 = px2 - pw * margin
 
-            --------------------------------------------------------
+            
             -- GRAPH HEIGHT
-            --------------------------------------------------------
             local barY = y1 + (h * margin) - 5
             -- Change height size of both the Metal & Energy Storage Bars
 			local barH = 12
@@ -1139,9 +1018,8 @@ local function BuildGraphList()
             local rangeV = maxV - minV
             local rangeT = maxT - minT
 
-            --------------------------------------------------------
+            
             -- ZERO LINE
-            --------------------------------------------------------
             local zeroY = gy1 + gh * ((0 - minV) / rangeV)
             glColor(cfg.gridColor)
             glLineWidth(1.0)
@@ -1150,9 +1028,8 @@ local function BuildGraphList()
                 glVertex(gx2, zeroY)
             end)
 
-            --------------------------------------------------------
+            
             -- VERTICAL GRID
-            --------------------------------------------------------
             glColor(cfg.gridColor)
             glLineWidth(1.0)
             for j = 1, 3 do
@@ -1189,9 +1066,7 @@ local function BuildGraphList()
 			end)
 
 
-            --------------------------------------------------------
             -- METAL STORAGE BAR
-            --------------------------------------------------------
             if panel.name == "Metal" then
                 local teamID = Spring.GetMyTeamID()
                 local mCur, mStorage = spGetTeamResources(teamID, "metal")
@@ -1212,34 +1087,30 @@ local function BuildGraphList()
 				local barX    = (gx1 + gx2) * 0.5
 				local barLeft = barX - (barW * 0.5)
 
-                --------------------------------------------------------
+                
                 -- BAR BACKGROUND
-                --------------------------------------------------------
                 local r,g,b = unpack(cfg.metalIncomeColor)
                 glColor(r, g, b, 0.20)
                 glRect(barLeft, barY, barLeft + barW, barY + barH)
 
-                --------------------------------------------------------
+                
                 -- BAR FILL
-                --------------------------------------------------------
                 local fillW = barW * frac
                 if fillW > 0 then
                     glColor(r, g, b, 0.90)
                     glRect(barLeft, barY, barLeft + fillW, barY + barH)
                 end
 
-				--------------------------------------------------------
+				
 				-- WHITE TICK (Metal)
-				--------------------------------------------------------
 				if frac > 0 then
 					local curX = barLeft + fillW
 					glColor(1,1,1,1)
 					glRect(curX - 1, barY - 2, curX + 1, barY + barH + 2)
 				end
 
-				--------------------------------------------------------
+				
 				-- METAL SHARE BUTTON (RIGHT OF BAR)
-				--------------------------------------------------------
 
 				-- Build label to compute dynamic width
 				local label = GetMetalShareLabel()
@@ -1262,17 +1133,13 @@ local function BuildGraphList()
 				metalShareButtonRect.x2 = bx2
 				metalShareButtonRect.y2 = by2
 
-                --------------------------------------------------------
                 -- STORAGE TEXT
-                --------------------------------------------------------
                 local totalText = string.format("[%.1fK]", mStorage / 1000)
                 glColor(cfg.titleColor)
                 glText(totalText, barLeft + barW + 6, barY + 2, fontSize, "l")
             end
 
-            --------------------------------------------------------
             -- ENERGY STORAGE BAR
-            --------------------------------------------------------
             if panel.name == "Energy" then
                 local teamID = Spring.GetMyTeamID()
                 local eCur, eStorage = spGetTeamResources(teamID, "energy")
@@ -1292,34 +1159,26 @@ local function BuildGraphList()
 				local barX   = (gx1 + gx2) * 0.5
 				local barLeft = barX - (barW * 0.5)
 
-                --------------------------------------------------------
                 -- BAR BACKGROUND
-                --------------------------------------------------------
                 glColor(1,1,0,0.20)
                 glRect(barLeft, barY, barLeft + barW, barY + barH)
 
-                --------------------------------------------------------
+                
                 -- BAR FILL
-                --------------------------------------------------------
                 local fillW = barW * frac
                 if fillW > 0 then
                     glColor(1,1,0,0.90)
                     glRect(barLeft, barY, barLeft + fillW, barY + barH)
                 end
 
-                --------------------------------------------------------
                 -- WHITE TICK
-                --------------------------------------------------------
                 if frac > 0 then
                     local curX = barLeft + fillW
                     glColor(1,1,1,1)
                     glRect(curX - 1, barY - 2, curX + 1, barY + barH + 2)
                 end
 
-
-				--------------------------------------------------------
 				-- ENERGY SHARE BUTTON (LEFT OF BAR, same style as Metal)
-				--------------------------------------------------------
 				local label = GetEnergyShareLabel()
 				local labelWidth = glGetTextWidth(label) * fontSize
 
@@ -1340,9 +1199,7 @@ local function BuildGraphList()
 				energyShareButton.x2 = bx2
 				energyShareButton.y2 = by2
 
-------------------------------------------------------------
 -- HISTORY SECONDS SELECTOR (Full View, Compact Style)
-------------------------------------------------------------
 do
     -- Compute center
     local centerX = box.x1 + (box.x2 - box.x1) * 0.5
@@ -1378,32 +1235,26 @@ do
         glText(sec.."s", x1 + w*0.5, hy1 + 3, 11, "oc")
     end
 end
-
-                --------------------------------------------------------
+     
                 -- STORAGE TEXT
-                --------------------------------------------------------
                 local totalText = string.format("[%.1fK]", eStorage / 1000)
                 glColor(cfg.titleColor)
                 glText(totalText, barLeft + barW + 6, barY + 2, fontSize, "l")
             end
 
-            --------------------------------------------------------
             -- TOP-CENTER PANEL STATS
-            --------------------------------------------------------
             local teamID = Spring.GetMyTeamID()
-local inc, exp
-if panel.name == "Metal" then
-    inc = smoothMetalIncome or 0
-    exp = smoothMetalUsage or 0
-else
-    inc = smoothEnergyIncome or 0
-    exp = smoothEnergyUsage or 0
-end
+            local inc, exp
+            if panel.name == "Metal" then
+                inc = smoothMetalIncome or 0
+                exp = smoothMetalUsage or 0
+            else
+                inc = smoothEnergyIncome or 0
+                exp = smoothEnergyUsage or 0
+            end
 
             local statsX = (gx1 + gx2) * 0.5
             local statsY = box.y2 - 20
-
--- history selector was here 11:52am
 
 
             DrawPanelStats(
@@ -1415,72 +1266,49 @@ end
                 panel.incomeColor,
                 panel.usageColor
             )
-			
-			-- if panel.name == "Metal" then
-				-- local incStr = string.format("%s Inc: %.1f", panel.name, inc)
-				-- local incW   = glGetTextWidth(incStr) * fontSize
-				-- local incX1  = statsX - incW * 0.5
-				-- local incX2  = statsX + incW * 0.5
-				-- local incY1  = statsY - fontSize
-				-- local incY2  = statsY + fontSize
-
-				-- metalIncRect = {
-					-- x1 = incX1,
-					-- y1 = incY1,
-					-- x2 = incX2,
-					-- y2 = incY2,
-				-- }
-			-- end	
         end
-
-
-
-        --------------------------------------------------------
+    
         -- RESIZE HANDLE
-        --------------------------------------------------------
         glColor(1,1,1,0.8)
         glRect(box.x2 - resizeHandleSize, box.y1,
                box.x2, box.y1 + resizeHandleSize)
     end)
 	
-	-- METAL INC HITBOX (outside glList)
-do
-    local metalPanel = panels[1]
-    if metalPanel then
-        local px1 = metalPanel.x1
-        local px2 = metalPanel.x2
-        local pw  = px2 - px1
+        -- METAL INC HITBOX (outside glList)
+    do
+        local metalPanel = panels[1]
+        if metalPanel then
+            local px1 = metalPanel.x1
+            local px2 = metalPanel.x2
+            local pw  = px2 - px1
 
-        local gx1 = px1 + pw * margin
-        local gx2 = px2 - pw * margin
+            local gx1 = px1 + pw * margin
+            local gx2 = px2 - pw * margin
 
-        local statsX = (gx1 + gx2) * 0.5
-        local statsY = box.y2 - 20
-        local inc    = smoothMetalIncome or 0
+            local statsX = (gx1 + gx2) * 0.5
+            local statsY = box.y2 - 20
+            local inc    = smoothMetalIncome or 0
 
-        local incStr = string.format("Metal Inc: %.1f", inc)
-        local incW   = glGetTextWidth(incStr) * fontSize
+            local incStr = string.format("Metal Inc: %.1f", inc)
+            local incW   = glGetTextWidth(incStr) * fontSize
 
-        metalIncRect = {
-            x1 = statsX - incW * 0.5,
-            y1 = statsY - fontSize,
-            x2 = statsX + incW * 0.5,
-            y2 = statsY + fontSize,
-        }
+            metalIncRect = {
+                x1 = statsX - incW * 0.5,
+                y1 = statsY - fontSize,
+                x2 = statsX + incW * 0.5,
+                y2 = statsY + fontSize,
+            }
+        end
     end
-end
-	
-end
-
+    end
 
 -- COMPLETE, TOP-BAR-ACCURATE, KILL-EVENT-SAFE VERSION
 local function GetCommanderCounts()
     local myTeamID     = spGetMyTeamID()
     local myAllyTeamID = spGetMyAllyTeamID()
 
-    ------------------------------------------------------------
+    
     -- 1. Rebuild ally team list (Top Bar does this)
-    ------------------------------------------------------------
     local myAllyTeams = {}
     local allTeams = spGetTeamList() or {}
 
@@ -1491,9 +1319,7 @@ local function GetCommanderCounts()
         end
     end
 
-    ------------------------------------------------------------
     -- 2. Count ALLY commanders (local scan)
-    ------------------------------------------------------------
     local ally = 0
     for _, teamID in ipairs(myAllyTeams) do
         for _, defID in ipairs(commanderUnitDefIDs) do
@@ -1501,15 +1327,11 @@ local function GetCommanderCounts()
         end
     end
 
-    ------------------------------------------------------------
     -- 3. Enemy count from synced gadget (always correct)
-    ------------------------------------------------------------
     local enemy = spGetTeamRulesParam(myTeamID, "enemyComCount")
 
-    ------------------------------------------------------------
     -- 4. Fallback for spectators / replays / AI kill events
     --    (Top Bar does this — full unit scan)
-    ------------------------------------------------------------
     if ally == 0 then
         local units = Spring.GetAllUnits()
         for _, unitID in ipairs(units) do
@@ -1527,9 +1349,7 @@ local function GetCommanderCounts()
         end
     end
 
-    ------------------------------------------------------------
     -- 5. Enemy fallback (rare, but Top Bar includes it)
-    ------------------------------------------------------------
     if enemy == nil then
         enemy = 0
         for _, teamID in ipairs(allTeams) do
@@ -1545,20 +1365,15 @@ local function GetCommanderCounts()
     return ally, enemy
 end
 
-------------------------------------------------------------
+
 -- COMMANDER COUNT CACHE + GAMEFRAME BINDING
-------------------------------------------------------------
 local commanderC1, commanderC2 = 0, 0
 local spGetGameFrame = Spring.GetGameFrame
-
 local historyCache = {}   -- teamID → {metal={}, energy={}}
 
-------------------------------------------------------------
--- UPDATED GAMEFRAME (SAFE, LOW-MEMORY)
-------------------------------------------------------------
-function widget:GameFrame()
 
--- Spring.Echo("myTeamID=", myTeamID, "myAllyTeamID=", myAllyTeamID, "spec=", spec)
+-- UPDATED GAMEFRAME (SAFE, LOW-MEMORY)
+function widget:GameFrame()
 
     if not showWidget then return end
 
@@ -1616,17 +1431,14 @@ local function GetMetalShareLabel()
     return string.format("[Sharing: %d%%, -%d metal]", pct, shareAmount)
 end
 
-------------------------------------------------------------
+
 -- UPDATED DRAW OVERLAY (USES CACHED COMMANDER COUNTS)
-------------------------------------------------------------
 local function DrawOverlay()
     local teamID     = Spring.GetMyTeamID()
     local playerName = GetPlayerNameFromTeam(teamID)
     local faction    = DetectFaction(teamID)
 
-    --------------------------------------------------------
     -- SYNC SHARE SETTINGS WITH ENGINE (METAL + ENERGY)
-    --------------------------------------------------------
     local engineMetalShare  = Spring.GetTeamRulesParam(teamID, "teamShareMetal")
     local engineEnergyShare = Spring.GetTeamRulesParam(teamID, "teamShareEnergy")
 
@@ -1638,10 +1450,7 @@ local function DrawOverlay()
         energySharePercent = engineEnergyShare
     end
 
-
-    --------------------------------------------------------
     -- RESOURCE DATA
-    --------------------------------------------------------
     local mCur, _, _, mInc, mExp = spGetTeamResources(teamID, "metal")
     local eCur, _, _, eInc, eExp = spGetTeamResources(teamID, "energy")
 
@@ -1665,9 +1474,7 @@ local function DrawOverlay()
         mStorage, eStorage
     )
 
-    --------------------------------------------------------
     -- HEADER + STATUS
-    --------------------------------------------------------
     local centerX = (box.x1 + box.x2) * 0.5
 
     glColor(cfg.titleColor)
@@ -1685,24 +1492,19 @@ local function DrawOverlay()
         centerX + 35, box.y2 - 20, fontSize + 4, "oc")
 
 
-------------------------------------------------------------
--- CLOSE BUTTON GEOMETRY (needed for Pause midpoint)
-------------------------------------------------------------
-local hideLabel = "[X]"
-local hideSize  = 14
-local hideWidth = glGetTextWidth(hideLabel) * hideSize
-local hx1       = box.x2 - hideWidth - 6
-local hy1       = box.y2 - 20
+    -- CLOSE BUTTON GEOMETRY (needed for Pause midpoint)
+    local hideLabel = "[X]"
+    local hideSize  = 14
+    local hideWidth = glGetTextWidth(hideLabel) * hideSize
+    local hx1       = box.x2 - hideWidth - 6
+    local hy1       = box.y2 - 20
 
-------------------------------------------------------------
 -- DRAW CLOSE BUTTON
-------------------------------------------------------------
 glColor(cfg.titleColor)
 glText(hideLabel, hx1, hy1, hideSize, "o")
- 
---------------------------------------------------------
+
 -- WIND METER (with independent Y‑controls)
---------------------------------------------------------
+
 if windSum == nil then windSum = 0 end
 if windSamples == nil then windSamples = 0 end
 
@@ -1725,23 +1527,17 @@ local barH    = 12
 local windX   = centerX + 30
 local barLeft = windX - (barW * 0.5)
 
---------------------------------------------------------
 -- INDEPENDENT Y‑CONTROLS
---------------------------------------------------------
 local barY   = box.y2 - 70     -- move ONLY the bar
 local statsY = barY + 15       -- move Cur Avg / Max
 local curY   = barY - 15       -- move Cur:
 local titleY = barY + 32       -- move "Wind"
 
---------------------------------------------------------
 -- WIND TITLE
---------------------------------------------------------
 glColor(cfg.titleColor)
 glText("Wind", windX, titleY, fontSize, "oc")
 
---------------------------------------------------------
 -- AVG / CUR / MAX (single centered line)
---------------------------------------------------------
 local spacing = 20
 
 local textAvg = string.format("Avg: %.1f", currentAvgWind)
@@ -1782,39 +1578,26 @@ glText(textCur, curX, statsY, fontSize, "oc")
 glColor(cfg.titleColor)
 glText(textMax, maxX, statsY, fontSize, "oc")
 
---[[ --------------------------------------------------------
--- CURRENT WIND (Cur:)
---------------------------------------------------------
-glColor(cfg.titleColor)
-glText(string.format("Current: %.1f", curWind), windX - 8, curY, fontSize, "oc")
- ]]
---------------------------------------------------------
+
 -- WIND BAR BACKGROUND
---------------------------------------------------------
 glColor(0.6, 0.8, 1.0, 0.20)
 glRect(barLeft, barY, barLeft + barW, barY + barH)
 
---------------------------------------------------------
 -- WIND BAR FILL
---------------------------------------------------------
 local fillW = barW * windFrac
 if fillW > 0 then
     glColor(0.3, 0.6, 1.0, 0.90)
     glRect(barLeft, barY, barLeft + fillW, barY + barH)
 end
 
---------------------------------------------------------
 -- WHITE TICK
---------------------------------------------------------
 if curWind > 0 then
     local curX = barLeft + fillW
     glColor(1, 1, 1, 1.0)
     glRect(curX - 1, barY - 2, curX + 1, barY + barH + 2)
 end
 
---------------------------------------------------------
 -- COMMANDERS + TIDAL
---------------------------------------------------------
 local c1, c2 = commanderC1, commanderC2
 local tidal  = Game.tidal or 0
 
@@ -1824,9 +1607,6 @@ local baseY = box.y2 - 32
 -- Moving Commanders and Tidals left or right from center
 local commandersCenterX = (box.x1 + centerX + 320) * 0.5
 local tidalCenterX      = (centerX + box.x2 - 235) * 0.5
-
-
-
 local coldColor = {0.2, 1.0, 0.2, 1.0}
 local warmColor = {1.0, 0.35, 0.2, 1.0}
 
@@ -1849,9 +1629,7 @@ glText("Tidal:", tidalCenterX, baseY + 12, fontSize, "oc")
 glText(string.format("%.1f", tidal), tidalCenterX, baseY, fontSize, "oc")
 
 
---------------------------------------------------------
 -- CURRENT METAL AVAILABLE (large font, above share button)
---------------------------------------------------------
 do
     local teamID = Spring.GetMyTeamID()
     local mCur = select(1, Spring.GetTeamResources(teamID, "metal")) or 0
@@ -1874,9 +1652,8 @@ do
     end
 end
 
-    --------------------------------------------------------
+    
     -- METAL SHARE BUTTON + DROPDOWN
-    --------------------------------------------------------
     local bx1 = metalShareButtonRect.x1
     local by1 = metalShareButtonRect.y1
     local bx2 = metalShareButtonRect.x2
@@ -1901,8 +1678,6 @@ end
             glVertex(bx2, by2); glVertex(bx1, by2)
             glVertex(bx1, by2); glVertex(bx1, by1)
         end)
-
-
 
 local label = GetMetalShareLabel()   -- ← REQUIRED FIX
 
@@ -1946,11 +1721,8 @@ if isHover and not metalShareDropdownOpen then
     glText(tip1, tipX + tw * 0.5, tipY + th - fontSize - pad, fontSize, "oc")
     glText(tip2, tipX + tw * 0.5, tipY + pad, fontSize, "oc")
 end
-
-
-        --------------------------------------------------------
+  
         -- DROPDOWN OPTIONS
-        --------------------------------------------------------
         if metalShareDropdownOpen then
             metalShareOptionRects = {}
 
@@ -2014,9 +1786,7 @@ end
         end
     end
 
---------------------------------------------------------
 -- CURRENT ENERGY AVAILABLE (large font, above share button)
---------------------------------------------------------
 do
     local teamID = Spring.GetMyTeamID()
     local eCur = select(1, Spring.GetTeamResources(teamID, "energy")) or 0
@@ -2038,10 +1808,7 @@ do
     end
 end
 
-    --------------------------------------------------------
     -- ENERGY SHARE BUTTON + TOOLTIP + DROPDOWN
-    --------------------------------------------------------
-
     do
         local ex1 = energyShareButton.x1
         local ey1 = energyShareButton.y1
@@ -2051,30 +1818,29 @@ end
         if ex1 and ey1 and ex2 and ey2 and ex1 ~= ex2 and ey1 ~= ey2 then
             local mx, my = spGetMouseState()
 
-local isHover = PointInRect(mx, my, ex1, ey1, ex2, ey2)
+    local isHover = PointInRect(mx, my, ex1, ey1, ex2, ey2)
 
-if isHover then
-    glColor(1, 1, 1, 0.20)
-else
-    glColor(1.0, 1.0, 0.0, 0.20)  -- Energy themed
-end
-glRect(ex1, ey1, ex2, ey2)
+    if isHover then
+        glColor(1, 1, 1, 0.20)
+    else
+        glColor(1.0, 1.0, 0.0, 0.20)  -- Energy themed
+    end
+    glRect(ex1, ey1, ex2, ey2)
 
-glColor(1, 1, 1, 0.35)
-glLineWidth(1.0)
-glBeginEnd(GL_LINES, function()
-    glVertex(ex1, ey1); glVertex(ex2, ey1)
-    glVertex(ex2, ey1); glVertex(ex2, ey2)
-    glVertex(ex2, ey2); glVertex(ex1, ey2)
-    glVertex(ex1, ey2); glVertex(ex1, ey1)
-end)
+    glColor(1, 1, 1, 0.35)
+    glLineWidth(1.0)
+    glBeginEnd(GL_LINES, function()
+        glVertex(ex1, ey1); glVertex(ex2, ey1)
+        glVertex(ex2, ey1); glVertex(ex2, ey2)
+        glVertex(ex2, ey2); glVertex(ex1, ey2)
+        glVertex(ex1, ey2); glVertex(ex1, ey1)
+    end)
 
-            --------------------------------------------------------
-            -- ENERGY SHARE LABEL WITH BRACKETS
-            --------------------------------------------------------
-local label = GetEnergyShareLabel()
-glColor(cfg.titleColor)
-glText(label, (ex1 + ex2) * 0.5, (ey1 + ey2) * 0.5 - 7, fontSize, "oc")
+    
+    -- ENERGY SHARE LABEL WITH BRACKETS
+    local label = GetEnergyShareLabel()
+    glColor(cfg.titleColor)
+    glText(label, (ex1 + ex2) * 0.5, (ey1 + ey2) * 0.5 - 7, fontSize, "oc")
 
            if isHover and not energyShareDropdown then
     -- Tooltip text (2 lines)
@@ -2111,18 +1877,16 @@ glText(label, (ex1 + ex2) * 0.5, (ey1 + ey2) * 0.5 - 7, fontSize, "oc")
     glText(tip1, tipX + tw * 0.5, tipY + th - fontSize - pad, fontSize, "oc")
     glText(tip2, tipX + tw * 0.5, tipY + pad, fontSize, "oc")
 end
-
-            --------------------------------------------------------
+     
             -- ENERGY SHARE DROPDOWN (Disable, 90 → 10)
-            --------------------------------------------------------
             if energyShareDropdown then
                 energyShareOptionRects = {}
 
                 local optionHeight = (ey2 - ey1)
                 local gap = 2
 
-local openUp = false
-local totalHeight = (#energyShareOptions) * (optionHeight + gap)
+                local openUp = false
+                local totalHeight = (#energyShareOptions) * (optionHeight + gap)
 
 				-- If dropdown would go off-screen at the bottom, flip upward
 				if ey1 - totalHeight < 0 then
@@ -2178,9 +1942,7 @@ local totalHeight = (#energyShareOptions) * (optionHeight + gap)
         end
     end
 
-    --------------------------------------------------------
     -- AUTO-SHARE METAL (KEEP THRESHOLD)
-    --------------------------------------------------------
     if metalShareEnabled and metalSharePercent > 0 then
         local myTeam    = Spring.GetMyTeamID()
         local myAlly    = spGetLocalAllyTeamID()
@@ -2219,10 +1981,7 @@ local totalHeight = (#energyShareOptions) * (optionHeight + gap)
         end
     end
 	
-	
---------------------------------------------------------
 -- AUTO-SHARE ENERGY (KEEP THRESHOLD, MATCHES METAL)
---------------------------------------------------------
 do
     local sharePct = energySharePercent or 0
     -- Spring.Echo("[ECO] EnergyShare: sharePct=", sharePct)
@@ -2276,13 +2035,9 @@ do
     end
 end
 	
-	
 end
 
-------------------------------------------------------------
 -- DRAW OVERLAY (COMPACT MODE)
-------------------------------------------------------------
-
 local function DrawCompactOverlay()
     local teamID     = Spring.GetMyTeamID()
     local playerName = GetPlayerNameFromTeam(teamID)
@@ -2336,9 +2091,7 @@ local function DrawCompactOverlay()
 	glText(playerName, box.x1 + 6, box.y2 - 40, fontSize + 4, "o")
 
 
-------------------------------------------------------------
 -- METAL / ENERGY STATS (match Full Mode layout)
-------------------------------------------------------------
 local teamID = Spring.GetMyTeamID()
 -- Panel centers (mirror Full View layout)
 local mid = (box.x1 + box.x2) * 0.5
@@ -2385,9 +2138,7 @@ DrawPanelStats(
         centerX + 35, box.y2 - 20, fontSize + 4, "oc")
 
 
-------------------------------------------------------------
 -- COMMANDERS ONLY (same column, resize‑safe)
-------------------------------------------------------------
 do
     local c1, c2 = commanderC1, commanderC2
 
@@ -2421,9 +2172,7 @@ do
     glText(string.format("%d", c2), commandersX + offset, countY, fontSize + 7, "oc")
 end
 			
-------------------------------------------------------------
 -- METAL INCOME/USAGE GRAPH (Compact Mode, full auto-scaling)
-------------------------------------------------------------
 do
     local data = history.metal
     if #data < 2 then return end
@@ -2431,35 +2180,29 @@ do
     -- Compute center
     local centerX = box.x1 + (box.x2 - box.x1) * 0.5
 
-    --------------------------------------------------------
     -- AUTO-SCALING GEOMETRY (Option A + full vertical stretch)
-    --------------------------------------------------------
 
     -- Horizontal: 3% outer margin, 1% center gap
     local gx1 = box.x1 + (box.x2 - box.x1) * 0.03
 	-- Moves right side of metal dual line to the left
     local gx2 = centerX - (box.x2 - box.x1) * 0.07
 
--- Vertical: stretch from top of storage bar to just below Net: line
-local storageBarTop = box.y1 + 30
-local graphTopLimit = box.y2 - 40   -- leave 60px buffer below Net: line     -- was 60
+    -- Vertical: stretch from top of storage bar to just below Net: line
+    local storageBarTop = box.y1 + 30
+    local graphTopLimit = box.y2 - 40   -- leave 60px buffer below Net: line     -- was 60
 
-local gy1 = storageBarTop
-local gy2 = graphTopLimit
+    local gy1 = storageBarTop
+    local gy2 = graphTopLimit
 
-local gw  = gx2 - gx1
-local gh  = gy2 - gy1
+    local gw  = gx2 - gx1
+    local gh  = gy2 - gy1
 
-
-    --------------------------------------------------------
     -- BACKGROUND
-    --------------------------------------------------------
     glColor(0, 0, 0, 0.25)
     glRect(gx1, gy1, gx2, gy2)
 
-    --------------------------------------------------------
+
     -- SCALE VALUES (same as Full View)
-    --------------------------------------------------------
     local maxT = data[#data].t
     local minT = maxT - cfg.historySeconds
 
@@ -2484,9 +2227,7 @@ local gh  = gy2 - gy1
     local rangeV = maxV - minV
     local rangeT = cfg.historySeconds
 
-    --------------------------------------------------------
     -- ZERO LINE
-    --------------------------------------------------------
     local zeroY = gy1 + gh * ((0 - minV) / rangeV)
     glColor(cfg.gridColor)
     glLineWidth(1.0)
@@ -2495,9 +2236,7 @@ local gh  = gy2 - gy1
         glVertex(gx2, zeroY)
     end)
 
-    --------------------------------------------------------
     -- INCOME CURVE
-    --------------------------------------------------------
     glColor(cfg.metalIncomeColor)
     glLineWidth(2.0)
     glBeginEnd(GL_LINE_STRIP, function()
@@ -2509,9 +2248,8 @@ local gh  = gy2 - gy1
         end
     end)
 
-    --------------------------------------------------------
+
     -- USAGE CURVE
-    --------------------------------------------------------
     glColor(cfg.metalUsageColor)
     glLineWidth(2.0)
     glBeginEnd(GL_LINE_STRIP, function()
@@ -2523,16 +2261,11 @@ local gh  = gy2 - gy1
         end
     end)
 
-    --------------------------------------------------------
     -- EXPOSE BOTTOM FOR STORAGE BAR
-    --------------------------------------------------------
     compactGraphBottom = gy1
 end
 
-
-------------------------------------------------------------
 -- HISTORY SECONDS SELECTOR (Compact Mode, right side)
-------------------------------------------------------------
 do
     local hx1 = centerX + 220
     local hx2 = box.x2 - 10
@@ -2567,11 +2300,7 @@ do
 
 end
 
-
-
-------------------------------------------------------------
 -- ENERGY INCOME/USAGE GRAPH (Compact Mode, full auto-scaling)
-------------------------------------------------------------
 do
     local data = history.energy
     if #data < 2 then return end
@@ -2579,9 +2308,8 @@ do
     -- Compute center
     local centerX = box.x1 + (box.x2 - box.x1) * 0.5
 
-    --------------------------------------------------------
+    
     -- AUTO-SCALING GEOMETRY (Option A + full vertical stretch)
-    --------------------------------------------------------
 
     -- Horizontal: 1% gap from center, 3% margin from right
     local gx1 = centerX + (box.x2 - box.x1) * 0.12
@@ -2597,15 +2325,11 @@ do
     local gw  = gx2 - gx1
     local gh  = gy2 - gy1
 
-    --------------------------------------------------------
     -- BACKGROUND
-    --------------------------------------------------------
     glColor(0, 0, 0, 0.25)
     glRect(gx1, gy1, gx2, gy2)
 
-    --------------------------------------------------------
     -- SCALE VALUES (same as Full View)
-    --------------------------------------------------------
     local maxT = data[#data].t
     local minT = maxT - cfg.historySeconds
 
@@ -2630,9 +2354,7 @@ do
     local rangeV = maxV - minV
     local rangeT = cfg.historySeconds
 
-    --------------------------------------------------------
     -- ZERO LINE
-    --------------------------------------------------------
     local zeroY = gy1 + gh * ((0 - minV) / rangeV)
     glColor(cfg.gridColor)
     glLineWidth(1.0)
@@ -2641,9 +2363,7 @@ do
         glVertex(gx2, zeroY)
     end)
 
-    --------------------------------------------------------
     -- INCOME CURVE
-    --------------------------------------------------------
     glColor(cfg.energyIncomeColor)
     glLineWidth(2.0)
     glBeginEnd(GL_LINE_STRIP, function()
@@ -2655,9 +2375,7 @@ do
         end
     end)
 
-    --------------------------------------------------------
     -- USAGE CURVE
-    --------------------------------------------------------
     glColor(cfg.energyUsageColor)
     glLineWidth(2.0)
     glBeginEnd(GL_LINE_STRIP, function()
@@ -2669,23 +2387,12 @@ do
         end
     end)
 
-    --------------------------------------------------------
     -- EXPOSE BOTTOM FOR FUTURE ELEMENTS
-    --------------------------------------------------------
     compactEnergyGraphBottom = gy1
 end
 
-
-
-
-
-------------------------------------------------------------
 -- METAL STORAGE BAR (Compact Mode, bottom-anchored, layered)
-------------------------------------------------------------
 do
-    -- Geometry
-    -- local barX1 = box.x1 + 12
-    -- local barX2 = centerX - 20
 	-- This controls left and right length of bar nudge left or right
 	local barX1 = box.x1 + 150
     local barX2 = centerX - 240
@@ -2720,14 +2427,11 @@ local text = string.format("[%.1fK]", max/1000)
 
 local textY = box.y1 + 8   -- EXACT same Y as PP: No
 --glText(text, barX2 + 10, textY, fontSize - 1, "or")
-glText(text, barX2 + 45, textY, fontSize, "or")
+glText(text, barX2 + 60, textY, fontSize, "or")
 
 end
 
-
-------------------------------------------------------------
 -- ENERGY STORAGE BAR (Compact Mode, bottom‑anchored, mirrored)
-------------------------------------------------------------
 do
     -- Values
     local cur   = eCur or 0
@@ -2749,32 +2453,25 @@ do
     local barY1 = box.y1 + 5
     local barY2 = barY1 + barH
 
-    --------------------------------------------------------
     -- BAR BACKGROUND (Full View yellow tint)
-    --------------------------------------------------------
     glColor(1, 1, 0, 0.20)
     glRect(barX1, barY1, barX2, barY2)
 
-    --------------------------------------------------------
+    
     -- BAR FILL (Full View bright yellow)
-    --------------------------------------------------------
     local fillX = barX1 + frac * (barX2 - barX1)
     if frac > 0 then
         glColor(1, 1, 0, 0.90)
         glRect(barX1, barY1, fillX, barY2)
     end
 
-    --------------------------------------------------------
     -- WHITE TICK (current energy)
-    --------------------------------------------------------
     if frac > 0 then
         glColor(1, 1, 1, 1)
         glRect(fillX - 1, barY1 - 2, fillX + 1, barY2 + 2)
     end
 
-    --------------------------------------------------------
     -- STORAGE TOTAL TEXT (mirrors Metal side)
-    --------------------------------------------------------
     glColor(1, 1, 1, 1)
     local text = string.format("[%.1fK]", max / 1000)
 
@@ -2785,10 +2482,7 @@ do
     glText(text, barX2 + 55, textY, fontSize, "or")
 end
 
-
-------------------------------------------------------------
 -- BIG METAL AVAILABLE (Compact Mode, Full View style)
-------------------------------------------------------------
 do
     local myTeamID = Spring.GetMyTeamID()
     if myTeamID then
@@ -2814,9 +2508,7 @@ do
     end
 end
 
-------------------------------------------------------------
 -- BIG ENERGY AVAILABLE (Compact Mode, bottom-aligned)
-------------------------------------------------------------
 do
     local myTeamID = Spring.GetMyTeamID()
     if myTeamID then
@@ -2844,9 +2536,7 @@ do
     end
 end
 
-------------------------------------------------------------
 -- TIDAL ONLY (auto‑centered between Status and Energy Inc)
-------------------------------------------------------------
 do
     local tidal = Game.tidal or 0
 
@@ -2863,35 +2553,31 @@ do
     glText(string.format("%.1f", tidal), tidalX, tidalValueY, fontSize, "oc")
 end
 
-
-
-
 -- GAME SPEED + PINPOINTER (Compact Mode, lower-left corner)
 do
     local px = box.x1 + 8
     local py = box.y1 + 8
 
-    --------------------------------------------------------
+    
     -- Sp: (game speed)
-    --------------------------------------------------------
+    
     local speed = Spring.GetGameSpeed() or 1
     local spText = string.format("Sp: %.1f", speed)
 
     glColor(1, 1, 1, 1)
     glText(spText, px, py + 16, 14, "o")
 
-    --------------------------------------------------------
+    
     -- PP: (pinpointer)
-    --------------------------------------------------------
+    
     local count = allyPinCount[myAllyTeamID] or 0
     local has = (count > 0)
     local ppText = has and string.format("PP: Yes(%d)", count) or "PP: None"
 
     glText(ppText, px, py, 14, "o")
 
-    --------------------------------------------------------
+    
     -- Hover rect (covers BOTH Sp: and PP:)
-    --------------------------------------------------------
     ppRect = {
         x1 = px - 4,
         y1 = py - 4,
@@ -2899,59 +2585,49 @@ do
         y2 = py + 36,   -- covers Sp: and PP:
     }
 end
-
-
-				  	
+	  	
     glColor(1,1,1,0.8)
     glRect(box.x2 - resizeHandleSize, box.y1,
            box.x2, box.y1 + resizeHandleSize)         
 		   
-		   
+    -- WIND METER (copied from Full View)
+    if windSum == nil then windSum = 0 end
+    if windSamples == nil then windSamples = 0 end
 
-		   
---------------------------------------------------------
--- WIND METER (copied from Full View)
---------------------------------------------------------
+    local _, _, _, strength = Spring.GetWind()
 
+    local minW    = Game.windMin or 0
+    local maxWind = Game.windMax or 1
 
-if windSum == nil then windSum = 0 end
-if windSamples == nil then windSamples = 0 end
+    -- Spring.Echo("Compact Wind:", strength, minW, maxWind)
 
-local _, _, _, strength = Spring.GetWind()
+    local curWind = math.min(maxWind, math.max(minW, strength))
+    local safeWind = curWind
+    windSum = windSum + safeWind
 
-local minW    = Game.windMin or 0
-local maxWind = Game.windMax or 1
+    windSamples = windSamples + 1
+    local currentAvgWind = windSum / math.max(windSamples, 1)
 
--- Spring.Echo("Compact Wind:", strength, minW, maxWind)
+    local windFrac = math.max(0, math.min(1, curWind / maxWind))
 
-local curWind = math.min(maxWind, math.max(minW, strength))
-local safeWind = curWind
-windSum = windSum + safeWind
+    local barW    = 140
+    local barH    = 12
+    local centerX = (box.x1 + box.x2) * 0.5
+    local windX   = centerX + 30
+    local barLeft = windX - (barW * 0.5)
 
-windSamples = windSamples + 1
-local currentAvgWind = windSum / math.max(windSamples, 1)
-
-local windFrac = math.max(0, math.min(1, curWind / maxWind))
-
-local barW    = 140
-local barH    = 12
-local centerX = (box.x1 + box.x2) * 0.5
-local windX   = centerX + 30
-local barLeft = windX - (barW * 0.5)
-
--- Independent Y-controls
-local barY   = box.y2 - 70
-local statsY = barY + 15
-local curY   = barY - 15
-local titleY = barY + 32
+    -- Independent Y-controls
+    local barY   = box.y2 - 70
+    local statsY = barY + 15
+    local curY   = barY - 15
+    local titleY = barY + 32
 
 -- Title
 glColor(cfg.titleColor)
 glText("Wind", windX, titleY, fontSize, "oc")
 
---------------------------------------------------------
+
 -- AVG / CUR / MAX (single centered line)
---------------------------------------------------------
 local spacing = 20
 
 local textAvg = string.format("Avg: %.1f", currentAvgWind)
@@ -2997,9 +2673,6 @@ glText(textCur, curX, statsY, fontSize, "oc")
 glColor(cfg.titleColor)
 glText(textMax, maxX, statsY, fontSize, "oc")
 
-
-
-
 glText(textMax, maxX, statsY, fontSize, "oc")
 
 
@@ -3021,23 +2694,17 @@ if curWind > 0 then
     glRect(curX - 1, barY - 2, curX + 1, barY + barH + 2)
 end
 
-		   
-		 
 end
 
-------------------------------------------------------------
 -- WIDGET CALLINS
-------------------------------------------------------------
-
 function widget:ViewResize()
     UpdateViewGeometry()
 end
 
 function widget:Initialize()
 
-    ------------------------------------------------------------
+    
     -- AUTO‑SELECT COMPACT MODE BASED ON GAME CONTEXT
-    ------------------------------------------------------------
     local isReplay = Spring.IsReplay()
     local isSpectator = Spring.GetSpectatingState()
 
@@ -3047,21 +2714,15 @@ function widget:Initialize()
         compactMode = false     -- live player
     end
 
-    ------------------------------------------------------------
     -- Team + ally tracking for commander logic
-    ------------------------------------------------------------
 	myAllyTeamID = Spring.GetLocalAllyTeamID()
     myAllyTeam = Spring.GetLocalAllyTeamID()   -- FIXED
 
-    ------------------------------------------------------------
     -- Reset commander counters
-    ------------------------------------------------------------
     commanderC1 = 0   -- my allyteam
     commanderC2 = 0   -- enemy allyteams
 
-    ------------------------------------------------------------
     -- Scan all existing units for commanders (correct BAR signature)
-    ------------------------------------------------------------
     local units = Spring.GetAllUnits()
     for _, unitID in ipairs(units) do
         local unitDefID = Spring.GetUnitDefID(unitID)
@@ -3085,14 +2746,10 @@ function widget:Initialize()
         end
     end
 
-    ------------------------------------------------------------
     -- Initialize geometry (vsx/vsy + box coords)
-    ------------------------------------------------------------
     UpdateViewGeometry()
 
-    ------------------------------------------------------------
     -- Load saved BAR config (position + size)
-    ------------------------------------------------------------
     local savedX = Spring.GetConfigFloat("eco_graph_x", cfg.anchorX)
     local savedY = Spring.GetConfigFloat("eco_graph_y", cfg.anchorY)
     local savedW = Spring.GetConfigFloat("eco_graph_w", cfg.width)
@@ -3103,9 +2760,8 @@ function widget:Initialize()
     cfg.width   = savedW
     cfg.height  = savedH
 
-    ------------------------------------------------------------
-    -- ⭐ FIRST TIME EVER: place Eco Graph upper‑center
-    ------------------------------------------------------------
+    -- FIRST TIME EVER: place Eco Graph upper‑center
+    
     -- Detect first-time by checking if user never saved a position
     local hasSavedPos = Spring.GetConfigFloat("eco_graph_x", nil, false)
 
@@ -3117,7 +2773,6 @@ function widget:Initialize()
         cfg.anchorY = 0.75
     end
 
-
     -- Recompute box from cfg
     local w = vsx * cfg.width
     local h = vsy * cfg.height
@@ -3127,18 +2782,15 @@ function widget:Initialize()
     box.x2 = box.x1 + w
     box.y2 = box.y1 + h
 
-    ------------------------------------------------------------
+    
     -- Build initial graph list
-    ------------------------------------------------------------
     if graphList then
         glDeleteList(graphList)
     end
     graphList = nil
 end
 
-    ------------------------------------------------------------
     -- Load saved position (if any)
-    ------------------------------------------------------------
     if WG and WG.EcoGraphPos then
         box.x1 = WG.EcoGraphPos.x1
         box.y1 = WG.EcoGraphPos.y1
@@ -3146,9 +2798,7 @@ end
         box.y2 = WG.EcoGraphPos.y2
     end
 
-    ------------------------------------------------------------
     -- Build initial graph list
-    ------------------------------------------------------------
     if graphList then
         glDeleteList(graphList)
     end
@@ -3158,17 +2808,11 @@ function widget:Shutdown()
     if graphList then glDeleteList(graphList) end
 end
 
-------------------------------------------------------------
 -- GAMEFRAME (PLAYER SWITCH + FADE + HISTORY RESET)
-------------------------------------------------------------
 
 local historyCache = {}   -- teamID → {metal={}, energy={}}
 
-
-------------------------------------------------------------
--- FLOATING UNHIDE BUTTON
-------------------------------------------------------------
-
+-- FLOATING UNHIDE BUTTO
 local function DrawUnhideButton()
     local label    = "[Unhide Eco Graph]"
     local fontSize = 16
@@ -3244,19 +2888,11 @@ end
     end
 end
 
-------------------------------------------------------------
 -- DRAW SCREEN (FINAL, BAR-SAFE)
-------------------------------------------------------------
 function widget:DrawScreen()
 
-
--- if metalIncRect then
-    -- Spring.Echo("MetalIncRect alive")
--- end
-
-    ------------------------------------------------------------
+    
     -- BAR-SAFE DISABLE HANDLING
-    ------------------------------------------------------------
     if fullyHidden then
         DrawUnhideButton()
         return
@@ -3272,9 +2908,8 @@ function widget:DrawScreen()
         if graphList then glCallList(graphList) end
         DrawOverlay()
 
---------------------------------------------------------
+
 -- PINPOINTER STATUS + GAME SPEED (lower-left corner)
---------------------------------------------------------
 do
     local count = allyPinCount[myAllyTeamID] or 0
     local has = (count > 0)
@@ -3303,9 +2938,7 @@ do
 	}
 end
 
---------------------------------------------------------
 -- PINPOINTER TOOLTIP
---------------------------------------------------------
 do
     local mx, my = Spring.GetMouseState()
     if ppRect and mx >= ppRect.x1 and mx <= ppRect.x2 and my >= ppRect.y1 and my <= ppRect.y2 then
@@ -3344,9 +2977,7 @@ do
 end
 
 
---------------------------------------------------------
 -- METAL INC TOOLTIP (50% wider, tight vertical spacing)
---------------------------------------------------------
 do
     if metalIncRect then
         local mx, my = Spring.GetMouseState()
@@ -3425,10 +3056,7 @@ do
     end
 end
 
-
---------------------------------------------------------
 -- ENERGY INC TOOLTIP (Bold labels + aligned values)
---------------------------------------------------------
 do
     if energyIncRect then
         local mx, my = Spring.GetMouseState()
@@ -3500,12 +3128,8 @@ do
         end
     end
 end
-
-
-
-        --------------------------------------------------------
+ 
         -- DROPDOWN + HIDE BUTTON
-        --------------------------------------------------------
         if metalShareDropdownOpen then
             DrawMetalShareDropdown()
         end
@@ -3514,10 +3138,7 @@ end
     end
 end
 
-
-------------------------------------------------------------
 -- METAL INC TOOLTIP
-------------------------------------------------------------
 do
     if metalIncRect then
         local mx, my = Spring.GetMouseState()
@@ -3559,11 +3180,7 @@ do
     end
 end
 
-
-------------------------------------------------------------
 -- HELPERS FOR HIDE / UNHIDE SYSTEM
-------------------------------------------------------------
-
 local function PointInUnhideButton(mx, my)
     local label    = "[Unhide Eco Graph]"
     local fontSize = 16
@@ -3576,10 +3193,8 @@ local function PointInUnhideButton(mx, my)
        and my >= y - fontSize and my <= y + fontSize
 end
 
-------------------------------------------------------------
--- INPUT HANDLING
-------------------------------------------------------------
 
+-- INPUT HANDLING
 function widget:IsAbove(mx,my)
     if fullyHidden then
         return PointInUnhideButton(mx,my)
@@ -3638,10 +3253,7 @@ do
     end
 end
 
-
-    ------------------------------------------------------------
     -- 1. FLOATING UNHIDE BUTTON (must be FIRST)
-    ------------------------------------------------------------
     if fullyHidden then
         local label    = "[Unhide Eco Graph]"
         local fontSize = 16
@@ -3658,15 +3270,11 @@ end
         return false
     end
 
-    ------------------------------------------------------------
     -- 2. NORMAL VISIBILITY CHECKS
-    ------------------------------------------------------------
     if not showWidget then return false end
     if spIsGUIHidden() then return false end
 
-    ------------------------------------------------------------
     -- 3. METAL DROPDOWN OPTION CLICK (CHECK FIRST)
-    ------------------------------------------------------------
     if metalShareDropdownOpen and metalShareOptionRects then
         for i, r in ipairs(metalShareOptionRects) do
             if PointInRect(mx, my, r.x1, r.y1, r.x2, r.y2) then
@@ -3705,9 +3313,7 @@ if metalShareDropdownOpen then
     end
 end
 
-------------------------------------------------------------
 -- 4. ENERGY DROPDOWN OPTION CLICK (CHECK SECOND)
-------------------------------------------------------------
 if energyShareDropdown and energyShareOptionRects then
     for i, r in ipairs(energyShareOptionRects) do
         if PointInRect(mx, my, r.x1, r.y1, r.x2, r.y2) then
@@ -3740,11 +3346,7 @@ if energyShareDropdown and energyShareOptionRects then
     end
 end
 
-
-
-    ------------------------------------------------------------
     -- 5. CLICK OUTSIDE MAIN BOX (but allow dropdown clicks)
-    ------------------------------------------------------------
     if not PointInBox(mx, my) then
         if metalShareDropdownOpen then
             local insideDropdown = false
@@ -3773,10 +3375,8 @@ and my >= pauseButtonRect.y1 and my <= pauseButtonRect.y2 then
     Spring.SendCommands("pause")
     return true
 end
-
-    ------------------------------------------------------------
+ 
     -- 6. CLOSE BUTTON [X]
-    ------------------------------------------------------------
     local hideLabel = "[X]"
     local hideSize  = 14
     local hideWidth = gl.GetTextWidth(hideLabel) * hideSize
@@ -3792,18 +3392,15 @@ end
         return true
     end
 
-    ------------------------------------------------------------
     -- 7. COMPACT TOGGLE (Ctrl + LMB)
-    ------------------------------------------------------------
     if button == 1 and ctrl then
         compactMode = not compactMode
         if graphList then glDeleteList(graphList) graphList = nil end
         return true
     end
 
-    ------------------------------------------------------------
+    
     -- 8. PAUSE / RESET (MMB)
-    ------------------------------------------------------------
     if button == 2 then
         if ctrl then
             ResetHistory()
@@ -3813,9 +3410,7 @@ end
         return true
     end
 
-    ------------------------------------------------------------
     -- 9. METAL SHARE BUTTON (ONLY WHEN DROPDOWN CLOSED)
-    ------------------------------------------------------------
     if button == 1 then
         local bx1 = metalShareButtonRect.x1
         local by1 = metalShareButtonRect.y1
@@ -3843,11 +3438,7 @@ end
     end
 end
 
-
-
-------------------------------------------------------------
 -- HISTORY SECONDS CLICK (Full View, Compact Style)
-------------------------------------------------------------
 do
     local centerX = box.x1 + (box.x2 - box.x1) * 0.5
 
@@ -3874,9 +3465,7 @@ do
     end
 end
 
-    ------------------------------------------------------------
     -- 11. RESIZE HANDLE
-    ------------------------------------------------------------
     if button == 1 and PointInResizeHandle(mx, my) and not dragLocked then
         resizing     = true
         resizeStartX = mx
@@ -3884,9 +3473,7 @@ end
         return true
     end
 
-    ------------------------------------------------------------
     -- 12. DRAGGING
-    ------------------------------------------------------------
     if button == 1 and not dragLocked then
         dragging    = true
         dragOffsetX = mx - box.x1
@@ -3900,9 +3487,8 @@ end
 function widget:MouseMove(mx,my,dx,dy,button)
     if not showWidget then return false end
 
-    ------------------------------------------------------------
-    -- FREEFORM RESIZING (NORMAL UI: DRAG DOWN TO GROW)
-    ------------------------------------------------------------
+    
+    -- FREEFORM RESIZING (NORMAL UI: DRAG DOWN TO GROW
     if resizing and button == 1 then
         local w = mx - box.x1
 
@@ -3932,9 +3518,7 @@ function widget:MouseMove(mx,my,dx,dy,button)
         return true
     end
 
-    ------------------------------------------------------------
     -- DRAGGING
-    ------------------------------------------------------------
     if dragging and button == 1 then
         cfg.anchorX = (mx - dragOffsetX) / vsx
         cfg.anchorY = (my - dragOffsetY) / vsy
@@ -3980,10 +3564,8 @@ function widget:MouseRelease(mx,my,button)
         return true
     end
 end
-------------------------------------------------------------
--- HOTKEYS
-------------------------------------------------------------
 
+-- HOTKEYS
 function widget:KeyPress(key, mods)
     local ctrl = mods.ctrl
 
