@@ -1065,79 +1065,89 @@ local function BuildGraphList()
 				end
 			end)
 
+-- METAL STORAGE BAR
+if panel.name == "Metal" then
+    local teamID = Spring.GetMyTeamID()
+    local mCur, mStorage = spGetTeamResources(teamID, "metal")
 
-            -- METAL STORAGE BAR
-            if panel.name == "Metal" then
-                local teamID = Spring.GetMyTeamID()
-                local mCur, mStorage = spGetTeamResources(teamID, "metal")
+    mCur     = mCur or 0
+    mStorage = mStorage or 1
 
-                mCur     = mCur or 0
-                mStorage = mStorage or 1
+    local frac = math.max(0, math.min(1, mCur / mStorage))
 
-                local frac = math.max(0, math.min(1, mCur / mStorage))
+    -- Dynamic Metal bar width (mirror of Energy)
+    local panelW = gx2 - gx1
+    local barW   = panelW * 0.50
 
-                -- local barW = 140
-                -- local barX = (gx1 + gx2) * 0.5
-                -- local barLeft = barX - (barW * 0.5)
-				
-				-- Dynamic Metal bar width (mirror of Energy)
-				local panelW = gx2 - gx1
-				local barW   = panelW * 0.50      -- adjust 0.50 → 0.60 → 0.70 as desired
-				-- Mirror: bar grows LEFT instead of right
-				local barX    = (gx1 + gx2) * 0.5
-				local barLeft = barX - (barW * 0.5)
+    -- Center of the panel
+    local barX = (gx1 + gx2) * 0.5
 
-                
-                -- BAR BACKGROUND
-                local r,g,b = unpack(cfg.metalIncomeColor)
-                glColor(r, g, b, 0.20)
-                glRect(barLeft, barY, barLeft + barW, barY + barH)
+    -- ORIGINAL barLeft (used by pulldown + storage text)
+    local barLeftOriginal = barX - (barW * 0.5)
 
-                
-                -- BAR FILL
-                local fillW = barW * frac
-                if fillW > 0 then
-                    glColor(r, g, b, 0.90)
-                    glRect(barLeft, barY, barLeft + fillW, barY + barH)
-                end
+    -- OFFSET for bar ONLY
+    local barOffset = -20   -- move bar 20px left
 
-				
-				-- WHITE TICK (Metal)
-				if frac > 0 then
-					local curX = barLeft + fillW
-					glColor(1,1,1,1)
-					glRect(curX - 1, barY - 2, curX + 1, barY + barH + 2)
-				end
+    -- SHIFTED barLeft (used ONLY for drawing the bar)
+    local barLeft = barLeftOriginal + barOffset
 
-				
-				-- METAL SHARE BUTTON (RIGHT OF BAR)
 
-				-- Build label to compute dynamic width
-				local label = GetMetalShareLabel()
-				local labelWidth = glGetTextWidth(label) * fontSize
+    --------------------------------------------------------
+    -- DRAW THE BAR (this is what was missing)
+    --------------------------------------------------------
+    -- Background
+    local r,g,b = unpack(cfg.metalIncomeColor)
+    glColor(r, g, b, 0.20)
+    glRect(barLeft, barY, barLeft + barW, barY + barH)
 
-				local extraPad = 90        -- stretch left & right
-				local minWidth = 190       -- never shrink below this
-				local buttonWidth = math.max(minWidth, labelWidth + extraPad)
+    -- Fill
+    local fillW = barW * frac
+    if fillW > 0 then
+        glColor(r, g, b, 0.90)
+        glRect(barLeft, barY, barLeft + fillW, barY + barH)
+    end
 
-				local buttonHeight = fontSize + 6
-				local gapRight     = 55 -- nudged 15px farther right
-				local bx1 = barLeft + barW + gapRight
-				local bx2 = bx1 + buttonWidth
-				local by1 = barY - 2
-				local by2 = by1 + buttonHeight
+    -- Tick
+    if frac > 0 then
+        local curX = barLeft + fillW
+        glColor(1,1,1,1)
+        glRect(curX - 1, barY - 2, curX + 1, barY + barH + 2)
+    end
 
-				-- Save geometry
-				metalShareButtonRect.x1 = bx1
-				metalShareButtonRect.y1 = by1
-				metalShareButtonRect.x2 = bx2
-				metalShareButtonRect.y2 = by2
 
-                -- STORAGE TEXT
-                local totalText = string.format("[%.1fK]", mStorage / 1000)
-                glColor(cfg.titleColor)
-                glText(totalText, barLeft + barW + 6, barY + 2, fontSize, "l")
-            end
+    --------------------------------------------------------
+    -- PULLDOWN BUTTON (must use barLeftOriginal)
+    --------------------------------------------------------
+    local label = GetMetalShareLabel()
+    local labelWidth = glGetTextWidth(label) * fontSize
+
+    local extraPad = 90
+    local minWidth = 190
+    local buttonWidth = math.max(minWidth, labelWidth + extraPad)
+
+    local buttonHeight = fontSize + 6
+    local gapRight     = 55
+
+    local bx1 = barLeftOriginal + barW + gapRight
+    local bx2 = bx1 + buttonWidth
+    local by1 = barY - 2
+    local by2 = by1 + buttonHeight
+
+    metalShareButtonRect.x1 = bx1
+    metalShareButtonRect.y1 = by1
+    metalShareButtonRect.x2 = bx2
+    metalShareButtonRect.y2 = by2
+
+
+    --------------------------------------------------------
+    -- STORAGE TEXT (must also use barLeftOriginal)
+    --------------------------------------------------------
+    local totalText = string.format("[%.1fK]", mStorage / 1000)
+    glColor(cfg.titleColor)
+    -- Nudging the Metal Storage BAR left or right barW = 15
+    glText(totalText, barLeftOriginal + barW - 15, barY + 2, fontSize, "l")
+
+end
 
             -- ENERGY STORAGE BAR
             if panel.name == "Energy" then
@@ -1148,10 +1158,6 @@ local function BuildGraphList()
                 eStorage = eStorage or 1
 
                 local frac = math.max(0, math.min(1, eCur / eStorage))
-
-                -- local barW = 140
-                -- local barX = (gx1 + gx2) * 0.5
-                -- local barLeft = barX - (barW * 0.5)
 				
 				-- Dynamic Energy bar width (fraction of panel width)
 				local panelW = gx2 - gx1
