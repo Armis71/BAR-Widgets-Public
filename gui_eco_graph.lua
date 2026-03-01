@@ -907,6 +907,11 @@ end
 
 -- GRAPH BUILDING (CLEAN, OPTION B, FULL FUNCTION
 local function BuildGraphList()
+
+local graphMarginLeft  = 0.10   -- pushes Energy graph right
+local graphMarginRight = 0.10  -- pushes Metal graph left
+
+
     if compactMode then
         if graphList then glDeleteList(graphList) graphList = nil end
         return
@@ -969,17 +974,19 @@ local function BuildGraphList()
             local px2 = panel.x2
             local pw  = px2 - px1
 
-            local gx1 = px1 + pw * margin
-            local gx2 = px2 - pw * margin
+            -- local gx1 = px1 + pw * margin
+            local gx1 = px1 + pw * graphMarginLeft
 
-            
+            -- local gx2 = px2 - pw * margin
+            local gx2 = px2 - pw * graphMarginRight
+          
             -- GRAPH HEIGHT
             local barY = y1 + (h * margin) - 5
             -- Change height size of both the Metal & Energy Storage Bars
 			local barH = 12
 
             -- local graphBottomPadding = 6
-			local graphBottomPadding = 35
+			local graphBottomPadding = 5 -- was 35 Lowers graph keep top anchored
             local gy1 = barY + barH + graphBottomPadding
 
 		--  This line is to move the top portion of Meta and Energy dual line graph in full view mode
@@ -1489,6 +1496,7 @@ local function DrawOverlay()
     local r, g, b = Spring.GetTeamColor(teamID)
     glColor(r, g, b, 1)
     glText(playerName, box.x1 + 6, box.y2 - 40, fontSize + 4, "o")
+    
 
     glColor(cfg.titleColor)
 
@@ -1534,7 +1542,7 @@ local windX   = centerX + 30
 local barLeft = windX - (barW * 0.5)
 
 -- INDEPENDENT Y‑CONTROLS
-local barY   = box.y2 - 70     -- move ONLY the bar
+local barY   = box.y2 - 70     -- move ONLY the bar  -- set to - 70
 local statsY = barY + 15       -- move Cur Avg / Max
 local curY   = barY - 15       -- move Cur:
 local titleY = barY + 32       -- move "Wind"
@@ -2194,7 +2202,7 @@ do
     local gx2 = centerX - (box.x2 - box.x1) * 0.07
 
     -- Vertical: stretch from top of storage bar to just below Net: line
-    local storageBarTop = box.y1 + 30
+    local storageBarTop = box.y1 + 18      -- was + 30
     local graphTopLimit = box.y2 - 40   -- leave 60px buffer below Net: line     -- was 60
 
     local gy1 = storageBarTop
@@ -2432,7 +2440,6 @@ glColor(1, 1, 1, 1)
 local text = string.format("[%.1fK]", max/1000)
 
 local textY = box.y1 + 8   -- EXACT same Y as PP: No
---glText(text, barX2 + 10, textY, fontSize - 1, "or")
 glText(text, barX2 + 60, textY, fontSize, "or")
 
 end
@@ -2604,9 +2611,6 @@ end
 
     local minW    = Game.windMin or 0
     local maxWind = Game.windMax or 1
-
-    -- Spring.Echo("Compact Wind:", strength, minW, maxWind)
-
     local curWind = math.min(maxWind, math.max(minW, strength))
     local safeWind = curWind
     windSum = windSum + safeWind
