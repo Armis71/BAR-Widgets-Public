@@ -1,13 +1,46 @@
-# BAR-Widgets-Public
-A collection of .lua files that are widgets used in BAR (Beyond-All-Reason).
+Commander Kill Tracker — Overview
+The Commander Kill Tracker is a modern, replay‑safe BAR widget that displays commander kills with full visual context. It shows killer icons, team colors, timestamps, weapon info, sortable totals, and a clean draggable/resizable UI with automatic scrolling.
 
-WIDGETS:
-*** Eco Graph *** (gui_eco_graph.lua)
-A replacement of BAR's original top bar which shows Metal & Energy Storage, current amount, autoshare metal & energy, energy to metal converter stat, commanders vs commanders count, wind and tidal stats. 
+Key Features
+- Tracks every commander kill with:
+- killer name + team color
+- victim name + team color
+- unit icon of the killing unit
+- weapon used
+- timestamp
+- Accurate kill attribution for:
+- nukes
+- AOE damage
+- chain‑explosions
+- commander‑explosion propagation
+- Clean UI:
+- draggable
+- resizable
+- auto‑appearing scrollbar
+- tooltips on hover
+- subtle flash highlight on new kills
+- Fully replay‑safe
+- Works in both live games and replays
 
-*** Energy Conversion *** (gui_energy_conversion.lua)
-A replacement of the energy to metal conversion bar meter BAR's default top bar.
+Recent Fixes (2026‑03)
 
-*** Vertical Menu *** (gui_vertical_toggle_menu.lua)
-Basically on widget combined out of  3 original widgets.  Top most is to toggle off/on BAR's original Top Bar widget, The Eco Graph toggle off/on, and Energy Conversion (E-Conv) toggle off/on.
+Commander Misclassification Fixed
+Commander detection was tightened to avoid false positives from structures that use commander‑related customParams (e.g., large builder turrets).
+The widget now only recognizes true commanders using a strict set of BAR‑accurate flags:
+- iscommander
+- commtype
+- iscommanderunit
+- iscommanderclass
+- deathExplosion == "commanderexplosion"
+This prevents non‑commander structures from being counted.
+Accurate Explosion Kill Attribution
+Explosion‑based commander kills (nukes, AOE, chain‑explosions) are now always credited correctly.
+The kill‑resolution logic was updated so that chain‑explosion roots are resolved before team filtering, fixing cases where the engine reports explosion damage as self‑damage.
 
+This ensures:
+- no missed commander kills
+- no false self‑kills
+- correct attribution for multi‑commander chain reactions
+
+Summary
+This widget provides a polished, reliable, and visually clean way to track commander kills in BAR. With the latest fixes, it now has fully accurate commander detection and explosion‑kill attribution, making it suitable for competitive play, casting, and replay analysis.
