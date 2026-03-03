@@ -1,4 +1,5 @@
 BAR Widget Suite by Kerwin
+
 A unified collection of modern, replay‑safe, performance‑optimized widgets for Beyond All Reason (BAR).
 This suite enhances economic visibility, commander‑kill tracking, and UI control while maintaining a clean, consistent visual style across all components.
 All widgets are designed to work together seamlessly and follow the same UI theme, borders, fonts, and interaction patterns.
