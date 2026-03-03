@@ -224,28 +224,13 @@ local function IsCommanderDef(unitDefID)
     if not ud then return false end
     local cp = ud.customParams or {}
 
-    -- Top Bar commander detection logic (full)
+    -- Only true commander identifiers
     if cp.iscommander then return true end
     if cp.commtype then return true end
-    if cp.dynamic_comm then return true end
-    if cp.iscommandervariant then return true end
-    if cp.iscommanderupgrade then return true end
-    if cp.iscommanderbase then return true end
-    if cp.iscommanderbuild then return true end
-    if cp.iscommanderfactory then return true end
-    if cp.iscommander_morph then return true end
-    if cp.iscommanderform then return true end
     if cp.iscommanderunit then return true end
     if cp.iscommanderclass then return true end
-    if cp.iscommanderhero then return true end
-    if cp.iscommanderboss then return true end
-    if cp.iscommanderelite then return true end
-    if cp.iscommanderprototype then return true end
-    if cp.iscommanderexperimental then return true end
-    if cp.iscommanderflagship then return true end
-    if cp.iscommanderflagshipvariant then return true end
 
-    -- Explosion-based detection
+    -- Explosion-based detection (real commanders only)
     if ud.deathExplosion == "commanderexplosion" then return true end
 
     return false
@@ -335,22 +320,28 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID_raw, attac
         return
     end
 
-    ------------------------------------------------------
-    -- Resolve attacker using Top Bar logic
-    ------------------------------------------------------
-    local attackerID, attackerTeam, attackerDefID = ResolveAttacker(unitID, unitTeam)
+	------------------------------------------------------
+	-- Resolve attacker using Top Bar logic
+	------------------------------------------------------
+	local attackerID, attackerTeam, attackerDefID = ResolveAttacker(unitID, unitTeam)
 
-    if not attackerID or not attackerTeam or attackerTeam == unitTeam then
-        return
-    end
+	-- First filter: attacker must exist
+	if not attackerID or not attackerTeam then
+		return
+	end
 
-    -- Chain-explosion root tracing
-    attackerID, attackerTeam, attackerDefID =
-        ResolveChainExplosionRoot(unitID, attackerID, attackerTeam, attackerDefID)
+	------------------------------------------------------
+	-- Chain-explosion root tracing MUST happen BEFORE
+	-- any team filtering, because engine often reports
+	-- commander explosions as self-damage.
+	------------------------------------------------------
+	attackerID, attackerTeam, attackerDefID =
+		ResolveChainExplosionRoot(unitID, attackerID, attackerTeam, attackerDefID)
 
-    if not attackerID or not attackerTeam or attackerTeam == unitTeam then
-        return
-    end
+	-- Now apply the real team filter
+	if not attackerID or not attackerTeam or attackerTeam == unitTeam then
+		return
+	end
 
     ------------------------------------------------------
     -- Killer label + victim name
