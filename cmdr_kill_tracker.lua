@@ -53,6 +53,8 @@ local glTexRect      = gl.TexRect
 local glGetTextWidth = gl.GetTextWidth
 local glScissor      = gl.Scissor
 
+local recentEffigyExplosion = {}
+
 ------------------------------------------------------------
 -- STATE
 ------------------------------------------------------------
@@ -99,6 +101,15 @@ function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer, weap
     if not attackerID then
         return
     end
+
+    -- Track effigy explosions for resurrection detection
+    if unitDefID and UnitDefs[unitDefID] then
+        local name = UnitDefs[unitDefID].name or ""
+        if name:find("effigy") then
+            recentEffigyExplosion[unitID] = Spring.GetGameFrame()
+        end
+    end
+
 
     -- BAR uses -1 for beam/continuous weapons; ignore those
     if weaponDefID and weaponDefID >= 0 then
@@ -219,19 +230,33 @@ end
 --------------------------------------------------------------------------------
 
 local function IsCommanderDef(unitDefID)
+
+    Spring.Echo("CHECK", unitDefID, UnitDefs[unitDefID].name, UnitDefs[unitDefID].deathExplosion)
+
     if not unitDefID then return false end
     local ud = UnitDefs[unitDefID]
     if not ud then return false end
     local cp = ud.customParams or {}
+    local udName = ud.name or ""
 
-    -- Only true commander identifiers
+    -- Hard blacklist: respawn pads and effigies
+    if udName == "armrespawn" or udName == "correspawn" then
+        return false
+    end
+    if udName:find("effigy") then
+        return false
+    end
+
+    -- True commander identifiers
     if cp.iscommander then return true end
     if cp.commtype then return true end
     if cp.iscommanderunit then return true end
     if cp.iscommanderclass then return true end
 
     -- Explosion-based detection (real commanders only)
-    if ud.deathExplosion == "commanderexplosion" then return true end
+    if ud.deathExplosion == "commanderexplosion" then
+        return true
+    end
 
     return false
 end
@@ -308,12 +333,34 @@ end
 
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID_raw, attackerDefID_raw, attackerTeam_raw, weaponDefID_raw)
 
+
+    -- Ignore fake commander deaths caused by effigy explosions
+    local isEffigy = UnitDefs[unitDefID] and UnitDefs[unitDefID].name:find("effigy")
+    if isEffigy then
+        return
+    end
+
     -- Capture raw engine weaponDefID BEFORE Top Bar overrides it
     local rawWeaponDefID = weaponDefID_raw
 
+    -- Commander detection (with effigy + respawn filtering)
     if not IsCommanderDef(unitDefID) then
         return
     end
+
+    -- If the commander "dies" within 2 frames of an effigy explosion,
+    -- it's a fake death (effigy resurrection)
+    local frame = Spring.GetGameFrame()
+    if recentEffigyExplosion[unitID] and frame - recentEffigyExplosion[unitID] <= 2 then
+        return
+    end
+
+    -- Ignore fake commander deaths caused by effigy explosions
+    local udName = UnitDefs[unitDefID].name or ""
+    if udName:find("effigy") then
+        return
+    end
+
 
     -- Ignore self-destruct (Ctrl+B)
     if IsSelfDestruct(unitID, unitTeam) then
@@ -445,12 +492,37 @@ glColor(1,1,1,1)
 
     glColor(1,1,1,1)
 	-- Change title fontsize -- currently at 16
-    glText(widget:GetInfo().name..":", x1+10, y1+h-24, 16, "o")
+
+    --------------------------------------------------------
+    -- FIXED HEADER ROW (centered title + disclaimer)
+    --------------------------------------------------------
+    local title = widget:GetInfo().name .. ":"
+    local disclaimer = "Effigy fake deaths are not counted"
+
+    -- Title
+    local titleSize = 16
+    local titleWidth = glGetTextWidth(title) * titleSize
+    local titleX = x1 + (w * 0.5) - (titleWidth * 0.5)
+    local titleY = y1 + h - 26
+    glColor(1,1,1,1)
+    glText(title, titleX, titleY, titleSize, "o")
+
+    -- Disclaimer
+    local discSize = 14
+    local discWidth = glGetTextWidth(disclaimer) * discSize
+    local discX = x1 + (w * 0.5) - (discWidth * 0.5)
+    local discY = titleY - 18
+    glColor(1,1,1,0.55)
+    glText(disclaimer, discX, discY, discSize, "o")
+    glColor(1,1,1,1)
+
+    -- Bottom of header row
+    local headerBottomY = discY - 28
 
     --------------------------------------------------------
     -- APPLY SCROLL OFFSET (TOP-ALIGNED)
     --------------------------------------------------------
-    local y = y1 + h - 48 - scrollOffset
+    local y = headerBottomY - scrollOffset
     local startY = y
 
     --------------------------------------------------------
