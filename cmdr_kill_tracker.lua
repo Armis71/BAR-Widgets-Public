@@ -231,7 +231,7 @@ end
 
 local function IsCommanderDef(unitDefID)
 
-    Spring.Echo("CHECK", unitDefID, UnitDefs[unitDefID].name, UnitDefs[unitDefID].deathExplosion)
+    -- Spring.Echo("CHECK", unitDefID, UnitDefs[unitDefID].name, UnitDefs[unitDefID].deathExplosion)
 
     if not unitDefID then return false end
     local ud = UnitDefs[unitDefID]
