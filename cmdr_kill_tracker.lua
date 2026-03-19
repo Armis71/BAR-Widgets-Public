@@ -25,6 +25,7 @@ local cfg = {
     h = 0.30,
 }
 
+local recentCommanderSpawn = {}
 local BASE_ICON_SIZE = 48
 local ICON_SIZE      = math.floor(BASE_ICON_SIZE * 1.2)
 local RESIZE_HANDLE  = 18
@@ -327,6 +328,13 @@ local function ResolveChainExplosionRoot(unitID, attackerID, attackerTeam, attac
     return attackerID, attackerTeam, attackerDefID
 end
 
+
+function widget:UnitCreated(unitID, unitDefID, teamID)
+    if IsCommanderDef(unitDefID) then
+        recentCommanderSpawn[teamID] = Spring.GetGameFrame()
+    end
+end
+
 --------------------------------------------------------------------------------
 -- CHUNK 5 — FINAL KILL-RECORDING INTEGRATION
 --------------------------------------------------------------------------------
@@ -345,6 +353,16 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID_raw, attac
 
     -- Commander detection (with effigy + respawn filtering)
     if not IsCommanderDef(unitDefID) then
+        return
+    end
+
+    -- MORPH FILTER: ignore fake commander deaths caused by morph transitions
+    local gf = Spring.GetGameFrame()
+    local spawnFrame = recentCommanderSpawn[unitTeam]
+
+    -- If a new commander spawned for this team within 3 frames of this "death",
+    -- then this is a morph, not a real kill.
+    if spawnFrame and (gf - spawnFrame) <= 3 then
         return
     end
 
@@ -674,9 +692,9 @@ function widget:MouseWheel(up, value)
         -- Standard behavior:
         -- scroll down → list moves up → scrollOffset becomes more negative
         if up then
-            scrollOffset = scrollOffset + step
+            scrollOffset = scrollOffset - step   -- inverted
         else
-            scrollOffset = scrollOffset - step
+            scrollOffset = scrollOffset + step   -- inverted
         end
 
         -- Clamp using GLOBAL maxScroll
@@ -817,20 +835,30 @@ function widget:MouseMove(mx,my)
         cfg.y = math.max(0, math.min((my - dragOffsetY) / vsy, 1 - cfg.h))
     end
 
-    if resizing then
-        local newW = (mx - widget.box.x1) / vsx
-        local topY = widget.box.y1 + (cfg.h * vsy)
-        local newH = (topY - my) / vsy
+if resizing then
+    local vsx, vsy = spGetViewGeometry()
 
-        -- newH = math.max(0.10, math.min(newH, 0.80))
-        -- cfg.h = newH
-        -- cfg.y = (topY - (newH * vsy)) / vsy
-        -- cfg.w = math.max(0.10, math.min(newW, 0.80))
-		newH = math.max(0.05, math.min(newH, 0.80))
-        cfg.h = newH
-        cfg.y = (topY - (newH * vsy)) / vsy
-        cfg.w = math.max(0.07, math.min(newW, 0.80))
-    end
+    -- Fixed top edge
+    local topY = widget.box.y2
+
+    -- Height grows when mouse moves DOWN (my decreases)
+    local newH = (topY - my) / vsy
+
+    -- Clamp
+    newH = math.max(0.05, math.min(newH, 0.80))
+
+    -- Apply new height
+    cfg.h = newH
+
+    -- Recompute cfg.y so TOP stays locked
+    cfg.y = (topY - newH * vsy) / vsy
+
+    -- Width (unchanged logic)
+    local newW = (mx - widget.box.x1) / vsx
+    cfg.w = math.max(0.07, math.min(newW, 0.80))
+end
+
+
 end
 
 function widget:MouseRelease()
