@@ -308,7 +308,7 @@ local cfg = {
 	historyOptions = {20, 30, 40, 50, 60},
 
     -- bgColor     = {0, 0, 0, 0.60},
-	bgColor     = {0, 0, 0, 0.99},
+	bgColor     = {0, 0, 0, 0.99},   -- Change the whole Eco Graph background opacity
     borderColor = {1, 1, 1, 0.5},    
 
     metalIncomeColor = {0.2, 1.0, 1.0, 1.0},
