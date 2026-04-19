@@ -3,7 +3,7 @@ function widget:GetInfo()
         name      = "Eco Graph",
         desc      = "Top Bar widget replacement. Tracks your Metal and Energy economy in real time, helping you monitor income, storage, and usage so you can make better macro decisions.",
         author    = "Copilot + Armis71",
-        date      = "2026-01-05",
+        date      = "2026-04-19",
         version   = "v3.0",
         license   = "GPL v2 or later",
         layer     = -999999,
