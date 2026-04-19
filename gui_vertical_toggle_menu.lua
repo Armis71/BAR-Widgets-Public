@@ -2,7 +2,7 @@ function widget:GetInfo()
     return {
         name      = "Unified Toggle Menu",
         desc      = "Vertical ON/OFF menu for Top Bar and Eco Graph",
-        author    = "Kerwin + Copilot",
+        author    = "Armis71 + Copilot",
         date      = "2026",
         license   = "GPLv2",
         layer     = 999999,
