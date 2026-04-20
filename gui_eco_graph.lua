@@ -3,7 +3,7 @@ function widget:GetInfo()
         name      = "Eco Graph",
         desc      = "Top Bar widget replacement. Tracks your Metal and Energy economy in real time, helping you monitor income, storage, and usage so you can make better macro decisions.",
         author    = "Copilot + Armis71",
-        date      = "2026-04-19",
+        date      = "2026-01-05",
         version   = "v3.0",
         license   = "GPL v2 or later",
         layer     = -999999,
@@ -308,7 +308,7 @@ local cfg = {
 	historyOptions = {20, 30, 40, 50, 60},
 
     -- bgColor     = {0, 0, 0, 0.60},
-	bgColor     = {0, 0, 0, 0.99},   -- Change the whole Eco Graph background opacity
+	bgColor     = {0, 0, 0, 0.99},
     borderColor = {1, 1, 1, 0.5},    
 
     metalIncomeColor = {0.2, 1.0, 1.0, 1.0},
@@ -1916,7 +1916,7 @@ do
 ------------------------------------------------------------
 -- METAL ICON ABOVE METAL AVAILABLE
 ------------------------------------------------------------
-local iconSize = 56
+local iconSize = 46
 
 -- Center icon horizontally over the Metal Available text
 local iconX = metalTextX - (iconSize * 0.5) + 100  -- lower goest left 
@@ -2092,7 +2092,7 @@ do
 ------------------------------------------------------------
 -- ENERGY ICON ABOVE ENERGY AVAILABLE
 ------------------------------------------------------------
-local iconSize = 56
+local iconSize = 46
 local iconX = energyTextX - (iconSize * 0.5) + 2  -- center icon over text, lower goes right
 local iconY = energyTextY + energyFont + 6 - 15   -- place above the text
 
@@ -2927,7 +2927,7 @@ do
         ------------------------------------------------------------
 -- METAL ICON ABOVE METAL AVAILABLE
 ------------------------------------------------------------
-local iconSize = 56
+local iconSize = 38
 
 -- Center icon horizontally over the Metal Available text
 local iconX = metalTextX - (iconSize * 0.5) + 45    -- was 60  higher goes right
@@ -2972,7 +2972,7 @@ do
 ------------------------------------------------------------
 -- ENERGY ICON ABOVE ENERGY AVAILABLE (Compact View)
 ------------------------------------------------------------
-local iconSize = 56
+local iconSize = 38
 
 -- Center icon horizontally over the Energy Available text
 local iconX = energyTextX - (iconSize * 0.5) - 38  -- Higher moves left
@@ -3244,38 +3244,56 @@ do
     }
 
 ------------------------------------------------------------
--- ENERGY → METAL STATS (Compact View)
+-- ENERGY → METAL STATS (Compact View, fixed + ultra-compact)
 ------------------------------------------------------------
 do
-    local eText = string.format("-%de", math.floor(convEnergy + 0.5))
-    local mText = string.format("+%dm", math.floor(convMetal + 0.5))
-    local uText = string.format("%d%%", convUtil)
+    -- format helper: converts 1200 → 1.2k
+    local function formatK(n, suffix)
+        local absn = math.abs(n)
+        if absn >= 1000 then
+            return string.format("%.1fk%s", n / 1000, suffix)
+        else
+            return string.format("%d%s", n, suffix)
+        end
+    end
 
-    -- fixed widths (same as gui_energy_conversion)
-    local eW = glGetTextWidth("-999999e") * pauseSize
-    local mW = glGetTextWidth("+99999m") * pauseSize
+    -- use raw values (fixes the "always 0" bug)
+    local eVal = convEnergy
+    local mVal = convMetal
+
+    -- local eText = formatK(eVal, "e")
+    -- local mText = formatK(mVal, "m")
+    -- local uText = string.format("%d%%", convUtil)
+
+local eText = "-" .. formatK(math.abs(eVal or 0), "e")
+local mText = "+" .. formatK(math.abs(mVal or 0), "m")
+local uText = string.format("%d%%", convUtil or 0)
+
+    -- ultra-compact reserved widths
+    local eW = glGetTextWidth("-99.9ke") * pauseSize
+    local mW = glGetTextWidth("+99.9km") * pauseSize
     local uW = glGetTextWidth("100%")    * pauseSize
-    local bracketW = glGetTextWidth("[") * pauseSize * 1.2
+    local bracketW = glGetTextWidth("[") * pauseSize * 0.9
 
     local totalW = bracketW + eW + mW + uW + bracketW
 
     -- position: LEFT of Pause button
-    local sx = px - 24 - totalW
+    local sx = px - 4 - totalW
     local sy = py
 
     -- [
     glColor(1,1,1,1)
     glText("[", sx + bracketW * 0.5, sy, pauseSize, "oc")
 
-    -- -Xe (yellow)
+    -- energy
     glColor(1,1,0.2,1)
     glText(eText, sx + bracketW + eW * 0.5, sy, pauseSize, "oc")
 
-    -- +Xm (cyan)
+    -- metal
     glColor(0.2,1,1,1)
     glText(mText, sx + bracketW + eW + mW * 0.5, sy, pauseSize, "oc")
 
-    -- % (white)
+    -- util %
     glColor(1,1,1,1)
     glText(uText, sx + bracketW + eW + mW + uW * 0.5, sy, pauseSize, "oc")
 
@@ -3290,12 +3308,12 @@ do
         x2 = sx + totalW,
         y2 = sy + pauseSize
     }
-
 end
 
 -- Draw Pause
 glColor(cfg.titleColor)
 glText(pauseLabel, px, py, pauseSize, "o")
+
 end
 
 
