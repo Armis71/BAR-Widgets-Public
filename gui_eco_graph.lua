@@ -2924,7 +2924,9 @@ do
         local metalTextY = barY1 - 2
 
         glText(metalText, metalTextX, metalTextY, metalFont, "l")
-        ------------------------------------------------------------
+
+
+------------------------------------------------------------
 -- METAL ICON ABOVE METAL AVAILABLE
 ------------------------------------------------------------
 local iconSize = 38
@@ -3278,7 +3280,7 @@ local uText = string.format("%d%%", convUtil or 0)
     local totalW = bracketW + eW + mW + uW + bracketW
 
     -- position: LEFT of Pause button
-    local sx = px - 4 - totalW
+    local sx = px - 14 - totalW  -- moving the Energy to Metal stats left or right. The higher goes left.
     local sy = py
 
     -- [
