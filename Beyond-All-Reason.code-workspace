@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../Widgets"
+		},
+		{
+			"path": "."
+		},
+		{
+			"path": "../Actual_Game_Widgets"
+		}
+	],
+	"settings": {}
+}
