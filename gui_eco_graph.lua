@@ -103,16 +103,31 @@ local function GetCurrentViewedAllyTeamID()
 end
 
 
--- Compact number formatter (10K+ → K, 1M+ → M)
+-- Compact number formatter with hysteresis (prevents jitter around 1000)
+local lastCompactMode = "raw"   -- remembers last mode: "raw" or "k"
+
 local function FormatCompact(n)
-    if n >= 1e6 then
-        return string.format("%.2fM", n / 1e6)
-    elseif n >= 1e4 then
-        return string.format("%.2fK", n / 1e3)
-    else
-        return string.format("%.0f", n)
+    -- hysteresis thresholds
+    if lastCompactMode == "raw" and n >= 1050 then
+        lastCompactMode = "k"
+    elseif lastCompactMode == "k" and n <= 949 then
+        lastCompactMode = "raw"
     end
+
+    -- RAW MODE (1–999 or hysteresis)
+    if lastCompactMode == "raw" then
+        return string.format("%d", n)
+    end
+
+    -- K MODE (1000–999,999)
+    if n < 1e6 then
+        return string.format("%.2fK", n / 1000)
+    end
+
+    -- M MODE (1,000,000+)
+    return string.format("%.2fM", n / 1e6)
 end
+
 
 local function FormatIncome(n)
     if n >= 1e6 then
@@ -146,6 +161,7 @@ local function FormatNumber(n)
         return string.format("%.2f", n)
     end
 end
+
 
 local function BuildPinPointerDefTable()
     for udid, ud in pairs(UnitDefs) do
@@ -935,30 +951,6 @@ local function SampleEco()
     end
 end
 
---[[ local function BuildEnergyTooltip()
-    if not smoothEnergyGen then
-        return ""
-    end
-
-    local t1 = string.format("Static Generators     =  %-6.1f", smoothEnergyGen)
-    local t2 = string.format("Dynamic Generators    =  %-6.1f", smoothEnergyReclaim)
-
-    local d1 = "Static: Commander, T1/T2 Construction Bots,"
-    local d2 = "            Adv. Solar, Fusion, Adv. Fusion, etc."
-    local d3 = "Dynamic: T1 Solar, Turbines, Share, Reclaim,"
-    local d4 = "                 Tidal generators, etc."
-
-    return table.concat({
-        t1,
-        t2,
-        "",
-        d1,
-        d2,
-        d3,
-        d4,
-    }, "\n")
-end ]]
-
 function DrawPanelStats(label, income, usage, xCenter, yTop, incomeColor, usageColor)
     ------------------------------------------------------------
     -- SINGLE-LINE PANEL STATS:  Use   Net   Income
@@ -1340,12 +1332,18 @@ end
                 glRect(barLeft, barY, barLeft + barW, barY + barH)
 
                 
-                -- BAR FILL
+                -- BAR FILL (two-tone sheen)
                 local fillW = barW * frac
                 if fillW > 0 then
-                    glColor(1,1,0,0.90)
-                    glRect(barLeft, barY, barLeft + fillW, barY + barH)
+                    -- Bottom half (base color)
+                    glColor(1, 1, 0, 0.90)
+                    glRect(barLeft, barY, barLeft + fillW, barY + barH * 0.5)
+
+                    -- Top half (lighter sheen)
+                    glColor(1, 1, 0.98, 0.95)  -- slightly lighter yellow
+                    glRect(barLeft, barY + barH * 0.5, barLeft + fillW, barY + barH)
                 end
+
 
                 -- WHITE TICK
                 if frac > 0 then
@@ -1827,11 +1825,16 @@ local barX = statusCenterX - barW * 0.5
 glColor(0.6, 0.8, 1.0, 0.20)
 glRect(barX, barY, barX + barW, barY + barH)
 
--- fill
+-- fill (two‑tone sheen)
 local fillW = barW * frac
 if fillW > 0 then
+    -- Bottom half (base wind color)
     glColor(0.3, 0.6, 1.0, 0.90)
-    glRect(barX, barY, barX + fillW, barY + barH)
+    glRect(barX, barY, barX + fillW, barY + barH * 0.5)
+
+    -- Top half (lighter sheen)
+    glColor(0.45, 0.75, 1.0, 0.95)  -- slightly lighter blue
+    glRect(barX, barY + barH * 0.5, barX + fillW, barY + barH)
 end
 
 -- tick
@@ -2724,10 +2727,23 @@ do
 	glColor(0, 1, 1, 0.20)
     glRect(barX1, barY1, barX2, barY2)
 
-    -- Fill overlay (Metal Inc color)
-    local fillX = barX1 + (cur / max) * (barX2 - barX1)
-    glColor(cfg.metalIncomeColor)
-    glRect(barX1, barY1, fillX, barY2)
+-- Fill overlay (two-tone sheen for Metal)
+local fillX = barX1 + (cur / max) * (barX2 - barX1)
+
+-- Bottom half (base metal color)
+glColor(cfg.metalIncomeColor[1], cfg.metalIncomeColor[2], cfg.metalIncomeColor[3], 0.90)
+glRect(barX1, barY1, fillX, barY1 + (barH * 0.5))
+
+-- Top half (lighter sheen)
+local shine = 0.12  -- adjust for more/less highlight
+glColor(
+    math.min(1, cfg.metalIncomeColor[1] + shine),
+    math.min(1, cfg.metalIncomeColor[2] + shine),
+    math.min(1, cfg.metalIncomeColor[3] + shine),
+    0.95
+)
+glRect(barX1, barY1 + (barH * 0.5), fillX, barY2)
+
 
     -- White tick (current)
     glColor(1, 1, 1, 1)
@@ -2761,12 +2777,27 @@ do
         barY2 + sliderHeightAdd
     }
 
-    glColor(1, 0.2, 0.2, 1)
+    -- compute center
     local cx = (shareIndicatorArea[res][1] + shareIndicatorArea[res][3]) * 0.5
     local cy = (shareIndicatorArea[res][2] + shareIndicatorArea[res][4]) * 0.5
     local r  = sliderHalfWidth
+
+    ------------------------------------------------------------
+    -- SHADOW (added, nothing else changed)
+    ------------------------------------------------------------
+    glColor(0, 0, 0, 0.10)
+    glRect(cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2)
+
+    glColor(0, 0, 0, 0.18)
+    glRect(cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1)
+
+    ------------------------------------------------------------
+    -- ORIGINAL THUMB (unchanged)
+    ------------------------------------------------------------
+    glColor(1, 0.2, 0.2, 1)
     glRect(cx - r, cy - r, cx + r, cy + r)
 end
+
 
 
     -- Text label
@@ -2819,7 +2850,6 @@ do
         glRect(fillX - 1, barY1 - 2, fillX + 1, barY2 + 2)
     end
 
-
 ------------------------------------------------------------
 -- ENERGY → METAL CONVERSION SLIDER (Compact View)
 ------------------------------------------------------------
@@ -2845,13 +2875,27 @@ do
         barY2 + sliderHeightAdd
     }
 
-    -- beige knob (Top Bar color)
-    glColor(0.95, 0.95, 0.7, 1)
+    -- compute center
     local cx = (conversionIndicatorArea[1] + conversionIndicatorArea[3]) * 0.5
     local cy = (conversionIndicatorArea[2] + conversionIndicatorArea[4]) * 0.5
     local r  = sliderHalfWidth
+
+    ------------------------------------------------------------
+    -- SHADOW (added, nothing else changed)
+    ------------------------------------------------------------
+    glColor(0, 0, 0, 0.10)
+    glRect(cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2)
+
+    glColor(0, 0, 0, 0.18)
+    glRect(cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1)
+
+    ------------------------------------------------------------
+    -- ORIGINAL THUMB (unchanged beige color)
+    ------------------------------------------------------------
+    glColor(0.95, 0.95, 0.7, 1)
     glRect(cx - r, cy - r, cx + r, cy + r)
 end
+
 
 
 ------------------------------------------------------------
@@ -2882,12 +2926,27 @@ do
         barY2 + sliderHeightAdd
     }
 
-    glColor(1, 0.2, 0.2, 1)
+    -- compute center
     local cx = (shareIndicatorArea[res][1] + shareIndicatorArea[res][3]) * 0.5
     local cy = (shareIndicatorArea[res][2] + shareIndicatorArea[res][4]) * 0.5
     local r  = sliderHalfWidth
+
+    ------------------------------------------------------------
+    -- SHADOW (added, nothing else changed)
+    ------------------------------------------------------------
+    glColor(0, 0, 0, 0.10)
+    glRect(cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2)
+
+    glColor(0, 0, 0, 0.18)
+    glRect(cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1)
+
+    ------------------------------------------------------------
+    -- ORIGINAL THUMB (unchanged)
+    ------------------------------------------------------------
+    glColor(1, 0.2, 0.2, 1)
     glRect(cx - r, cy - r, cx + r, cy + r)
 end
+
 
 
     -- STORAGE TOTAL TEXT (mirrors Metal side)
@@ -3415,10 +3474,10 @@ do
             ------------------------------------------------------------------
             local descL1 = "Static:"
             local descR1 = "Commander, T1/T2 Construction Bots"
-            local descR2 = "Advanced Solar, Fusion, Advanced Fusion, etc."
+            local descR2 = "T1 Solar, Advanced Solar, Fusion, Advanced Fusion, etc."
 
             local descL2 = "Dynamic:"
-            local descR3 = "T1 Solar, Turbines, Share, Reclaim"
+            local descR3 = "Turbines, Share, Reclaim"
             local descR4 = "Tidal Generators, etc."
 
             -- Measure width
