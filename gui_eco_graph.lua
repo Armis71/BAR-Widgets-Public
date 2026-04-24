@@ -324,7 +324,7 @@ local cfg = {
 	historyOptions = {20, 30, 40, 50, 60},
 
     -- bgColor     = {0, 0, 0, 0.60},
-	bgColor     = {0, 0, 0, 0.99},   -- Background Opacity for the whole widget
+	bgColor     = {0, 0, 0, 0.66},   -- Background Opacity for the whole widget
     borderColor = {1, 1, 1, 0.5},    
 
     metalIncomeColor = {0.2, 1.0, 1.0, 1.0},
