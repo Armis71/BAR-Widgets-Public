@@ -61,6 +61,12 @@ local spGetTeamAllyTeamID     = Spring.GetTeamAllyTeamID
 
 energyConversionPercent 	  = energyConversionPercent or 0
 
+-- Tooltip on foreground of widget
+local pendingTooltip = nil
+local pendingTooltipX = 0
+local pendingTooltipY = 0
+
+
 -- REQUIRED FOR COMMANDER COUNT
 local spGetTeamList           = Spring.GetTeamList
 local spGetTeamUnitDefCount   = Spring.GetTeamUnitDefCount
@@ -85,6 +91,247 @@ energyShareOptionRects    = energyShareOptionRects or {}
 energySharePercent        = energySharePercent or 0
 energyConversionPercent   = energyConversionPercent or 0
 energyShareButton         = energyShareButton or {x1=0,y1=0,x2=0,y2=0}
+
+-- ECHO GRAPH STATUS TABLE
+local statusTooltips = {
+
+    ["STALLING"] = [[
+STALLING
+You are losing metal AND energy at the same time. Your economy is collapsing.
+
+Equation:
+mNet < 0  AND  eNet < 0
+
+How it works:
+mNet = metal income − metal spending
+eNet = energy income − energy spending
+Both are negative → both resources are draining.
+
+Player should know/do:
+• Stop building immediately
+• Reduce buildpower (too many nanos/factories)
+• Fix energy first (it affects everything)
+• Reclaim wrecks for instant resources
+• Expand to new mexes
+]],
+
+
+    ["METAL STARVED"] = [[
+METAL STARVED
+Metal is draining, but energy is fine.
+
+Equation:
+mNet < 0  AND  eNet >= 0
+
+How it works:
+mNet = metal income − metal spending
+eNet = energy income − energy spending
+mNet is negative → metal is the weaker resource.
+
+Player should know/do:
+• Reduce buildpower (too many constructors)
+• Expand to more metal spots
+• Reclaim metal from wrecks
+• Avoid expensive units until stabilized
+]],
+
+
+    ["ENERGY STARVED"] = [[
+ENERGY STARVED
+Energy is draining, but metal is fine.
+
+Equation:
+eNet < 0  AND  mNet >= 0
+
+How it works:
+mNet = metal income − metal spending
+eNet = energy income − energy spending
+eNet is negative → energy is the weaker resource.
+
+Player should know/do:
+• Build more solars, winds, or turbines (fast fix)
+• Turn off radars, cloaks, shields, and energy-heavy units
+• Reduce nano/factory spam
+• Build a fusion if you have the metal (long-term fix)
+]],
+
+
+    ["DEPLETED"] = [[
+DEPLETED
+You have zero storage for metal or energy.
+
+Equation:
+mStorage == 0  OR  eStorage == 0
+
+How it works:
+mStorage = max metal storage
+eStorage = max energy storage
+One or both storages are missing → no buffer for fluctuations.
+
+Player should know/do:
+• Build storage
+• Avoid large eco swings
+• Don’t overbuild constructors early
+]],
+
+
+    ["OVERFLOWING"] = [[
+OVERFLOWING
+Your storage is almost full — you’re wasting income.
+
+Equation:
+mCur >= 0.95 * mStorage   OR   eCur >= 0.95 * eStorage
+
+How it works:
+mCur = current metal
+eCur = current energy
+mStorage = max metal storage
+eStorage = max energy storage
+Storage is 95%+ full → extra income is wasted.
+
+Player should know/do:
+• Spend more resources
+• Add buildpower
+• Tech up or expand production
+• Build more storage if needed
+]],
+
+
+    ["SURGING"] = [[
+SURGING
+Your eco is booming — both metal and energy are strongly positive.
+
+Equation:
+mNet > 0  AND  eNet > 0
+AND
+mRatio > 0.35  AND  eRatio > 0.35
+
+How it works:
+mNet = metal income − metal spending
+eNet = energy income − energy spending
+mRatio = mNet / mIncome
+eRatio = eNet / eIncome
+Both ratios are strongly positive → eco is booming.
+
+Player should know/do:
+• Increase buildpower
+• Start teching
+• Push aggression
+• Spend before you overflow
+]],
+
+
+    ["BURNING"] = [[
+BURNING
+You’re draining storage fast — not dead yet, but headed toward STARVED.
+
+Equation:
+(mNet < 0  OR  eNet < 0)
+AND
+(mCur > 0.25 * mStorage  OR  eCur > 0.25 * eStorage)
+AND
+(mRatio < -0.25  OR  eRatio < -0.25)
+
+How it works:
+mNet/eNet = net resource flow
+mCur/eCur = current stored resources
+mStorage/eStorage = max storage
+mRatio/eRatio = net ÷ income
+You are losing resources quickly but still have some storage left.
+
+Player should know/do:
+• Reduce buildpower
+• Stop unnecessary factories
+• Fix the resource draining hardest
+• Prepare for STARVED if not corrected
+]],
+
+
+    ["FLOATING"] = [[
+FLOATING
+You’re sitting on too much eco — not overflowing yet, but close.
+
+Equation:
+(mCur/mStorage > 0.80  OR  eCur/eStorage > 0.80)
+AND
+(mNet >= 0  OR  mRatio > -0.10)
+AND
+(eNet >= 0  OR  eRatio > -0.10)
+
+How it works:
+mCur/eCur = current stored resources
+mStorage/eStorage = max storage
+mNet/eNet = net resource flow
+mRatio/eRatio = net ÷ income
+Storage is high (80%+) and ratios are not strongly negative.
+
+Player should know/do:
+• Spend more
+• Add buildpower
+• Start tech or upgrades
+]],
+
+
+    ["ECO WEAK"] = [[
+ECO WEAK
+Your weaker resource (metal or energy) is only 0–15% positive.
+
+Equation:
+0.00 <= r < 0.15
+
+How it works:
+mRatio = mNet / mIncome
+eRatio = eNet / eIncome
+r = min(mRatio, eRatio)
+Your weaker resource is barely positive.
+
+Player should know/do:
+• Don’t overbuild
+• Add small income
+• Expand carefully
+]],
+
+
+    ["ECO STABLE"] = [[
+ECO STABLE
+Your weaker resource is 15–35% positive.
+
+Equation:
+0.15 <= r < 0.35
+
+How it works:
+mRatio = mNet / mIncome
+eRatio = eNet / eIncome
+r = min(mRatio, eRatio)
+Your weaker resource is moderately positive.
+
+Player should know/do:
+• Build normally
+• Add moderate buildpower
+• Expand steadily
+]],
+
+
+    ["ECO STRONG"] = [[
+ECO STRONG
+Your weaker resource is 35%+ positive.
+
+Equation:
+r >= 0.35
+
+How it works:
+mRatio = mNet / mIncome
+eRatio = eNet / eIncome
+r = min(mRatio, eRatio)
+Even your weaker resource is strong.
+
+Player should know/do:
+• Add buildpower
+• Tech up
+• Push aggression
+]],
+}
+
 
 WG.EcoGraph_UIVisible = true   -- master visibility flag
 
@@ -514,7 +761,7 @@ local currentStatus        = "ECO STABLE"
 local pendingStatus        = nil
 local pendingStartTime     = 0
 local lastStatusChangeTime = 0
-local STATUS_HOLD_TIME     = 10  -- seconds
+local STATUS_HOLD_TIME     = 3  -- seconds
 
 -- GRAPH SMOOTHING STATE (EMA)
 local smoothMetal  = nil
@@ -1024,9 +1271,11 @@ end
 
 -- SMOOTHED ECO STATUS (5-second stability window)
 local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, eStorage)
-    
+
+    ----------------------------------------------------------------
     -- 1. RAW STATUS DETECTION (instantaneous)
-        local rawStatus
+    ----------------------------------------------------------------
+    local rawStatus
 
     -- Hard failures first
     if mNet < 0 and eNet < 0 then
@@ -1046,12 +1295,42 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         rawStatus = "OVERFLOWING"
 
     else
-        -- Ratio-based eco health
+        ----------------------------------------------------------------
+        -- Precompute ratios and fullness
+        ----------------------------------------------------------------
         local mRatio = (mIncome > 0) and (mNet / mIncome) or 0
         local eRatio = (eIncome > 0) and (eNet / eIncome) or 0
         local r      = math.min(mRatio, eRatio)
 
-        if r < 0.15 then
+        local mFull  = (mStorage > 0) and (mCur / mStorage) or 0
+        local eFull  = (eStorage > 0) and (eCur / eStorage) or 0
+
+        ----------------------------------------------------------------
+        -- NEW ADVANCED STATES
+        ----------------------------------------------------------------
+
+        -- SURGING: strong positive net relative to income
+        if mNet > 0 and eNet > 0 and mRatio > 0.35 and eRatio > 0.35 then
+            rawStatus = "SURGING"
+
+        -- BURNING: strong negative net but not yet stalling/starved
+        elseif (mNet < 0 or eNet < 0)
+            and (mCur > mStorage * 0.25 or eCur > eStorage * 0.25)
+            and (mRatio < -0.25 or eRatio < -0.25)
+        then
+            rawStatus = "BURNING"
+
+        -- FLOATING: high storage but not overflowing or failing
+        elseif (mFull > 0.80 or eFull > 0.80)
+            and (mNet >= 0 or mRatio > -0.10)
+            and (eNet >= 0 or eRatio > -0.10)
+        then
+            rawStatus = "FLOATING"
+
+        ----------------------------------------------------------------
+        -- FALLBACK: ECO WEAK / STABLE / STRONG
+        ----------------------------------------------------------------
+        elseif r < 0.15 then
             rawStatus = "ECO WEAK"
         elseif r < 0.35 then
             rawStatus = "ECO STABLE"
@@ -1060,7 +1339,9 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         end
     end
 
+    ----------------------------------------------------------------
     -- 2. STATUS SMOOTHING LOGIC (5-second hold)
+    ----------------------------------------------------------------
     local now = spGetTimer()
 
     -- If raw status matches current → accept immediately
@@ -1088,6 +1369,7 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
     -- Otherwise → still holding old status
     return currentStatus
 end
+
 
 -- REPLAY-AWARE VIEWED TEAM DETECTOR (SAFE FOR LIVE GAMES)
 local function GetViewedTeamID()
@@ -2783,6 +3065,80 @@ DrawPanelStats(
     glColor(col)
     glText(string.format("Status: %s", status),
         centerX + 35, box.y2 - 20, (fontSize + 4 * FONT_SCALE), "oc")
+
+-- STATUS TOOLTIP (50% larger hover box)
+local statusText = string.format("Status: %s", status)
+local fontH = (fontSize + 4 * FONT_SCALE)
+
+-- Measure text width
+local textWidth = gl.GetTextWidth(statusText) * fontH
+
+-- Text is centered ("oc"), so offset left by half width
+local sx = (centerX + 35) - (textWidth * 0.5)
+local sy = box.y2 - 20
+
+-- Base bounding box
+local x1 = sx
+local x2 = sx + textWidth
+local y1 = sy - fontH * 0.8
+local y2 = sy + fontH * 0.2
+
+-- Expand hover box by 50%
+local expandX = (x2 - x1) * 0.25
+local expandY = (y2 - y1) * 0.25
+
+x1 = x1 - expandX
+x2 = x2 + expandX
+y1 = y1 - expandY
+y2 = y2 + expandY
+
+local mx, my = Spring.GetMouseState()
+
+if mx >= x1 and mx <= x2 and my >= y1 and my <= y2 then
+    local tip = statusTooltips[status]
+    if tip then
+        -- Tooltip box size
+        local pad = 6
+        local lines = {}
+
+        -- Preserve blank lines
+        for line in tip:gmatch("([^\n]*)\n?") do
+            if line == "" then
+                lines[#lines+1] = " "
+            else
+                lines[#lines+1] = line
+            end
+        end
+
+        local maxWidth = 0
+        for _, line in ipairs(lines) do
+            local w = gl.GetTextWidth(line) * fontSize
+            if w > maxWidth then maxWidth = w end
+        end
+
+        local tw = maxWidth + pad * 4
+        local th = (#lines * (fontSize + 4)) + pad * 3
+
+        -- Tooltip position
+        local tipX = mx + 18
+        local tipY = my + 18
+        if tipY + th > vsy - 4 then
+            tipY = my - th - 18
+        end
+
+        ----------------------------------------------------------------
+        -- FOREGROUND TOOLTIP HANDOFF
+        ----------------------------------------------------------------
+        pendingTooltip = {
+            lines = lines,
+            tw = tw,
+            th = th,
+            pad = pad,
+        }
+        pendingTooltipX = tipX
+        pendingTooltipY = tipY
+    end
+end
 
 
 -- COMMANDERS ONLY (same column, resize‑safe)
@@ -4522,8 +4878,47 @@ end
         end
 
         DrawHideButton()
+    end   -- ← closes DrawCompactOverlay() call inside DrawScreen
+
+----------------------------------------------------------------
+-- INSERT FOREGROUND TOOLTIP RENDERER HERE
+----------------------------------------------------------------
+
+-- FINAL FOREGROUND TOOLTIP DRAW
+if pendingTooltip then
+    local tip = pendingTooltip
+    local tipX = pendingTooltipX
+    local tipY = pendingTooltipY
+
+    -- Background
+    glColor(1, 1, 1, 0.92)
+    glRect(tipX, tipY, tipX + tip.tw, tipY + tip.th)
+
+    -- Border
+    glColor(0, 0, 0, 0.25)
+    glLineWidth(1.0)
+    glBeginEnd(GL_LINES, function()
+        glVertex(tipX, tipY); glVertex(tipX + tip.tw, tipY)
+        glVertex(tipX + tip.tw, tipY); glVertex(tipX + tip.tw, tipY + tip.th)
+        glVertex(tipX + tip.tw, tipY + tip.th); glVertex(tipX, tipY + tip.th)
+        glVertex(tipX, tipY + tip.th); glVertex(tipX, tipY)
+    end)
+
+    -- Text
+    glColor(0, 0, 0, 1)
+    local y = tipY + tip.th - tip.pad - fontSize
+    for _, line in ipairs(tip.lines) do
+        glText(line, tipX + tip.pad, y, fontSize, "lo")
+        y = y - (fontSize + 4)
     end
+
+    pendingTooltip = nil
 end
+
+----------------------------------------------------------------
+-- END OF INSERT
+----------------------------------------------------------------
+end   -- ← THIS closes widget:DrawScreen()
 
 -- METAL INC TOOLTIP
 do
