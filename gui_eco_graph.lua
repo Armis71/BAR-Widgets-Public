@@ -3083,6 +3083,9 @@ local x2 = sx + textWidth
 local y1 = sy - fontH * 0.8
 local y2 = sy + fontH * 0.2
 
+-- Expand upward to include wind stats + wind bar
+y2 = y2 + 55   -- covers wind text + wind bar
+
 -- Expand hover box by 50%
 local expandX = (x2 - x1) * 0.25
 local expandY = (y2 - y1) * 0.25
@@ -3091,6 +3094,7 @@ x1 = x1 - expandX
 x2 = x2 + expandX
 y1 = y1 - expandY
 y2 = y2 + expandY
+
 
 local mx, my = Spring.GetMouseState()
 
