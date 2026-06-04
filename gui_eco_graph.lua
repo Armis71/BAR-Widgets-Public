@@ -92,41 +92,23 @@ energySharePercent        = energySharePercent or 0
 energyConversionPercent   = energyConversionPercent or 0
 energyShareButton         = energyShareButton or {x1=0,y1=0,x2=0,y2=0}
 
--- ECHO GRAPH STATUS TABLE
+-- ECO GRAPH STATUS TABLE
 local statusTooltips = {
 
-    ["STALLING"] = [[
-STALLING
-You are losing metal AND energy at the same time. Your economy is collapsing.
+    ["METAL DRAIN"] = [[
+METAL DRAIN
+Metal is draining AND your metal storage is below 50%.
 
 Equation:
-mNet < 0  AND  eNet < 0
+mNet < -1
+AND
+mCur < 0.50 * mStorage
 
 How it works:
 mNet = metal income − metal spending
-eNet = energy income − energy spending
-Both are negative → both resources are draining.
-
-Player should know/do:
-• Stop building immediately
-• Reduce buildpower (too many nanos/factories)
-• Fix energy first (it affects everything)
-• Reclaim wrecks for instant resources
-• Expand to new mexes
-]],
-
-
-    ["METAL STARVED"] = [[
-METAL STARVED
-Metal is draining, but energy is fine.
-
-Equation:
-mNet < 0  AND  eNet >= 0
-
-How it works:
-mNet = metal income − metal spending
-eNet = energy income − energy spending
-mNet is negative → metal is the weaker resource.
+mCur = current metal
+mStorage = max metal storage
+Metal net is negative AND storage is low → metal is actually in danger.
 
 Player should know/do:
 • Reduce buildpower (too many constructors)
@@ -136,17 +118,20 @@ Player should know/do:
 ]],
 
 
-    ["ENERGY STARVED"] = [[
-ENERGY STARVED
-Energy is draining, but metal is fine.
+    ["ENERGY DRAIN"] = [[
+ENERGY DRAIN
+Energy is draining AND your energy storage is below 50%.
 
 Equation:
-eNet < 0  AND  mNet >= 0
+eNet < -20
+AND
+eCur < 0.50 * eStorage
 
 How it works:
-mNet = metal income − metal spending
 eNet = energy income − energy spending
-eNet is negative → energy is the weaker resource.
+eCur = current energy
+eStorage = max energy storage
+Energy net is significantly negative AND storage is low → energy is actually in danger.
 
 Player should know/do:
 • Build more solars, winds, or turbines (fast fix)
@@ -177,17 +162,15 @@ Player should know/do:
 
     ["OVERFLOWING"] = [[
 OVERFLOWING
-Your storage is almost full — you’re wasting income.
+Your storage is almost full AND you are gaining more than you can store.
 
 Equation:
-mCur >= 0.95 * mStorage   OR   eCur >= 0.95 * eStorage
+(mCur >= 0.95 * mStorage  OR  eCur >= 0.95 * eStorage)
+AND
+(mNet > 1  OR  eNet > 1)
 
 How it works:
-mCur = current metal
-eCur = current energy
-mStorage = max metal storage
-eStorage = max energy storage
-Storage is 95%+ full → extra income is wasted.
+Storage is 95%+ full AND net income is positive → extra income is wasted.
 
 Player should know/do:
 • Spend more resources
@@ -207,10 +190,6 @@ AND
 mRatio > 0.35  AND  eRatio > 0.35
 
 How it works:
-mNet = metal income − metal spending
-eNet = energy income − energy spending
-mRatio = mNet / mIncome
-eRatio = eNet / eIncome
 Both ratios are strongly positive → eco is booming.
 
 Player should know/do:
@@ -223,7 +202,7 @@ Player should know/do:
 
     ["BURNING"] = [[
 BURNING
-You’re draining storage fast — not dead yet, but headed toward STARVED.
+You’re draining storage fast — not dead yet, but headed toward DRAIN.
 
 Equation:
 (mNet < 0  OR  eNet < 0)
@@ -233,17 +212,13 @@ AND
 (mRatio < -0.25  OR  eRatio < -0.25)
 
 How it works:
-mNet/eNet = net resource flow
-mCur/eCur = current stored resources
-mStorage/eStorage = max storage
-mRatio/eRatio = net ÷ income
 You are losing resources quickly but still have some storage left.
 
 Player should know/do:
 • Reduce buildpower
 • Stop unnecessary factories
 • Fix the resource draining hardest
-• Prepare for STARVED if not corrected
+• Prepare for DRAIN if not corrected
 ]],
 
 
@@ -259,10 +234,6 @@ AND
 (eNet >= 0  OR  eRatio > -0.10)
 
 How it works:
-mCur/eCur = current stored resources
-mStorage/eStorage = max storage
-mNet/eNet = net resource flow
-mRatio/eRatio = net ÷ income
 Storage is high (80%+) and ratios are not strongly negative.
 
 Player should know/do:
@@ -280,8 +251,6 @@ Equation:
 0.00 <= r < 0.15
 
 How it works:
-mRatio = mNet / mIncome
-eRatio = eNet / eIncome
 r = min(mRatio, eRatio)
 Your weaker resource is barely positive.
 
@@ -300,8 +269,6 @@ Equation:
 0.15 <= r < 0.35
 
 How it works:
-mRatio = mNet / mIncome
-eRatio = eNet / eIncome
 r = min(mRatio, eRatio)
 Your weaker resource is moderately positive.
 
@@ -320,9 +287,6 @@ Equation:
 r >= 0.35
 
 How it works:
-mRatio = mNet / mIncome
-eRatio = eNet / eIncome
-r = min(mRatio, eRatio)
 Even your weaker resource is strong.
 
 Player should know/do:
@@ -814,8 +778,8 @@ local cfg = {
 -- STATUS COLORS
 local statusColors = {
     ["STALLING"]        = {1.0, 0.2, 0.2, 1.0},  -- red
-    ["METAL STARVED"]   = {1.0, 0.5, 0.0, 1.0},  -- orange
-    ["ENERGY STARVED"]  = {1.0, 0.5, 0.0, 1.0},  -- orange
+    ["METAL DRAIN"]   = {1.0, 0.5, 0.0, 1.0},  -- orange
+    ["ENERGY DRAIN"]  = {1.0, 0.5, 0.0, 1.0},  -- orange
 
     ["ECO WEAK"]        = {1.0, 0.9, 0.2, 1.0},  -- yellow
     ["ECO STABLE"]      = {0.3, 1.0, 0.3, 1.0},  -- green
@@ -1277,8 +1241,8 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
     ----------------------------------------------------------------
     local rawStatus
 
-    -- Hard failures first
-    if mNet < 0 and eNet < 0 then
+--[[     -- Hard failures first
+    if false then
         rawStatus = "STALLING"
 
     elseif mNet < 0 then
@@ -1286,12 +1250,23 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
 
     elseif eNet < 0 then
         rawStatus = "ENERGY STARVED"
+ ]]
+
+    -- Hard failures first (STALLING removed)
+    if mNet < -1 and mCur < (0.50 * mStorage) then
+        rawStatus = "METAL DRAIN"
+
+    elseif eNet < -20 and eCur < (0.50 * eStorage) then
+        rawStatus = "ENERGY DRAIN"
+
 
     -- Storage-based advanced states
     elseif mStorage == 0 or eStorage == 0 then
         rawStatus = "DEPLETED"
 
-    elseif mCur >= mStorage * 0.95 or eCur >= eStorage * 0.95 then
+    elseif (mCur >= mStorage * 0.95 or eCur >= eStorage * 0.95)
+        and (mNet > 1 or eNet > 1)
+    then
         rawStatus = "OVERFLOWING"
 
     else
@@ -1313,7 +1288,7 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         if mNet > 0 and eNet > 0 and mRatio > 0.35 and eRatio > 0.35 then
             rawStatus = "SURGING"
 
-        -- BURNING: strong negative net but not yet stalling/starved
+        -- BURNING: strong negative net but not yet stalling/drain
         elseif (mNet < 0 or eNet < 0)
             and (mCur > mStorage * 0.25 or eCur > eStorage * 0.25)
             and (mRatio < -0.25 or eRatio < -0.25)
@@ -3001,6 +2976,63 @@ UpdateConverterStats()
         glVertex(box.x1,box.y2); glVertex(box.x1,box.y1)
     end)
 
+    ----------------------------------------------------------------
+    -- WIND BACKPLATE (moved here so it draws BEHIND the window)
+    ----------------------------------------------------------------
+
+    -- RAW ENGINE WIND (needed for bar geometry)
+    local _, _, _, curWind = Spring.GetWind()
+    local minW = Game.windMin or 0
+    local maxW = Game.windMax or 1
+    curWind = math.min(maxW, math.max(minW, curWind))
+    local frac = math.max(0, math.min(1, curWind / maxW))
+
+    -- Position Wind directly under Status
+    local textY = box.y2 - 40
+    local barY  = textY - 16
+
+    -- X anchor (centered)
+    local centerX = (box.x1 + box.x2) * 0.5
+    local statusCenterX = centerX + 35
+
+    -- BAR GEOMETRY
+    local barW = 190
+    local barH = 12
+    local barX = statusCenterX - barW * 0.5
+
+    -- BACKPLATE GEOMETRY
+    local bgPad = 5
+    local bevel = 8
+    local bx1 = barX - bgPad
+    local bx2 = barX + barW + bgPad
+    local by1 = barY - bgPad + 3
+    local by2 = barY + barH + bgPad + 3
+
+    -- extend slanted sides all the way down
+    -- local midY = by2
+    local midY = (by1 + by2) * 0.5
+
+
+    -- BACKPLATE FILL
+    glColor(0, 0, 0, cfg.bgColor[4])
+    glBeginEnd(GL.TRIANGLE_FAN, function()
+        glVertex(bx1 + bevel, by1)
+        glVertex(bx2 - bevel, by1)
+        glVertex(bx2, midY)
+        glVertex(bx1, midY)
+    end)
+
+    -- BACKPLATE BORDER
+    glColor(cfg.borderColor)
+    glLineWidth(1.3)
+    glBeginEnd(GL.LINE_STRIP, function()
+        glVertex(bx1, midY)
+        glVertex(bx1 + bevel, by1)
+        glVertex(bx2 - bevel, by1)
+        glVertex(bx2, midY)
+    end)
+
+    
 -- Title + Player Name (single row, Compact View)
 glColor(cfg.titleColor)
 
@@ -3251,31 +3283,7 @@ local barW = 190
 local barH = 12
 local barX = statusCenterX - barW * 0.5
 
--- top-half background area behind the wind bar (slanted ends, matching main UI opacity)
-local bgPad = 5
-local bevel = 8
-local bx1 = barX - bgPad
-local bx2 = barX + barW + bgPad
-local by1 = barY - bgPad + 3
-local by2 = barY + barH + bgPad + 3
-local midY = (by1 + by2) * 0.5
-
-glColor(0, 0, 0, cfg.bgColor[4])
-glBeginEnd(GL.TRIANGLE_FAN, function()
-    glVertex(bx1 + bevel, by1)
-    glVertex(bx2 - bevel, by1)
-    glVertex(bx2, midY)
-    glVertex(bx1, midY)
-end)
-
-glColor(cfg.borderColor)
-glLineWidth(1.3)
-glBeginEnd(GL.LINE_STRIP, function()
-    glVertex(bx1, midY)
-    glVertex(bx1 + bevel, by1)
-    glVertex(bx2 - bevel, by1)
-    glVertex(bx2, midY)
-end)
+--- here is the place for the slandted backplate
 
 -- inner bar background
 local innerPadX = 6
