@@ -1295,12 +1295,15 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         then
             rawStatus = "BURNING"
 
-        -- FLOATING: high storage but not overflowing or failing
-        elseif (mFull > 0.80 or eFull > 0.80)
-            and (mNet >= 0 or mRatio > -0.10)
-            and (eNet >= 0 or eRatio > -0.10)
-        then
-            rawStatus = "FLOATING"
+    -- FLOATING: high storage but not overflowing or draining
+    elseif (mFull > 0.80 or eFull > 0.80)
+        and (mCur >= 0.50 * mStorage)
+        and (eCur >= 0.50 * eStorage)
+        and (mNet >= 0 or mRatio > -0.10)
+        and (eNet >= 0 or eRatio > -0.10)
+    then
+        rawStatus = "FLOATING"
+
 
         ----------------------------------------------------------------
         -- FALLBACK: ECO WEAK / STABLE / STRONG
