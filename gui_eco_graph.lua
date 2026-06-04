@@ -761,7 +761,7 @@ local currentStatus        = "ECO STABLE"
 local pendingStatus        = nil
 local pendingStartTime     = 0
 local lastStatusChangeTime = 0
-local STATUS_HOLD_TIME     = 3  -- seconds
+local STATUS_HOLD_TIME     = 2  -- seconds
 
 -- GRAPH SMOOTHING STATE (EMA)
 local smoothMetal  = nil
