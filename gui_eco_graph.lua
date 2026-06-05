@@ -3,8 +3,8 @@ function widget:GetInfo()
         name      = "Eco Graph",
         desc      = "Top Bar widget replacement. Tracks your Metal and Energy economy in real time, helping you monitor income, storage, and usage so you can make better macro decisions.",
         author    = "Copilot + Armis71",
-        date      = "2026-05-05",
-        version   = "v3.0",
+        date      = "2026-06-05",
+        version   = "v5.0",
         license   = "GPL v2 or later",
         layer     = -999999,
         enabled   = true,
@@ -1323,15 +1323,16 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         ----------------------------------------------------------------
         -- FALLBACK STATES: ECO WEAK / STABLE / STRONG
         ----------------------------------------------------------------
-        elseif r < 0.15 then
-            rawStatus = "ECO WEAK"
+    elseif r < 0.10 then
+        rawStatus = "ECO WEAK"
 
-        elseif r < 0.35 then
-            rawStatus = "ECO STABLE"
+    elseif r < 0.30 then
+        rawStatus = "ECO STABLE"
 
-        else
-            rawStatus = "ECO STRONG"
-        end
+    else
+        rawStatus = "ECO STRONG"
+    end
+
     end
 
 
