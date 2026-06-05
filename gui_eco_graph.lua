@@ -3206,7 +3206,7 @@ do
 
     -- X anchor for BOTH the label and the numbers
     -- local commandersX = metalStatsX + 105
-	local commandersX = (metalStatsX + centerX) * 0.5 - 5
+	local commandersX = (metalStatsX + centerX) * 0.5 + 3
 
     -- Y positions
     local commandersLabelY = statsY
