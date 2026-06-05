@@ -2209,6 +2209,15 @@ function widget:GameFrame()
     local gf = spGetGameFrame()
 
     ----------------------------------------------------------------------
+    -- THROTTLE: update only every 15 frames (~0.5 seconds)
+    ----------------------------------------------------------------------
+    if (gf - (lastUpdate or 0)) < 3 then  -- 3 frames is about 0.1 seconds, adjust as needed
+        return
+    end
+    lastUpdate = gf
+    ----------------------------------------------------------------------
+
+    ----------------------------------------------------------------------
     -- PRE-GAME: ensure history tables exist and have at least 1 sample
     ----------------------------------------------------------------------
     if gf < 1 then
@@ -2225,7 +2234,6 @@ function widget:GameFrame()
                 { t = t, income = 0, usage = 0 },
             }
         end
-        -- IMPORTANT: no return here, we still want normal logic + BuildGraphList()
     end
     ----------------------------------------------------------------------
 
@@ -2266,6 +2274,7 @@ function widget:GameFrame()
     end
     BuildGraphList()
 end
+
 
 -- UPDATED DRAW OVERLAY (USES CACHED COMMANDER COUNTS)
 local function DrawOverlay()
