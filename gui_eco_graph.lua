@@ -97,18 +97,17 @@ local statusTooltips = {
 
     ["METAL DRAIN"] = [[
 METAL DRAIN
-Metal is draining AND your metal storage is below 50%.
+Metal is draining AND your metal storage is below 50%, but you still have some metal left.
 
 Equation:
 mNet < -1
 AND
+mCur > 0.01
+AND
 mCur < 0.50 * mStorage
 
 How it works:
-mNet = metal income − metal spending
-mCur = current metal
-mStorage = max metal storage
-Metal net is negative AND storage is low → metal is actually in danger.
+Metal net is negative AND storage is low → metal is being bled away.
 
 Player should know/do:
 • Reduce buildpower (too many constructors)
@@ -120,47 +119,44 @@ Player should know/do:
 
     ["ENERGY DRAIN"] = [[
 ENERGY DRAIN
-Energy is draining AND your energy storage is below 50%.
+Energy is draining AND your energy storage is below 50%, but you still have some energy left.
 
 Equation:
 eNet < -20
 AND
+eCur > 0.01
+AND
 eCur < 0.50 * eStorage
 
 How it works:
-eNet = energy income − energy spending
-eCur = current energy
-eStorage = max energy storage
-Energy net is significantly negative AND storage is low → energy is actually in danger.
+Energy net is strongly negative AND storage is low → energy is collapsing.
 
 Player should know/do:
-• Build more solars, winds, or turbines (fast fix)
+• Build more solars, winds, or turbines
 • Turn off radars, cloaks, shields, and energy-heavy units
 • Reduce nano/factory spam
-• Build a fusion if you have the metal (long-term fix)
+• Build a fusion if you have the metal
 ]],
 
 
     ["DEPLETED"] = [[
 DEPLETED
-You have zero storage for metal or energy.
+One of your resources is completely empty.
 
 Equation:
-mStorage == 0  OR  eStorage == 0
+mCur <= 0.01  OR  eCur <= 0.01
 
 How it works:
-mStorage = max metal storage
-eStorage = max energy storage
-One or both storages are missing → no buffer for fluctuations.
+A resource has hit zero → you cannot drain what you no longer have.
 
 Player should know/do:
-• Build storage
+• Immediately fix the empty resource
+• Add income or reduce spending
 • Avoid large eco swings
-• Don’t overbuild constructors early
 ]],
 
 
-["OVERFLOWING"] = [[
+    ["OVERFLOWING"] = [[
 OVERFLOWING
 Your storage is almost full AND you are gaining more than you can store.
 
@@ -174,17 +170,14 @@ AND
 eCur >= 0.50 * eStorage
 
 How it works:
-Storage is 95%+ full AND net income is positive,
-AND both resources have at least 50% storage.
-This means your eco is healthy and you are wasting income.
+Storage is 95%+ full AND net income is positive → you are wasting resources.
 
 Player should know/do:
 • Add more buildpower
-• Spend resources faster (units, factories, tech)
+• Spend resources faster
 • Expand production
-• Build more storage to reduce waste
+• Build more storage
 ]],
-
 
 
     ["SURGING"] = [[
@@ -197,7 +190,7 @@ AND
 mRatio > 0.35  AND  eRatio > 0.35
 
 How it works:
-Both ratios are strongly positive → eco is booming.
+Both resources are growing rapidly relative to income.
 
 Player should know/do:
 • Increase buildpower
@@ -209,7 +202,7 @@ Player should know/do:
 
     ["BURNING"] = [[
 BURNING
-You’re draining storage fast — not dead yet, but headed toward DRAIN.
+You’re draining storage fast — not empty yet, but losing resources quickly.
 
 Equation:
 (mNet < 0  OR  eNet < 0)
@@ -219,7 +212,7 @@ AND
 (mRatio < -0.25  OR  eRatio < -0.25)
 
 How it works:
-You are losing resources quickly but still have some storage left.
+You are burning through stored resources at a high rate.
 
 Player should know/do:
 • Reduce buildpower
@@ -231,7 +224,7 @@ Player should know/do:
 
     ["FLOATING"] = [[
 FLOATING
-You’re sitting on too much eco — not overflowing yet, but close.
+You’re sitting on high storage — eco is stable and comfortable.
 
 Equation:
 (mCur/mStorage > 0.80  OR  eCur/eStorage > 0.80)
@@ -241,7 +234,7 @@ AND
 (eNet >= 0  OR  eRatio > -0.10)
 
 How it works:
-Storage is high (80%+) and ratios are not strongly negative.
+Storage is high (80%+) and nets are stable.
 
 Player should know/do:
 • Spend more
@@ -256,9 +249,9 @@ Your weaker resource (metal or energy) is only 0–15% positive.
 
 Equation:
 0.00 <= r < 0.15
+r = min(mRatio, eRatio)
 
 How it works:
-r = min(mRatio, eRatio)
 Your weaker resource is barely positive.
 
 Player should know/do:
@@ -274,9 +267,9 @@ Your weaker resource is 15–35% positive.
 
 Equation:
 0.15 <= r < 0.35
+r = min(mRatio, eRatio)
 
 How it works:
-r = min(mRatio, eRatio)
 Your weaker resource is moderately positive.
 
 Player should know/do:
@@ -292,6 +285,7 @@ Your weaker resource is 35%+ positive.
 
 Equation:
 r >= 0.35
+r = min(mRatio, eRatio)
 
 How it works:
 Even your weaker resource is strong.
@@ -302,7 +296,6 @@ Player should know/do:
 • Push aggression
 ]],
 }
-
 
 WG.EcoGraph_UIVisible = true   -- master visibility flag
 
@@ -784,21 +777,21 @@ local cfg = {
 
 -- STATUS COLORS
 local statusColors = {
-    ["STALLING"]        = {1.0, 0.2, 0.2, 1.0},  -- red
     ["METAL DRAIN"]   = {1.0, 0.5, 0.0, 1.0},  -- orange
     ["ENERGY DRAIN"]  = {1.0, 0.5, 0.0, 1.0},  -- orange
+  
+    ["DEPLETED"]      = {1.0, 0.0, 0.0, 1.0},  -- PURE RED (critical)
 
-    ["ECO WEAK"]        = {1.0, 0.9, 0.2, 1.0},  -- yellow
-    ["ECO STABLE"]      = {0.3, 1.0, 0.3, 1.0},  -- green
-    ["ECO STRONG"]      = {0.1, 1.0, 0.1, 1.0},  -- bright green
+    ["OVERFLOWING"]   = {0.7, 0.3, 1.0, 1.0},  -- purple
+    ["SURGING"]       = {0.3, 0.6, 1.0, 1.0},  -- blue
+    ["BURNING"]       = {1.0, 0.35, 0.0, 1.0},  -- flame orange-red
+    ["FLOATING"]      = {0.9, 0.9, 0.9, 1.0},  -- light
 
-    ["OVERFLOWING"]     = {0.7, 0.3, 1.0, 1.0},  -- purple
-    ["SURGING"]         = {0.3, 0.6, 1.0, 1.0},  -- blue
-    ["BURNING"]         = {0.6, 0.3, 0.0, 1.0},  -- brown
-
-    ["DEPLETED"]        = {0.1, 0.1, 0.1, 1.0},  -- dark
-    ["FLOATING"]        = {0.9, 0.9, 0.9, 1.0},  -- light
+    ["ECO WEAK"]      = {1.0, 0.9, 0.2, 1.0},  -- yellow
+    ["ECO STABLE"]    = {0.3, 1.0, 0.3, 1.0},  -- green
+    ["ECO STRONG"]    = {0.1, 1.0, 0.1, 1.0},  -- bright green
 }
+
 
 local lastViewedTeam  = nil
 local fadeAlpha       = 1
