@@ -245,7 +245,7 @@ Player should know/do:
 
 ["ECO WEAK"] = [[
 ECO WEAK
-Your weaker resource (metal or energy) is weak AND your storage is low.
+Your eco is fragile — net efficiency is low and storage is running thin.
 
 Equation:
 r < 0.10
