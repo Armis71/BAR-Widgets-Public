@@ -1240,6 +1240,7 @@ local function FormatTime(seconds)
     return string.format("%ds", s)
 end
 
+-- Start of Eco Status Logic
 -- SMOOTHED ECO STATUS (2-second stability window)
 local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, eStorage)
 
@@ -1252,22 +1253,25 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
     -- HARD FAILURES / DRAIN STATES (highest priority)
     ----------------------------------------------------------------
 
-    -- METAL DRAIN: metal net negative AND storage below 50%
-    if mNet < -1 and mCur < (0.50 * mStorage) then
+    -- METAL DRAIN: metal net negative AND storage below 50% AND still has metal
+    if mNet < -1 and mCur > 0.01 and mCur < (0.50 * mStorage) then
         rawStatus = "METAL DRAIN"
 
+
     -- ENERGY DRAIN: energy net strongly negative AND storage below 50%
-    elseif eNet < -20 and eCur < (0.50 * eStorage) then
+    elseif eNet < -20 and eCur > 0.01 and eCur < (0.50 * eStorage) then
         rawStatus = "ENERGY DRAIN"
+
 
 
     ----------------------------------------------------------------
     -- STORAGE-BASED STATES
     ----------------------------------------------------------------
 
-    -- DEPLETED: missing storage for either resource
-    elseif mStorage == 0 or eStorage == 0 then
+    -- DEPLETED: one of the resources is actually empty
+    elseif mCur <= 0.01 or eCur <= 0.01 then
         rawStatus = "DEPLETED"
+
 
     -- OVERFLOWING (Option 2):
     -- Storage ≥95% AND net > 1 AND BOTH storages ≥50%
@@ -1368,6 +1372,7 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
     -- Otherwise → still holding old status
     return currentStatus
 end
+-- End of Eco Status Logic
 
 
 -- REPLAY-AWARE VIEWED TEAM DETECTOR (SAFE FOR LIVE GAMES)
