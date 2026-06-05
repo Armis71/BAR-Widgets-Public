@@ -243,22 +243,27 @@ Player should know/do:
 ]],
 
 
-    ["ECO WEAK"] = [[
+["ECO WEAK"] = [[
 ECO WEAK
-Your weaker resource (metal or energy) is only 0–15% positive.
+Your weaker resource (metal or energy) is weak AND your storage is low.
 
 Equation:
-0.00 <= r < 0.15
+r < 0.10
+AND
+(mCur < 0.25 * mStorage  OR  eCur < 0.25 * eStorage)
 r = min(mRatio, eRatio)
 
 How it works:
-Your weaker resource is barely positive.
+Your net efficiency is poor AND you don’t have enough stored resources to buffer it.
+This only appears when storage is actually low — not when you are floating or overflowing.
 
 Player should know/do:
 • Don’t overbuild
 • Add small income
 • Expand carefully
+• Avoid large eco swings until storage recovers
 ]],
+
 
 
     ["ECO STABLE"] = [[
@@ -775,21 +780,25 @@ local cfg = {
     yPaddingFraction = 0.10,
 }
 
--- STATUS COLORS
+-- STATUS COLORS (Full Color-Theory Pass)
 local statusColors = {
-    ["METAL DRAIN"]   = {1.0, 0.5, 0.0, 1.0},  -- orange
-    ["ENERGY DRAIN"]  = {1.0, 0.5, 0.0, 1.0},  -- orange
+    -- CRITICAL / NEGATIVE STATES
+    ["METAL DRAIN"]   = {1.0, 0.45, 0.0, 1.0},   -- warning orange
+    ["ENERGY DRAIN"]  = {1.0, 0.45, 0.0, 1.0},   -- warning orange
   
-    ["DEPLETED"]      = {1.0, 0.0, 0.0, 1.0},  -- PURE RED (critical)
+    ["DEPLETED"]      = {1.0, 0.0, 0.0, 1.0},    -- pure red (critical)
 
-    ["OVERFLOWING"]   = {0.7, 0.3, 1.0, 1.0},  -- purple
-    ["SURGING"]       = {0.3, 0.6, 1.0, 1.0},  -- blue
-    ["BURNING"]       = {1.0, 0.35, 0.0, 1.0},  -- flame orange-red
-    ["FLOATING"]      = {0.9, 0.9, 0.9, 1.0},  -- light
+    ["BURNING"]       = {1.0, 0.30, 0.0, 1.0},   -- flame orange-red
 
-    ["ECO WEAK"]      = {1.0, 0.9, 0.2, 1.0},  -- yellow
-    ["ECO STABLE"]    = {0.3, 1.0, 0.3, 1.0},  -- green
-    ["ECO STRONG"]    = {0.1, 1.0, 0.1, 1.0},  -- bright green
+    -- POSITIVE / STORAGE STATES
+    ["OVERFLOWING"]   = {0.70, 0.30, 1.0, 1.0},  -- purple (excess)
+    ["SURGING"]       = {0.25, 0.55, 1.0, 1.0},  -- blue (growth)
+    ["FLOATING"]      = {0.90, 0.90, 0.90, 1.0}, -- light gray (stable)
+
+    -- ECO STRENGTH STATES
+    ["ECO WEAK"]      = {1.0, 0.75, 0.15, 1.0},  -- amber (caution)
+    ["ECO STABLE"]    = {0.30, 1.0, 0.30, 1.0},  -- green (healthy)
+    ["ECO STRONG"]    = {0.10, 1.0, 0.10, 1.0},  -- bright green (excellent)
 }
 
 
