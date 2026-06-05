@@ -160,7 +160,7 @@ Player should know/do:
 ]],
 
 
-    ["OVERFLOWING"] = [[
+["OVERFLOWING"] = [[
 OVERFLOWING
 Your storage is almost full AND you are gaining more than you can store.
 
@@ -168,16 +168,23 @@ Equation:
 (mCur >= 0.95 * mStorage  OR  eCur >= 0.95 * eStorage)
 AND
 (mNet > 1  OR  eNet > 1)
+AND
+mCur >= 0.50 * mStorage
+AND
+eCur >= 0.50 * eStorage
 
 How it works:
-Storage is 95%+ full AND net income is positive → extra income is wasted.
+Storage is 95%+ full AND net income is positive,
+AND both resources have at least 50% storage.
+This means your eco is healthy and you are wasting income.
 
 Player should know/do:
-• Spend more resources
-• Add buildpower
-• Tech up or expand production
-• Build more storage if needed
+• Add more buildpower
+• Spend resources faster (units, factories, tech)
+• Expand production
+• Build more storage to reduce waste
 ]],
+
 
 
     ["SURGING"] = [[
@@ -1233,7 +1240,7 @@ local function FormatTime(seconds)
     return string.format("%ds", s)
 end
 
--- SMOOTHED ECO STATUS (5-second stability window)
+-- SMOOTHED ECO STATUS (2-second stability window)
 local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, eStorage)
 
     ----------------------------------------------------------------
@@ -1241,38 +1248,42 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
     ----------------------------------------------------------------
     local rawStatus
 
---[[     -- Hard failures first
-    if false then
-        rawStatus = "STALLING"
+    ----------------------------------------------------------------
+    -- HARD FAILURES / DRAIN STATES (highest priority)
+    ----------------------------------------------------------------
 
-    elseif mNet < 0 then
-        rawStatus = "METAL STARVED"
-
-    elseif eNet < 0 then
-        rawStatus = "ENERGY STARVED"
- ]]
-
-    -- Hard failures first (STALLING removed)
+    -- METAL DRAIN: metal net negative AND storage below 50%
     if mNet < -1 and mCur < (0.50 * mStorage) then
         rawStatus = "METAL DRAIN"
 
+    -- ENERGY DRAIN: energy net strongly negative AND storage below 50%
     elseif eNet < -20 and eCur < (0.50 * eStorage) then
         rawStatus = "ENERGY DRAIN"
 
 
-    -- Storage-based advanced states
+    ----------------------------------------------------------------
+    -- STORAGE-BASED STATES
+    ----------------------------------------------------------------
+
+    -- DEPLETED: missing storage for either resource
     elseif mStorage == 0 or eStorage == 0 then
         rawStatus = "DEPLETED"
 
+    -- OVERFLOWING (Option 2):
+    -- Storage ≥95% AND net > 1 AND BOTH storages ≥50%
     elseif (mCur >= mStorage * 0.95 or eCur >= eStorage * 0.95)
         and (mNet > 1 or eNet > 1)
+        and (mCur >= 0.50 * mStorage)
+        and (eCur >= 0.50 * eStorage)
     then
         rawStatus = "OVERFLOWING"
 
+
+    ----------------------------------------------------------------
+    -- ADVANCED STATES (require ratio calculations)
+    ----------------------------------------------------------------
     else
-        ----------------------------------------------------------------
         -- Precompute ratios and fullness
-        ----------------------------------------------------------------
         local mRatio = (mIncome > 0) and (mNet / mIncome) or 0
         local eRatio = (eIncome > 0) and (eNet / eIncome) or 0
         local r      = math.min(mRatio, eRatio)
@@ -1280,42 +1291,52 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         local mFull  = (mStorage > 0) and (mCur / mStorage) or 0
         local eFull  = (eStorage > 0) and (eCur / eStorage) or 0
 
-        ----------------------------------------------------------------
-        -- NEW ADVANCED STATES
-        ----------------------------------------------------------------
 
+        ----------------------------------------------------------------
         -- SURGING: strong positive net relative to income
-        if mNet > 0 and eNet > 0 and mRatio > 0.35 and eRatio > 0.35 then
+        ----------------------------------------------------------------
+        if mNet > 0 and eNet > 0
+            and mRatio > 0.35 and eRatio > 0.35
+        then
             rawStatus = "SURGING"
 
-        -- BURNING: strong negative net but not yet stalling/drain
+
+        ----------------------------------------------------------------
+        -- BURNING: strong negative net but storage still above 25%
+        ----------------------------------------------------------------
         elseif (mNet < 0 or eNet < 0)
             and (mCur > mStorage * 0.25 or eCur > eStorage * 0.25)
             and (mRatio < -0.25 or eRatio < -0.25)
         then
             rawStatus = "BURNING"
 
-    -- FLOATING: high storage but not overflowing or draining
-    elseif (mFull > 0.80 or eFull > 0.80)
-        and (mCur >= 0.50 * mStorage)
-        and (eCur >= 0.50 * eStorage)
-        and (mNet >= 0 or mRatio > -0.10)
-        and (eNet >= 0 or eRatio > -0.10)
-    then
-        rawStatus = "FLOATING"
+
+        ----------------------------------------------------------------
+        -- FLOATING: high storage, stable nets, not draining or overflowing
+        ----------------------------------------------------------------
+        elseif (mFull > 0.80 or eFull > 0.80)
+            and (mCur >= 0.50 * mStorage)
+            and (eCur >= 0.50 * eStorage)
+            and (mNet >= 0 or mRatio > -0.10)
+            and (eNet >= 0 or eRatio > -0.10)
+        then
+            rawStatus = "FLOATING"
 
 
         ----------------------------------------------------------------
-        -- FALLBACK: ECO WEAK / STABLE / STRONG
+        -- FALLBACK STATES: ECO WEAK / STABLE / STRONG
         ----------------------------------------------------------------
         elseif r < 0.15 then
             rawStatus = "ECO WEAK"
+
         elseif r < 0.35 then
             rawStatus = "ECO STABLE"
+
         else
             rawStatus = "ECO STRONG"
         end
     end
+
 
     ----------------------------------------------------------------
     -- 2. STATUS SMOOTHING LOGIC (5-second hold)
