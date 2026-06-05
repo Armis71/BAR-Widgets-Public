@@ -3205,7 +3205,7 @@ do
 
     -- X anchor for BOTH the label and the numbers
     -- local commandersX = metalStatsX + 105
-	local commandersX = (metalStatsX + centerX) * 0.5 - 15
+	local commandersX = (metalStatsX + centerX) * 0.5 - 5
 
     -- Y positions
     local commandersLabelY = statsY
@@ -5427,7 +5427,7 @@ end
         local top = box.y2
         local h   = top - my
 
-        local minH = vsy * 0.02 --original 0.052  Vertical minimum  height of the main Eco Graph allowed.
+        local minH = vsy * 0.033 --original 0.052  Vertical minimum  height of the main Eco Graph allowed.
         local maxH = vsy * 0.90
         if h < minH then h = minH end
         if h > maxH then h = maxH end
