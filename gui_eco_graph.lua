@@ -242,7 +242,6 @@ Player should know/do:
 • Start tech or upgrades
 ]],
 
-
 ["ECO WEAK"] = [[
 ECO WEAK
 Your eco is fragile — net efficiency is low and storage is running thin.
@@ -250,12 +249,12 @@ Your eco is fragile — net efficiency is low and storage is running thin.
 Equation:
 r < 0.10
 AND
-(mCur < 0.25 * mStorage  OR  eCur < 0.25 * eStorage)
+(mCur < 0.50 * mStorage AND eCur < 0.50 * eStorage)
 r = min(mRatio, eRatio)
 
 How it works:
-Your net efficiency is poor AND you don’t have enough stored resources to buffer it.
-This only appears when storage is actually low — not when you are floating or overflowing.
+This only appears when your net efficiency is poor AND both metal and energy
+storages are below 50%. If either resource has healthy storage, ECO WEAK will not show.
 
 Player should know/do:
 • Don’t overbuild
@@ -265,17 +264,17 @@ Player should know/do:
 ]],
 
 
-
-    ["ECO STABLE"] = [[
+["ECO STABLE"] = [[
 ECO STABLE
-Your weaker resource is 15–35% positive.
+Your weaker resource is moderately positive — the eco is steady and not in danger.
 
 Equation:
-0.15 <= r < 0.35
+0.10 <= r < 0.35
 r = min(mRatio, eRatio)
 
 How it works:
-Your weaker resource is moderately positive.
+Your weaker resource is between 10% and 35% positive. This indicates a stable,
+healthy eco that can support normal building and expansion without major risk.
 
 Player should know/do:
 • Build normally
@@ -284,22 +283,24 @@ Player should know/do:
 ]],
 
 
-    ["ECO STRONG"] = [[
+["ECO STRONG"] = [[
 ECO STRONG
-Your weaker resource is 35%+ positive.
+Your weaker resource is strongly positive — your eco is performing very well.
 
 Equation:
 r >= 0.35
 r = min(mRatio, eRatio)
 
 How it works:
-Even your weaker resource is strong.
+Even your weaker resource is 35%+ positive. This means your eco is efficient,
+healthy, and capable of supporting aggressive scaling or teching.
 
 Player should know/do:
 • Add buildpower
 • Tech up
 • Push aggression
 ]],
+
 }
 
 WG.EcoGraph_UIVisible = true   -- master visibility flag
@@ -1332,10 +1333,14 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         ----------------------------------------------------------------
         -- FALLBACK STATES: ECO WEAK / STABLE / STRONG
         ----------------------------------------------------------------
-    elseif r < 0.10 then
+    elseif r < 0.10
+        and mCur < (0.50 * mStorage)
+        and eCur < (0.50 * eStorage)
+    then
         rawStatus = "ECO WEAK"
 
-    elseif r < 0.30 then
+
+    elseif r < 0.35 then
         rawStatus = "ECO STABLE"
 
     else
