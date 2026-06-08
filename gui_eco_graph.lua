@@ -97,9 +97,11 @@ local statusTooltips = {
 
     ["METAL DRAIN"] = [[
 METAL DRAIN
-Metal is draining AND your metal storage is below 50%, but you still have some metal left.
+Metal is draining AND your metal storage is below 50%, and metal is the worse resource.
 
 Equation:
+worstIsMetal == true
+AND
 mNet < -1
 AND
 mCur > 0.01
@@ -107,7 +109,7 @@ AND
 mCur < 0.50 * mStorage
 
 How it works:
-Metal net is negative AND storage is low → metal is being bled away.
+Metal is the more endangered resource AND its net is negative while storage is low.
 
 Player should know/do:
 • Reduce buildpower (too many constructors)
@@ -119,9 +121,11 @@ Player should know/do:
 
     ["ENERGY DRAIN"] = [[
 ENERGY DRAIN
-Energy is draining AND your energy storage is below 50%, but you still have some energy left.
+Energy is draining AND your energy storage is below 50%, and energy is the worse resource.
 
 Equation:
+worstIsEnergy == true
+AND
 eNet < -20
 AND
 eCur > 0.01
@@ -129,7 +133,7 @@ AND
 eCur < 0.50 * eStorage
 
 How it works:
-Energy net is strongly negative AND storage is low → energy is collapsing.
+Energy is the more endangered resource AND its net is strongly negative while storage is low.
 
 Player should know/do:
 • Build more solars, winds, or turbines
@@ -141,16 +145,18 @@ Player should know/do:
 
     ["DEPLETED"] = [[
 DEPLETED
-One of your resources is completely empty.
+Both resources are critically low — you have less than 5% storage in metal AND energy.
 
 Equation:
-mCur <= 0.01  OR  eCur <= 0.01
+mCur <= 0.05 * mStorage
+AND
+eCur <= 0.05 * eStorage
 
 How it works:
-A resource has hit zero → you cannot drain what you no longer have.
+Both storages are nearly empty. You have no buffer left for eco swings.
 
 Player should know/do:
-• Immediately fix the empty resource
+• Immediately fix income for both resources
 • Add income or reduce spending
 • Avoid large eco swings
 ]],
@@ -161,9 +167,9 @@ OVERFLOWING
 Your storage is almost full AND you are gaining more than you can store.
 
 Equation:
-(mCur >= 0.95 * mStorage  OR  eCur >= 0.95 * eStorage)
+(mCur >= 0.95 * mStorage OR eCur >= 0.95 * eStorage)
 AND
-(mNet > 1  OR  eNet > 1)
+(mNet > 1 OR eNet > 1)
 AND
 mCur >= 0.50 * mStorage
 AND
@@ -185,9 +191,9 @@ SURGING
 Your eco is booming — both metal and energy are strongly positive.
 
 Equation:
-mNet > 0  AND  eNet > 0
+mNet > 0 AND eNet > 0
 AND
-mRatio > 0.35  AND  eRatio > 0.35
+mRatio > 0.35 AND eRatio > 0.35
 
 How it works:
 Both resources are growing rapidly relative to income.
@@ -205,11 +211,11 @@ BURNING
 You’re draining storage fast — not empty yet, but losing resources quickly.
 
 Equation:
-(mNet < 0  OR  eNet < 0)
+(mNet < 0 OR eNet < 0)
 AND
-(mCur > 0.25 * mStorage  OR  eCur > 0.25 * eStorage)
+(mCur > 0.25 * mStorage OR eCur > 0.25 * eStorage)
 AND
-(mRatio < -0.25  OR  eRatio < -0.25)
+(mRatio < -0.25 OR eRatio < -0.25)
 
 How it works:
 You are burning through stored resources at a high rate.
@@ -227,11 +233,11 @@ FLOATING
 You’re sitting on high storage — eco is stable and comfortable.
 
 Equation:
-(mCur/mStorage > 0.80  OR  eCur/eStorage > 0.80)
+(mCur/mStorage > 0.80 OR eCur/eStorage > 0.80)
 AND
-(mNet >= 0  OR  mRatio > -0.10)
+(mNet >= 0 OR mRatio > -0.10)
 AND
-(eNet >= 0  OR  eRatio > -0.10)
+(eNet >= 0 OR eRatio > -0.10)
 
 How it works:
 Storage is high (80%+) and nets are stable.
@@ -242,19 +248,20 @@ Player should know/do:
 • Start tech or upgrades
 ]],
 
-["ECO WEAK"] = [[
+
+    ["ECO WEAK"] = [[
 ECO WEAK
-Your eco is fragile — net efficiency is low and storage is running thin.
+Your eco is fragile — net efficiency is low and at least one resource is running thin.
 
 Equation:
 r < 0.10
 AND
-(mCur < 0.50 * mStorage AND eCur < 0.50 * eStorage)
+(mCur < 0.50 * mStorage OR eCur < 0.50 * eStorage)
 r = min(mRatio, eRatio)
 
 How it works:
-This only appears when your net efficiency is poor AND both metal and energy
-storages are below 50%. If either resource has healthy storage, ECO WEAK will not show.
+Your net efficiency is poor AND at least one resource is below 50% storage.
+This appears earlier now — even if only metal OR energy is low.
 
 Player should know/do:
 • Don’t overbuild
@@ -264,7 +271,7 @@ Player should know/do:
 ]],
 
 
-["ECO STABLE"] = [[
+    ["ECO STABLE"] = [[
 ECO STABLE
 Your weaker resource is moderately positive — the eco is steady and not in danger.
 
@@ -274,7 +281,7 @@ r = min(mRatio, eRatio)
 
 How it works:
 Your weaker resource is between 10% and 35% positive. This indicates a stable,
-healthy eco that can support normal building and expansion without major risk.
+healthy eco that can support normal building and expansion.
 
 Player should know/do:
 • Build normally
@@ -283,7 +290,7 @@ Player should know/do:
 ]],
 
 
-["ECO STRONG"] = [[
+    ["ECO STRONG"] = [[
 ECO STRONG
 Your weaker resource is strongly positive — your eco is performing very well.
 
@@ -300,8 +307,8 @@ Player should know/do:
 • Tech up
 • Push aggression
 ]],
-
 }
+
 
 WG.EcoGraph_UIVisible = true   -- master visibility flag
 
