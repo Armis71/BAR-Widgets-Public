@@ -1252,39 +1252,49 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
     ----------------------------------------------------------------
     local rawStatus
 
-    ----------------------------------------------------------------
-    -- HARD FAILURES / DRAIN STATES (highest priority)
-    ----------------------------------------------------------------
+    -- Calculate severity for each resource
+    local mPercent = mCur / mStorage
+    local ePercent = eCur / eStorage
 
-    -- METAL DRAIN: metal net negative AND storage below 50% AND still has metal
-    if mNet < -1 and mCur > 0.01 and mCur < (0.50 * mStorage) then
+    -- Severity score: lower storage + more negative net = worse
+    local mSeverity = (1 - mPercent) + math.max(0, -mNet / 10)
+    local eSeverity = (1 - ePercent) + math.max(0, -eNet / 200)
+
+    -- Determine which resource is worse
+    local worstIsEnergy = eSeverity > mSeverity
+    local worstIsMetal  = mSeverity > eSeverity
+
+    ----------------------------------------------------------------
+    -- HARD FAILURES / DRAIN STATES (worst resource wins)
+    ----------------------------------------------------------------
+    if worstIsMetal
+        and mNet < -1
+        and mCur > 0.01
+        and mPercent < 0.50
+    then
         rawStatus = "METAL DRAIN"
 
-
-    -- ENERGY DRAIN: energy net strongly negative AND storage below 50%
-    elseif eNet < -20 and eCur > 0.01 and eCur < (0.50 * eStorage) then
+    elseif worstIsEnergy
+        and eNet < -20
+        and eCur > 0.01
+        and ePercent < 0.50
+    then
         rawStatus = "ENERGY DRAIN"
-
-
 
     ----------------------------------------------------------------
     -- STORAGE-BASED STATES
     ----------------------------------------------------------------
-
-    -- DEPLETED: one of the resources is actually empty
-    elseif mCur <= 0.01 or eCur <= 0.01 then
+    elseif (mCur <= 0.05 * mStorage)
+        and (eCur <= 0.05 * eStorage)
+    then
         rawStatus = "DEPLETED"
 
-
-    -- OVERFLOWING (Option 2):
-    -- Storage ≥95% AND net > 1 AND BOTH storages ≥50%
     elseif (mCur >= mStorage * 0.95 or eCur >= eStorage * 0.95)
         and (mNet > 1 or eNet > 1)
         and (mCur >= 0.50 * mStorage)
         and (eCur >= 0.50 * eStorage)
     then
         rawStatus = "OVERFLOWING"
-
 
     ----------------------------------------------------------------
     -- ADVANCED STATES (require ratio calculations)
@@ -1298,18 +1308,16 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         local mFull  = (mStorage > 0) and (mCur / mStorage) or 0
         local eFull  = (eStorage > 0) and (eCur / eStorage) or 0
 
-
         ----------------------------------------------------------------
-        -- SURGING: strong positive net relative to income
+        -- SURGING
         ----------------------------------------------------------------
         if mNet > 0 and eNet > 0
             and mRatio > 0.35 and eRatio > 0.35
         then
             rawStatus = "SURGING"
 
-
         ----------------------------------------------------------------
-        -- BURNING: strong negative net but storage still above 25%
+        -- BURNING
         ----------------------------------------------------------------
         elseif (mNet < 0 or eNet < 0)
             and (mCur > mStorage * 0.25 or eCur > eStorage * 0.25)
@@ -1317,9 +1325,8 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         then
             rawStatus = "BURNING"
 
-
         ----------------------------------------------------------------
-        -- FLOATING: high storage, stable nets, not draining or overflowing
+        -- FLOATING
         ----------------------------------------------------------------
         elseif (mFull > 0.80 or eFull > 0.80)
             and (mCur >= 0.50 * mStorage)
@@ -1329,46 +1336,39 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         then
             rawStatus = "FLOATING"
 
-
         ----------------------------------------------------------------
-        -- FALLBACK STATES: ECO WEAK / STABLE / STRONG
+        -- FALLBACK STATES
         ----------------------------------------------------------------
-    elseif r < 0.10
-        and mCur < (0.50 * mStorage)
-        and eCur < (0.50 * eStorage)
-    then
-        rawStatus = "ECO WEAK"
+        elseif r < 0.10
+            and (mCur < 0.50 * mStorage or eCur < 0.50 * eStorage)
+        then
+            rawStatus = "ECO WEAK"
 
 
-    elseif r < 0.35 then
-        rawStatus = "ECO STABLE"
+        elseif r < 0.35 then
+            rawStatus = "ECO STABLE"
 
-    else
-        rawStatus = "ECO STRONG"
+        else
+            rawStatus = "ECO STRONG"
+        end
     end
-
-    end
-
 
     ----------------------------------------------------------------
     -- 2. STATUS SMOOTHING LOGIC (5-second hold)
     ----------------------------------------------------------------
     local now = spGetTimer()
 
-    -- If raw status matches current → accept immediately
     if rawStatus == currentStatus then
         pendingStatus = nil
         return currentStatus
     end
 
-    -- If raw status differs and no pending status → start pending
     if pendingStatus ~= rawStatus then
         pendingStatus    = rawStatus
         pendingStartTime = now
         return currentStatus
     end
 
-    -- If pending status has lasted long enough → commit
     local dt = spDiffTimers(now, pendingStartTime)
     if dt >= STATUS_HOLD_TIME then
         currentStatus        = pendingStatus
@@ -1377,7 +1377,6 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         return currentStatus
     end
 
-    -- Otherwise → still holding old status
     return currentStatus
 end
 -- End of Eco Status Logic
