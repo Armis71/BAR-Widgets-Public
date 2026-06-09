@@ -7,7 +7,7 @@ function widget:GetInfo()
     return {
         name    = "Zoom Keybinds (Mouse4/5)",
         desc    = "Zoom using mouse4/mouse5 inside BAR",
-        author  = "lov (modified by boards)",
+        author  = "lov (modified by Armis71)",
         date    = "2025",
         license = "GNU GPL v2 or later",
         layer   = 0,
@@ -15,6 +15,15 @@ function widget:GetInfo()
         handler = true,
     }
 end
+
+---------------------------------------------------------------
+-- ⭐ USER‑EDITABLE ZOOM SETTINGS (edit these only)
+---------------------------------------------------------------
+local ZOOM_IN_DIST        = 1500     -- Normal zoom in
+local ZOOM_OUT_DIST       = 6000     -- Normal zoom out
+local CTRL_ZOOM_IN_DIST   = 750      -- CTRL + zoom in
+local CTRL_ZOOM_OUT_DIST  = 20000    -- CTRL + zoom out (max height)
+---------------------------------------------------------------
 
 local smoothnessBoost = 1
 
@@ -54,11 +63,7 @@ local function DoZoom(distance, alwaysCenter)
     Spring.WarpMouse(vsx * 0.5, vsy * 0.5)
 
     ----------------------------------------------------------------
-    ----------------------------------------------------------------
-    -- ⭐⭐ HARDWARE CURSOR FIX ⭐⭐
-    -- When Hardware Cursor = ON, zooming OUT hides the OS cursor.
-    -- This block forces a DOUBLE middle-mouse press to restore it.
-    ----------------------------------------------------------------
+    -- HARDWARE CURSOR FIX (double MMB)
     ----------------------------------------------------------------
     if distance > height then
         Spring.SendCommands("mousepress 2")
@@ -66,9 +71,6 @@ local function DoZoom(distance, alwaysCenter)
         Spring.SendCommands("mousepress 2")
         Spring.SendCommands("mouserelease 2")
     end
-    ----------------------------------------------------------------
-    -- END OF HARDWARE CURSOR FIX
-    ----------------------------------------------------------------
 end
 
 ----------------------------------------------------------------
@@ -77,31 +79,26 @@ end
 function widget:MousePress(x, y, button)
     local alt, ctrl, meta, shift = Spring.GetModKeyState()
 
-    -- Base distances
-    local zoomInDist  = 1500
-    local zoomOutDist = 6000
-
     if button == 4 then
-        -- CTRL + Mouse4 = stronger zoom in
+        -- Zoom IN
         if ctrl then
-            DoZoom(zoomInDist * 0.5)
+            DoZoom(CTRL_ZOOM_IN_DIST)
         else
-            DoZoom(zoomInDist)
+            DoZoom(ZOOM_IN_DIST)
         end
         return true
     end
 
     if button == 5 then
-        -- CTRL + Mouse5 = stronger zoom out (optional)
+        -- Zoom OUT
         if ctrl then
-            DoZoom(zoomOutDist * 0.5)
+            DoZoom(CTRL_ZOOM_OUT_DIST)
         else
-            DoZoom(zoomOutDist)
+            DoZoom(ZOOM_OUT_DIST)
         end
         return true
     end
 end
-
 
 ----------------------------------------------------------------
 -- OPTIONAL: still support zoomto/zoomtocenter actions
