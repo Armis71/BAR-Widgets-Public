@@ -8,7 +8,7 @@ function widget:GetInfo()
         name    = "Zoom Keybinds (Mouse4/5)",
         desc    = "Zoom using mouse4/mouse5 inside BAR",
         author  = "lov (modified by Armis71)",
-        date    = "2025",
+        date    = "2026-06-08",
         license = "GNU GPL v2 or later",
         layer   = 0,
         enabled = true,
