@@ -95,18 +95,18 @@ energyShareButton         = energyShareButton or {x1=0,y1=0,x2=0,y2=0}
 -- ECO GRAPH STATUS TABLE
 local statusTooltips = {
 
-    ["METAL DRAIN"] = [[
+-- Start of Eco Status Tooltips (Updated for new equations & thresholds)
+
+["METAL DRAIN"] = [[
 METAL DRAIN
-Metal is draining AND your metal storage is below 50%, and metal is the worse resource.
+Metal is draining faster than you earn it, and metal is the worse resource.
 
 Equation:
 worstIsMetal == true
 AND
-mNet < -1
+mNet < 0
 AND
-mCur > 0.01
-AND
-mCur < 0.50 * mStorage
+mPercent < 0.35
 
 How it works:
 Metal is the more endangered resource AND its net is negative while storage is low.
@@ -119,21 +119,19 @@ Player should know/do:
 ]],
 
 
-    ["ENERGY DRAIN"] = [[
+["ENERGY DRAIN"] = [[
 ENERGY DRAIN
-Energy is draining AND your energy storage is below 50%, and energy is the worse resource.
+Energy is draining faster than you earn it, and energy is the worse resource.
 
 Equation:
 worstIsEnergy == true
 AND
-eNet < -20
+eNet < 0
 AND
-eCur > 0.01
-AND
-eCur < 0.50 * eStorage
+ePercent < 0.35
 
 How it works:
-Energy is the more endangered resource AND its net is strongly negative while storage is low.
+Energy is the more endangered resource AND its net is negative while storage is low.
 
 Player should know/do:
 • Build more solars, winds, or turbines
@@ -143,40 +141,38 @@ Player should know/do:
 ]],
 
 
-    ["DEPLETED"] = [[
+["DEPLETED"] = [[
 DEPLETED
-Both resources are critically low — you have less than 5% storage in metal AND energy.
+Your economy has collapsed — both metal AND energy are at zero storage and zero income.
 
 Equation:
-mCur <= 0.05 * mStorage
+mCur <= 0.01 AND eCur <= 0.01
 AND
-eCur <= 0.05 * eStorage
+mIncome <= 0.01 AND eIncome <= 0.01
 
 How it works:
-Both storages are nearly empty. You have no buffer left for eco swings.
+Both resources are completely empty AND you are not generating any income.
+This is the hardest fail state.
 
 Player should know/do:
-• Immediately fix income for both resources
-• Add income or reduce spending
-• Avoid large eco swings
+• Immediately rebuild basic income
+• Stop all unnecessary spending
+• Reclaim wrecks or expand to new spots
+• Stabilize one resource at a time
 ]],
 
 
-    ["OVERFLOWING"] = [[
+["OVERFLOWING"] = [[
 OVERFLOWING
-Your storage is almost full AND you are gaining more than you can store.
+Both storages are basically full AND you are still gaining resources.
 
 Equation:
-(mCur >= 0.95 * mStorage OR eCur >= 0.95 * eStorage)
+mPercent >= 0.95 AND ePercent >= 0.95
 AND
-(mNet > 1 OR eNet > 1)
-AND
-mCur >= 0.50 * mStorage
-AND
-eCur >= 0.50 * eStorage
+(mNet > 0 OR eNet > 0)
 
 How it works:
-Storage is 95%+ full AND net income is positive → you are wasting resources.
+Your storage is full and you are wasting income.
 
 Player should know/do:
 • Add more buildpower
@@ -186,9 +182,9 @@ Player should know/do:
 ]],
 
 
-    ["SURGING"] = [[
+["SURGING"] = [[
 SURGING
-Your eco is booming — both metal and energy are strongly positive.
+Your eco is booming — both metal and energy are strongly positive relative to income.
 
 Equation:
 mNet > 0 AND eNet > 0
@@ -196,7 +192,7 @@ AND
 mRatio > 0.35 AND eRatio > 0.35
 
 How it works:
-Both resources are growing rapidly relative to income.
+Both resources are growing rapidly and efficiently.
 
 Player should know/do:
 • Increase buildpower
@@ -206,19 +202,17 @@ Player should know/do:
 ]],
 
 
-    ["BURNING"] = [[
+["BURNING"] = [[
 BURNING
-You’re draining storage fast — not empty yet, but losing resources quickly.
+You are burning through storage extremely fast — roughly 3× more usage than income.
 
 Equation:
-(mNet < 0 OR eNet < 0)
-AND
-(mCur > 0.25 * mStorage OR eCur > 0.25 * eStorage)
-AND
-(mRatio < -0.25 OR eRatio < -0.25)
+(mIncome > 0 AND mRatio < -1.5)
+OR
+(eIncome > 0 AND eRatio < -1.5)
 
 How it works:
-You are burning through stored resources at a high rate.
+Your usage is massively higher than your income. Storage is disappearing quickly.
 
 Player should know/do:
 • Reduce buildpower
@@ -228,19 +222,21 @@ Player should know/do:
 ]],
 
 
-    ["FLOATING"] = [[
+["FLOATING"] = [[
 FLOATING
-You’re sitting on high storage — eco is stable and comfortable.
+You have comfortable storage and stable nets — eco is safe and steady.
 
 Equation:
-(mCur/mStorage > 0.80 OR eCur/eStorage > 0.80)
+(mPercent >= 0.50 AND ePercent >= 0.50)
+AND
+(mPercent > 0.80 OR ePercent > 0.80)
 AND
 (mNet >= 0 OR mRatio > -0.10)
 AND
 (eNet >= 0 OR eRatio > -0.10)
 
 How it works:
-Storage is high (80%+) and nets are stable.
+Both storages are healthy, at least one is very high, and nets are stable.
 
 Player should know/do:
 • Spend more
@@ -249,39 +245,42 @@ Player should know/do:
 ]],
 
 
-    ["ECO WEAK"] = [[
+["ECO WEAK"] = [[
 ECO WEAK
-Your eco is fragile — net efficiency is low and at least one resource is running thin.
+Your eco is fragile — efficiency is poor OR at least one resource is running low.
 
 Equation:
-r < 0.10
-AND
-(mCur < 0.50 * mStorage OR eCur < 0.50 * eStorage)
+r < 0.0
+OR
+(mPercent < 0.35 OR ePercent < 0.35)
 r = min(mRatio, eRatio)
 
 How it works:
-Your net efficiency is poor AND at least one resource is below 50% storage.
-This appears earlier now — even if only metal OR energy is low.
+Either your efficiency is negative OR one resource is below 35% storage.
+This is an early warning state.
 
 Player should know/do:
 • Don’t overbuild
 • Add small income
 • Expand carefully
-• Avoid large eco swings until storage recovers
+• Avoid large eco swings
 ]],
 
 
-    ["ECO STABLE"] = [[
+["ECO STABLE"] = [[
 ECO STABLE
-Your weaker resource is moderately positive — the eco is steady and not in danger.
+Your eco is steady — efficiency is non-negative and both storages are healthy.
 
 Equation:
-0.10 <= r < 0.35
-r = min(mRatio, eRatio)
+r >= 0.0 AND r < 0.35
+AND
+mPercent >= 0.35
+AND
+ePercent >= 0.35
 
 How it works:
-Your weaker resource is between 10% and 35% positive. This indicates a stable,
-healthy eco that can support normal building and expansion.
+Your weaker resource is mildly positive AND both storages are at least 35%.
+This is a safe, reliable eco state.
 
 Player should know/do:
 • Build normally
@@ -290,17 +289,20 @@ Player should know/do:
 ]],
 
 
-    ["ECO STRONG"] = [[
+["ECO STRONG"] = [[
 ECO STRONG
-Your weaker resource is strongly positive — your eco is performing very well.
+Your eco is performing very well — strong efficiency and healthy storage.
 
 Equation:
 r >= 0.35
-r = min(mRatio, eRatio)
+AND
+mPercent >= 0.50
+AND
+ePercent >= 0.50
 
 How it works:
-Even your weaker resource is 35%+ positive. This means your eco is efficient,
-healthy, and capable of supporting aggressive scaling or teching.
+Your weaker resource is strongly positive AND both storages are above 50%.
+Your eco can support aggressive scaling or teching.
 
 Player should know/do:
 • Add buildpower
@@ -308,6 +310,7 @@ Player should know/do:
 • Push aggression
 ]],
 }
+-- End of Eco Status Tooltips
 
 
 WG.EcoGraph_UIVisible = true   -- master visibility flag
@@ -1259,9 +1262,9 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
     ----------------------------------------------------------------
     local rawStatus
 
-    -- Calculate severity for each resource
-    local mPercent = mCur / mStorage
-    local ePercent = eCur / eStorage
+    -- Safe percentages
+    local mPercent = (mStorage > 0) and (mCur / mStorage) or 0
+    local ePercent = (eStorage > 0) and (eCur / eStorage) or 0
 
     -- Severity score: lower storage + more negative net = worse
     local mSeverity = (1 - mPercent) + math.max(0, -mNet / 10)
@@ -1272,34 +1275,36 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
     local worstIsMetal  = mSeverity > eSeverity
 
     ----------------------------------------------------------------
-    -- HARD FAILURES / DRAIN STATES (worst resource wins)
+    -- HARD FAILURES / DRAIN STATES
     ----------------------------------------------------------------
-    if worstIsMetal
-        and mNet < -1
-        and mCur > 0.01
-        and mPercent < 0.50
+
+    -- 1) DEPLETED: both resources truly dead (0 storage, 0 income)
+    if mCur <= 0.01 and eCur <= 0.01
+        and mIncome <= 0.01 and eIncome <= 0.01
+    then
+        rawStatus = "DEPLETED"
+
+    -- 2) METAL DRAIN: metal is the worse resource, net negative, low storage
+    elseif worstIsMetal
+        and mNet < 0
+        and mPercent < 0.35
     then
         rawStatus = "METAL DRAIN"
 
+    -- 3) ENERGY DRAIN: energy is the worse resource, net negative, low storage
     elseif worstIsEnergy
-        and eNet < -20
-        and eCur > 0.01
-        and ePercent < 0.50
+        and eNet < 0
+        and ePercent < 0.35
     then
         rawStatus = "ENERGY DRAIN"
 
     ----------------------------------------------------------------
-    -- STORAGE-BASED STATES
+    -- STORAGE-BASED GOOD STATE
     ----------------------------------------------------------------
-    elseif (mCur <= 0.05 * mStorage)
-        and (eCur <= 0.05 * eStorage)
-    then
-        rawStatus = "DEPLETED"
 
-    elseif (mCur >= mStorage * 0.95 or eCur >= eStorage * 0.95)
-        and (mNet > 1 or eNet > 1)
-        and (mCur >= 0.50 * mStorage)
-        and (eCur >= 0.50 * eStorage)
+    -- 4) OVERFLOWING: both storages basically full and still gaining
+    elseif mPercent >= 0.95 and ePercent >= 0.95
+        and (mNet > 0 or eNet > 0)
     then
         rawStatus = "OVERFLOWING"
 
@@ -1312,11 +1317,11 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
         local eRatio = (eIncome > 0) and (eNet / eIncome) or 0
         local r      = math.min(mRatio, eRatio)
 
-        local mFull  = (mStorage > 0) and (mCur / mStorage) or 0
-        local eFull  = (eStorage > 0) and (eCur / eStorage) or 0
+        local mFull  = mPercent
+        local eFull  = ePercent
 
         ----------------------------------------------------------------
-        -- SURGING
+        -- SURGING: strong positive nets relative to income
         ----------------------------------------------------------------
         if mNet > 0 and eNet > 0
             and mRatio > 0.35 and eRatio > 0.35
@@ -1324,38 +1329,44 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
             rawStatus = "SURGING"
 
         ----------------------------------------------------------------
-        -- BURNING
+        -- BURNING: ~3x more using than earning (very negative ratio)
         ----------------------------------------------------------------
-        elseif (mNet < 0 or eNet < 0)
-            and (mCur > mStorage * 0.25 or eCur > eStorage * 0.25)
-            and (mRatio < -0.25 or eRatio < -0.25)
+        elseif (mIncome > 0 and mRatio < -1.5)
+            or (eIncome > 0 and eRatio < -1.5)
         then
             rawStatus = "BURNING"
 
         ----------------------------------------------------------------
-        -- FLOATING
+        -- FLOATING: comfortable high storage, nets roughly stable
         ----------------------------------------------------------------
         elseif (mFull > 0.80 or eFull > 0.80)
-            and (mCur >= 0.50 * mStorage)
-            and (eCur >= 0.50 * eStorage)
+            and mFull >= 0.50
+            and eFull >= 0.50
             and (mNet >= 0 or mRatio > -0.10)
             and (eNet >= 0 or eRatio > -0.10)
         then
             rawStatus = "FLOATING"
 
         ----------------------------------------------------------------
-        -- FALLBACK STATES
+        -- FALLBACK ECO STATES: WEAK / STABLE / STRONG
         ----------------------------------------------------------------
-        elseif r < 0.10
-            and (mCur < 0.50 * mStorage or eCur < 0.50 * eStorage)
+
+        -- ECO WEAK: bad efficiency OR at least one resource low storage
+        elseif r < 0.0
+            or (mFull < 0.35 or eFull < 0.35)
         then
             rawStatus = "ECO WEAK"
 
-
-        elseif r < 0.35 then
+        -- ECO STABLE: non-negative efficiency, both storages ≥35%
+        elseif r >= 0.0 and r < 0.35
+            and mFull >= 0.35
+            and eFull >= 0.35
+        then
             rawStatus = "ECO STABLE"
 
+        -- ECO STRONG: good efficiency, both storages ≥50%
         else
+            -- implicitly: r >= 0.35 and mFull >= 0.50 and eFull >= 0.50
             rawStatus = "ECO STRONG"
         end
     end
