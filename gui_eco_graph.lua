@@ -247,23 +247,25 @@ Player should know/do:
 
 ["ECO WEAK"] = [[
 ECO WEAK
-Your eco is fragile — efficiency is poor OR at least one resource is running low.
+Your eco is fragile — efficiency is negative AND at least one resource is running low.
 
 Equation:
 r < 0.0
-OR
+AND
 (mPercent < 0.35 OR ePercent < 0.35)
 r = min(mRatio, eRatio)
 
 How it works:
-Either your efficiency is negative OR one resource is below 35% storage.
-This is an early warning state.
+ECO WEAK only appears when your weaker resource has negative efficiency AND
+your metal or energy storage is below 35%. This prevents false weak states
+when storage is healthy but one resource is temporarily burning.
 
 Player should know/do:
-• Don’t overbuild
-• Add small income
-• Expand carefully
-• Avoid large eco swings
+• Add small income (mex, solar, wind)
+• Avoid overbuilding factories or nanos
+• Fix whichever resource is low first
+• Expand carefully — don’t overextend
+• Stabilize storage before scaling production
 ]],
 
 
