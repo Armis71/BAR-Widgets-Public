@@ -1353,7 +1353,7 @@ local function GetEcoStatus(mNet, eNet, mIncome, eIncome, mCur, eCur, mStorage, 
 
         -- ECO WEAK: bad efficiency OR at least one resource low storage
         elseif r < 0.0
-            or (mFull < 0.35 or eFull < 0.35)
+            and (mPercent < 0.35 or ePercent < 0.35)
         then
             rawStatus = "ECO WEAK"
 
