@@ -3949,6 +3949,143 @@ gl.Texture(false)
     end
 end
 
+----------------------------------------------------------------
+-- METAL : ENERGY RATIO  (Compact View, next to [Intel])
+----------------------------------------------------------------
+do
+    local mInc = smoothMetalIncome or 0
+    local eInc = smoothEnergyIncome or 0
+
+    local ratio = 0
+    if mInc > 0 then
+        ratio = eInc / mInc
+    end
+
+    if ratio < 0 then ratio = 0 end
+    if ratio > 999 then ratio = 999 end
+
+    local ratioStr = string.format("1:%d", math.floor(ratio + 0.5))
+
+    ------------------------------------------------------------
+    -- Position: right of [Intel]
+    ------------------------------------------------------------
+    local intelX = box.x1 + 8
+    local intelY = box.y1 + 8
+
+    -- VERY TIGHT spacing
+    local ratioX = intelX + 50
+    local ratioY = intelY
+
+    ------------------------------------------------------------
+    -- Color coding
+    ------------------------------------------------------------
+    local rVal = ratio
+    local col
+
+    if rVal < 8 then
+        col = {1, 0.2, 0.2, 1}
+    elseif rVal < 10 then
+        col = {1, 1, 0.2, 1}
+    elseif rVal <= 40 then
+        col = {0.2, 1, 0.2, 1}
+    else
+        col = {0.2, 1, 1, 1}
+    end
+
+    ------------------------------------------------------------
+    -- Draw label + value (SHORT + CLOSE)
+    ------------------------------------------------------------
+    glColor(cfg.titleColor)
+    glText("[M:E]", ratioX, ratioY, fontSize, "l")
+
+    glColor(col)
+    glText(ratioStr, ratioX + 33, ratioY, fontSize + 2, "l") -- 35 is the distance from the M:E label to the ratio value. Adjust if needed. Tight
+    
+    ------------------------------------------------------------
+    -- Tooltip hitbox (small)
+    ------------------------------------------------------------
+    meRatioRect = {
+        x1 = ratioX - 4,
+        y1 = ratioY - fontSize,
+        x2 = ratioX + 110,   -- MUCH smaller
+        y2 = ratioY + fontSize,
+    }
+end
+
+
+----------------------------------------------------------------
+-- M:E RATIO TOOLTIP
+----------------------------------------------------------------
+do
+    local mx, my = Spring.GetMouseState()
+    if meRatioRect
+    and mx >= meRatioRect.x1 and mx <= meRatioRect.x2
+    and my >= meRatioRect.y1 and my <= meRatioRect.y2 then
+
+        local mInc = smoothMetalIncome or 0
+        local eInc = smoothEnergyIncome or 0
+        local ratio = (mInc > 0) and (eInc / mInc) or 0
+        local ratioStr = string.format("1:%d", math.floor(ratio + 0.5))
+
+        local lines = {
+            "Metal to Energy Ratio",
+            "",
+
+            string.format("Metal Income:  %.1f", mInc),
+            string.format("Energy Income: %.1f", eInc),
+            "",   -- blank row BELOW Energy Income
+
+            string.format("RATIO: %s", ratioStr),
+            string.format("Equation: eInc / mInc = %.2f", ratio),  -- ← added equation
+            "",   -- blank row BELOW Ratio + Equation
+
+            "Severe Stall: 1:0 – 1:7",
+            "Low / Unstable: 1:8 – 1:9",
+            "Healthy Baseline: 1:10 – 1:15",
+            "Strong Eco: 1:16 – 1:25",
+            "High-Power Eco: 1:26 – 1:40",
+            "Converter Eco: 1:41 – 1:80",
+            "Overbuilt Energy: 1:81 – 1:200",
+            "Extreme Surplus: 200+",
+        }
+
+
+        local pad = 6
+        local maxW = 0
+        for _, line in ipairs(lines) do
+            local w = glGetTextWidth(line) * fontSize
+            if w > maxW then maxW = w end
+        end
+
+        local tw = maxW + pad * 4
+        local th = (#lines * (fontSize + 4)) + pad * 3
+
+        local tipX = mx + 18
+        local tipY = my - th - 18
+
+        glColor(1,1,1,0.92)
+        glRect(tipX, tipY, tipX + tw, tipY + th)
+
+        glColor(0,0,0,0.25)
+        glLineWidth(1.0)
+        glBeginEnd(GL_LINES, function()
+            glVertex(tipX, tipY); glVertex(tipX + tw, tipY)
+            glVertex(tipX + tw, tipY); glVertex(tipX + tw, tipY + th)
+            glVertex(tipX + tw, tipY + th); glVertex(tipX, tipY + th)
+            glVertex(tipX, tipY + th); glVertex(tipX, tipY)
+        end)
+
+        glColor(0,0,0,1)
+        local y = tipY + th - pad - fontSize
+        for _, line in ipairs(lines) do
+            glText(line, tipX + pad, y, fontSize, "lo")
+            y = y - (fontSize + 4)
+        end
+    end
+end
+
+
+
 
 -- GAME SPEED + PINPOINTER + BUILD POWER (Compact Mode, lower-left corner)
 do
@@ -3956,7 +4093,7 @@ do
     local py = box.y1 + 8
 
     glColor(1, 1, 1, 1)
-    glText("[Intel]", px, py, font_scale, "o")
+    glText("[INTEL]", px, py, font_scale, "o")
 
     -------------------------------------------------
     -- Hover rect (covers Intel area)
@@ -3964,7 +4101,7 @@ do
     ppRect = {
         x1 = px - 4,
         y1 = py - 4,
-        x2 = px + 180,
+        x2 = px + 35,   -- This is the hit box for the tooltip for Intel
         y2 = py + 36,
     }
 end
@@ -4671,13 +4808,14 @@ end
             glColor(1, 1, 1, 1)
             glText("[ Intel ]", px, py, font_scale, "o")
 
-            -- hover rect for Intel tooltip
-            ppRect = {
-                x1 = box.x1 + 4,
-                y1 = box.y1 + 4,
-                x2 = box.x1 + 160,
-                y2 = box.y1 + 40,
+            -- INTEL tooltip hitbox (reduced)
+            intelRect = {
+                x1 = intelX - 2,
+                y1 = intelY - fontSize,
+                x2 = intelX + 55,   -- was too long before, now short
+                y2 = intelY + fontSize,
             }
+
         end
 
 -- INFO TOOLTIP (Two-Column)
