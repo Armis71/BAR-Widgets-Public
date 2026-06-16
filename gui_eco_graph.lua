@@ -3646,7 +3646,7 @@ end
 -- METAL STORAGE BAR (Compact Mode, bottom-anchored, layered)
 do
     -- This controls left and right length of bar nudge left or right
-	local barX1 = box.x1 + 150 + metalOffset
+	local barX1 = box.x1 + 160 + metalOffset
     local barX2 = centerX - 270 + metalOffset
     local barH  = 12
 	-- Nudge the Storage bar up or down.
@@ -3956,15 +3956,16 @@ do
     local mInc = smoothMetalIncome or 0
     local eInc = smoothEnergyIncome or 0
 
-    local ratio = 0
-    if mInc > 0 then
-        ratio = eInc / mInc
-    end
+    -- Compute ratio safely
+    local ratio = (mInc > 0) and (eInc / mInc) or 0
 
+    -- Clamp
     if ratio < 0 then ratio = 0 end
     if ratio > 999 then ratio = 999 end
 
-    local ratioStr = string.format("1:%d", math.floor(ratio + 0.5))
+    -- Rounded ratio for display
+    local ratioRounded = math.floor(ratio + 0.5)
+    local ratioStr = string.format("1:%d", ratioRounded)
 
     ------------------------------------------------------------
     -- Position: right of [Intel]
@@ -3979,14 +3980,12 @@ do
     ------------------------------------------------------------
     -- Color coding
     ------------------------------------------------------------
-    local rVal = ratio
     local col
-
-    if rVal < 8 then
+    if ratio < 8 then
         col = {1, 0.2, 0.2, 1}
-    elseif rVal < 10 then
+    elseif ratio < 10 then
         col = {1, 1, 0.2, 1}
-    elseif rVal <= 40 then
+    elseif ratio <= 40 then
         col = {0.2, 1, 0.2, 1}
     else
         col = {0.2, 1, 1, 1}
@@ -3999,15 +3998,15 @@ do
     glText("[M:E]", ratioX, ratioY, fontSize, "l")
 
     glColor(col)
-    glText(ratioStr, ratioX + 33, ratioY, fontSize + 2, "l") -- 35 is the distance from the M:E label to the ratio value. Adjust if needed. Tight
-    
+    glText(ratioStr, ratioX + 33, ratioY, fontSize + 2, "l")
+
     ------------------------------------------------------------
     -- Tooltip hitbox (small)
     ------------------------------------------------------------
     meRatioRect = {
         x1 = ratioX - 4,
         y1 = ratioY - fontSize,
-        x2 = ratioX + 110,   -- MUCH smaller
+        x2 = ratioX + 110,
         y2 = ratioY + fontSize,
     }
 end
@@ -4025,7 +4024,8 @@ do
         local mInc = smoothMetalIncome or 0
         local eInc = smoothEnergyIncome or 0
         local ratio = (mInc > 0) and (eInc / mInc) or 0
-        local ratioStr = string.format("1:%d", math.floor(ratio + 0.5))
+        local ratioRounded = math.floor(ratio + 0.5)
+        local ratioStr = string.format("1:%d", ratioRounded)
 
         local lines = {
             "Metal to Energy Ratio",
@@ -4033,11 +4033,11 @@ do
 
             string.format("Metal Income:  %.1f", mInc),
             string.format("Energy Income: %.1f", eInc),
-            "",   -- blank row BELOW Energy Income
+            "",
 
             string.format("RATIO: %s", ratioStr),
-            string.format("Equation: eInc / mInc = %.2f", ratio),  -- ← added equation
-            "",   -- blank row BELOW Ratio + Equation
+            string.format("Equation: eInc / mInc = %d", ratioRounded),
+            "",
 
             "Severe Stall: 1:0 – 1:7",
             "Low / Unstable: 1:8 – 1:9",
@@ -4048,7 +4048,6 @@ do
             "Overbuilt Energy: 1:81 – 1:200",
             "Extreme Surplus: 200+",
         }
-
 
         local pad = 6
         local maxW = 0
@@ -4083,9 +4082,6 @@ do
         end
     end
 end
-
-
-
 
 -- GAME SPEED + PINPOINTER + BUILD POWER (Compact Mode, lower-left corner)
 do
