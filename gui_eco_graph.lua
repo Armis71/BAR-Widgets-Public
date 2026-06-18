@@ -11,7 +11,6 @@ function widget:GetInfo()
     }
 end
 
--- 5/30/26 ctrl+rmb toggles off dual-line graph and history seconds selector 
 
 -- GLOBAL FONT SCALE (shrink everything proportionally)
 local FONT_SCALE = 0.9  -- try 0.85 first; 0.80 or 0.75 if you want it even shorter
@@ -89,7 +88,6 @@ energyShareDropdown       = energyShareDropdown or false
 energyShareOptions 		  = energyShareOptions or {"Disable", 10, 20, 30, 40, 50, 60, 70, 80, 90}
 energyShareOptionRects    = energyShareOptionRects or {}
 energySharePercent        = energySharePercent or 0
-energyConversionPercent   = energyConversionPercent or 0
 energyShareButton         = energyShareButton or {x1=0,y1=0,x2=0,y2=0}
 
 -- ECO GRAPH STATUS TABLE
