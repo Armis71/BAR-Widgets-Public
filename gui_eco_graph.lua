@@ -4009,9 +4009,8 @@ do
     }
 end
 
-
 ----------------------------------------------------------------
--- M:E RATIO TOOLTIP
+-- M:E RATIO TOOLTIP (SMART VERSION, STYLED, DARK BG)
 ----------------------------------------------------------------
 do
     local mx, my = Spring.GetMouseState()
@@ -4025,8 +4024,34 @@ do
         local ratioRounded = math.floor(ratio + 0.5)
         local ratioStr = string.format("1:%d", ratioRounded)
 
+        ------------------------------------------------------------
+        -- Metal context (smart + styled)
+        ------------------------------------------------------------
+        local metalHint, metalColor, metalIcon
+
+        if mInc < 5 then
+            metalHint  = "Metal income very low — ratio may be misleading."
+            metalColor = {1, 0.2, 0.2, 1}
+            metalIcon  = "⚠️ "
+        elseif mInc < 12 then
+            metalHint  = "Metal income low."
+            metalColor = {1, 0.7, 0.1, 1}
+            metalIcon  = "⚠️ "
+        elseif mInc < 25 then
+            metalHint  = "Metal income normal."
+            metalColor = {1, 1, 1, 1}
+            metalIcon  = "✔️ "
+        else
+            metalHint  = "Metal income high — strong eco potential."
+            metalColor = {0.2, 1, 0.2, 1}
+            metalIcon  = "⬆️ "
+        end
+
+        ------------------------------------------------------------
+        -- Tooltip lines
+        ------------------------------------------------------------
         local lines = {
-            "Metal to Energy Ratio",
+            { text = "Metal to Energy Ratio:", center = true, big = true },
             "",
 
             string.format("Metal Income:  %.1f", mInc),
@@ -4034,9 +4059,12 @@ do
             "",
 
             string.format("RATIO: %s", ratioStr),
-            string.format("Equation: eInc / mInc = %d", ratioRounded),
+            string.format("Equation: eInc / mInc = %.2f", ratio),
             "",
 
+            { text = metalIcon .. metalHint, color = metalColor, big = true },
+
+            "",
             "Severe Stall: 1:0 – 1:7",
             "Low / Unstable: 1:8 – 1:9",
             "Healthy Baseline: 1:10 – 1:15",
@@ -4047,10 +4075,14 @@ do
             "Extreme Surplus: 200+",
         }
 
-        local pad = 6
+        ------------------------------------------------------------
+        -- Tooltip sizing
+        ------------------------------------------------------------
+        local pad = 10
         local maxW = 0
         for _, line in ipairs(lines) do
-            local w = glGetTextWidth(line) * fontSize
+            local text = (type(line) == "table") and line.text or line
+            local w = glGetTextWidth(text) * fontSize
             if w > maxW then maxW = w end
         end
 
@@ -4060,10 +4092,13 @@ do
         local tipX = mx + 18
         local tipY = my - th - 18
 
-        glColor(1,1,1,0.92)
+        ------------------------------------------------------------
+        -- Tooltip background + border (DARK GRAY)
+        ------------------------------------------------------------
+        glColor(0.18, 0.18, 0.18, 0.92)
         glRect(tipX, tipY, tipX + tw, tipY + th)
 
-        glColor(0,0,0,0.25)
+        glColor(0.7, 0.7, 0.7, 0.35)
         glLineWidth(1.0)
         glBeginEnd(GL_LINES, function()
             glVertex(tipX, tipY); glVertex(tipX + tw, tipY)
@@ -4072,14 +4107,31 @@ do
             glVertex(tipX, tipY + th); glVertex(tipX, tipY)
         end)
 
-        glColor(0,0,0,1)
+        ------------------------------------------------------------
+        -- Draw text (supports centered + styled lines)
+        ------------------------------------------------------------
         local y = tipY + th - pad - fontSize
         for _, line in ipairs(lines) do
-            glText(line, tipX + pad, y, fontSize, "lo")
+            if type(line) == "table" then
+                glColor(line.color or {1,1,1,1})
+
+                if line.center then
+                    local w = glGetTextWidth(line.text) * (fontSize + 1)
+                    local cx = tipX + (tw * 0.5) - (w * 0.5)
+                    glText(line.text, cx, y, line.big and (fontSize + 1) or fontSize, "lo")
+                else
+                    glText(line.text, tipX + pad, y, line.big and (fontSize + 1) or fontSize, "lo")
+                end
+            else
+                glColor(1,1,1,1)
+                glText(line, tipX + pad, y, fontSize, "lo")
+            end
+
             y = y - (fontSize + 4)
         end
     end
 end
+
 
 -- GAME SPEED + PINPOINTER + BUILD POWER (Compact Mode, lower-left corner)
 do
