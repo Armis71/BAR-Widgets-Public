@@ -5656,11 +5656,11 @@ if compactMode and draggingShareIndicator then
     -- get bar geometry
     local barX1, barX2
     if res == "metal" then
-        barX1 = box.x1 + 150 + metalOffset
+        barX1 = box.x1 + 160 + metalOffset
         barX2 = (box.x1 + (box.x2 - box.x1) * 0.5) - 270 + metalOffset
     else
         -- ENERGY uses global energyOffset
-        barX1 = (box.x1 + (box.x2 - box.x1) * 0.5) + 240 + energyOffset
+        barX1 = (box.x1 + (box.x2 - box.x1) * 0.5) + 265 + energyOffset
         barX2 = box.x2 - 150 + energyOffset
     end
 
@@ -5683,7 +5683,7 @@ end
 if compactMode and draggingConversionIndicator then
 
     -- MATCH DRAWING GEOMETRY EXACTLY
-    local barX1 = (box.x1 + (box.x2 - box.x1) * 0.5) + 240 + energyOffset
+    local barX1 = (box.x1 + (box.x2 - box.x1) * 0.5) + 265 + energyOffset
     local barX2 = box.x2 - 150 + energyOffset
     local barWidth = barX2 - barX1
 
