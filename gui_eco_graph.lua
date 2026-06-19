@@ -40,6 +40,9 @@ local convUtil   = 0
 -- Close/Hide Dual-line Graph with CTRL+RMB or LMB
 local hideGraphs = false
 
+-- Toggle M:E Ratio Tooltip to be visible at all times
+local meRatioPinned = false
+
 -- LOCAL STATE (Option A — single correct alias)
 local spGetLocalAllyTeamID    = Spring.GetLocalAllyTeamID
 local spGetMyTeamID           = Spring.GetMyTeamID
@@ -3999,12 +4002,16 @@ do
     glText(ratioStr, ratioX + 33, ratioY, fontSize + 2, "l")
 
     ------------------------------------------------------------
-    -- Tooltip hitbox (small)
+    -- Tooltip hitbox (pixel-perfect for click + hover)
     ------------------------------------------------------------
+    local label = "[M:E] " .. ratioStr
+    local size  = fontSize + 2
+    local width = gl.GetTextWidth(label) * size
+
     meRatioRect = {
         x1 = ratioX - 4,
         y1 = ratioY - fontSize,
-        x2 = ratioX + 110,
+        x2 = ratioX - 4 + width + 8,
         y2 = ratioY + fontSize,
     }
 end
@@ -4014,9 +4021,13 @@ end
 ----------------------------------------------------------------
 do
     local mx, my = Spring.GetMouseState()
-    if meRatioRect
-    and mx >= meRatioRect.x1 and mx <= meRatioRect.x2
-    and my >= meRatioRect.y1 and my <= meRatioRect.y2 then
+
+    -- Tooltip visible if hovered OR pinned
+    if meRatioPinned or (
+        meRatioRect
+        and mx >= meRatioRect.x1 and mx <= meRatioRect.x2
+        and my >= meRatioRect.y1 and my <= meRatioRect.y2
+    ) then
 
         local mInc = smoothMetalIncome or 0
         local mUse = smoothMetalUsage or 0
@@ -4105,8 +4116,21 @@ do
         local tw = maxW + pad * 4
         local th = (#lines * (fontSize + 4)) + pad * 3
 
-        local tipX = mx + 18
-        local tipY = my - th - 18
+        ------------------------------------------------------------
+        -- FIXED POSITION WHEN PINNED
+        ------------------------------------------------------------
+        local tipX, tipY
+
+        if meRatioPinned then
+            -- Anchor tooltip to the M:E label instead of the mouse
+           -- tipX = meRatioRect.x2 + 12
+            tipX = meRatioRect.x1 - tw + 20 --This moves the tooltip left or right when pinned. Higher moves right.
+            tipY = meRatioRect.y1 - th - 12
+        else
+            -- Normal hover behavior
+            tipX = mx + 18
+            tipY = my - th - 18
+        end
 
         ------------------------------------------------------------
         -- Tooltip background + border (DARK GRAY)
@@ -4152,7 +4176,6 @@ do
         end
     end
 end
-
 
 
 -- GAME SPEED + PINPOINTER + BUILD POWER (Compact Mode, lower-left corner)
@@ -5299,7 +5322,21 @@ end
 function widget:MousePress(mx, my, button)
     local alt, ctrl, meta, shift = spGetModKeyState()
 
-    -- 0. CTRL + RMB always toggles dual-line graphs
+    ------------------------------------------------------------
+    -- 0. M:E RATIO PIN TOGGLE (FIRST PRIORITY)
+    ------------------------------------------------------------
+    if button == 1 and meRatioRect then
+        if mx >= meRatioRect.x1 and mx <= meRatioRect.x2
+        and my >= meRatioRect.y1 and my <= meRatioRect.y2 then
+            meRatioPinned = not meRatioPinned
+            Spring.Echo("M:E pinned:", meRatioPinned)
+            return true
+        end
+    end
+
+    ------------------------------------------------------------
+    -- 1. CTRL + RMB always toggles dual-line graphs
+    ------------------------------------------------------------
     if ctrl and button == 3 and box then
         if mx >= box.x1 and mx <= box.x2 and my >= box.y1 and my <= box.y2 then
             hideGraphs = not hideGraphs
@@ -5309,12 +5346,16 @@ function widget:MousePress(mx, my, button)
         end
     end
 
-    -- 1. Toggle menu always gets first chance
+    ------------------------------------------------------------
+    -- 2. Toggle menu always gets first chance (AFTER M:E)
+    ------------------------------------------------------------
     if EcoToggleMenu.MousePress(mx, my, button) then
         return true
     end
 
-    -- 2. If Eco Graph is hidden, do NOT process Eco Graph clicks
+    ------------------------------------------------------------
+    -- 3. If Eco Graph is hidden, do NOT process Eco Graph clicks
+    ------------------------------------------------------------
     if not WG.EcoGraph_UIVisible then
         return false
     end
@@ -5573,21 +5614,21 @@ function widget:MousePress(mx, my, button)
             end
         end
 
--- ENERGY → METAL conversion slider (Compact View)
-if conversionIndicatorArea and conversionIndicatorArea[1] then
-    if mx >= conversionIndicatorArea[1]
-    and mx <= conversionIndicatorArea[3]
-    and my >= conversionIndicatorArea[2]
-    and my <= conversionIndicatorArea[4] then
+        -- ENERGY → METAL conversion slider (Compact View)
+        if conversionIndicatorArea and conversionIndicatorArea[1] then
+            if mx >= conversionIndicatorArea[1]
+            and mx <= conversionIndicatorArea[3]
+            and my >= conversionIndicatorArea[2]
+            and my <= conversionIndicatorArea[4] then
 
-        draggingConversionIndicator = true
+                draggingConversionIndicator = true
 
-        -- store drag offset so thumb doesn't jump
-        dragOffsetX_conv = mx - ((conversionIndicatorArea[1] + conversionIndicatorArea[3]) * 0.5)
+                -- store drag offset so thumb doesn't jump
+                dragOffsetX_conv = mx - ((conversionIndicatorArea[1] + conversionIndicatorArea[3]) * 0.5)
 
-        return true
-    end
-end
+                return true
+            end
+        end
 
     end
 
@@ -5609,6 +5650,7 @@ end
 
     return false
 end
+
 
 
 function widget:MouseMove(mx, my, dx, dy, button)
