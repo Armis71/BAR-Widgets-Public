@@ -3647,7 +3647,7 @@ end
 -- METAL STORAGE BAR (Compact Mode, bottom-anchored, layered)
 do
     -- This controls left and right length of bar nudge left or right
-	local barX1 = box.x1 + 160 + metalOffset
+	local barX1 = box.x1 + 165 + metalOffset  -- Moves left side of metal storage bar to the right
     local barX2 = centerX - 270 + metalOffset
     local barH  = 12
 	-- Nudge the Storage bar up or down.
@@ -3993,20 +3993,18 @@ do
     end
 
     ------------------------------------------------------------
-    -- Draw label + value (SHORT + CLOSE)
+    -- Draw bracketed label: [M:E  1:XXX  ]
     ------------------------------------------------------------
-    glColor(cfg.titleColor)
-    glText("[M:E]", ratioX, ratioY, fontSize, "l")
+    local display = string.format("[M:E %s]", ratioStr)
 
     glColor(col)
-    glText(ratioStr, ratioX + 33, ratioY, fontSize + 2, "l")
+    glText(display, ratioX, ratioY, fontSize + 2, "l")
 
     ------------------------------------------------------------
-    -- Tooltip hitbox (pixel-perfect for click + hover)
+    -- Tooltip hitbox (wide enough for 1:999)
     ------------------------------------------------------------
-    local label = "[M:E] " .. ratioStr
     local size  = fontSize + 2
-    local width = gl.GetTextWidth(label) * size
+    local width = gl.GetTextWidth(display) * size
 
     meRatioRect = {
         x1 = ratioX - 4,
@@ -4015,6 +4013,7 @@ do
         y2 = ratioY + fontSize,
     }
 end
+
 
 ----------------------------------------------------------------
 -- M:E RATIO TOOLTIP (SMART VERSION, STYLED, DARK BG, NET-AWARE)
@@ -4100,6 +4099,8 @@ do
             "Converter Eco: 1:41 – 1:80",
             "Overbuilt Energy: 1:81 – 1:200",
             "Extreme Surplus: 200+",
+            "",
+            "Click on [M:E 1:XX] to pin this tooltip for reference."
         }
 
         ------------------------------------------------------------
