@@ -4010,7 +4010,7 @@ do
 end
 
 ----------------------------------------------------------------
--- M:E RATIO TOOLTIP (SMART VERSION, STYLED, DARK BG)
+-- M:E RATIO TOOLTIP (SMART VERSION, STYLED, DARK BG, NET-AWARE)
 ----------------------------------------------------------------
 do
     local mx, my = Spring.GetMouseState()
@@ -4019,28 +4019,41 @@ do
     and my >= meRatioRect.y1 and my <= meRatioRect.y2 then
 
         local mInc = smoothMetalIncome or 0
+        local mUse = smoothMetalUsage or 0
+        local mNet = mInc - mUse
+
         local eInc = smoothEnergyIncome or 0
         local ratio = (mInc > 0) and (eInc / mInc) or 0
         local ratioRounded = math.floor(ratio + 0.5)
         local ratioStr = string.format("1:%d", ratioRounded)
 
         ------------------------------------------------------------
-        -- Metal context (smart + styled)
+        -- Metal context (NET-AWARE + styled)
         ------------------------------------------------------------
         local metalHint, metalColor, metalIcon
 
-        if mInc < 5 then
+        -- NET OVERRIDE (stalling)
+        if mNet < 0 then
+            metalHint  = "Stalling metal — eco limited."
+            metalColor = {1, 0.2, 0.2, 1}   -- red
+            metalIcon  = "⚠️ "
+
+        -- INCOME-BASED CONTEXT
+        elseif mInc < 5 then
             metalHint  = "Metal income very low — ratio may be misleading."
             metalColor = {1, 0.2, 0.2, 1}
             metalIcon  = "⚠️ "
+
         elseif mInc < 12 then
             metalHint  = "Metal income low."
             metalColor = {1, 0.7, 0.1, 1}
             metalIcon  = "⚠️ "
+
         elseif mInc < 25 then
             metalHint  = "Metal income normal."
             metalColor = {1, 1, 1, 1}
             metalIcon  = "✔️ "
+
         else
             metalHint  = "Metal income high — strong eco potential."
             metalColor = {0.2, 1, 0.2, 1}
@@ -4055,6 +4068,10 @@ do
             "",
 
             string.format("Metal Income:  %.1f", mInc),
+            string.format("Metal Use:     %.1f", mUse),
+            string.format("Metal Net:     %.1f", mNet),
+            "",
+
             string.format("Energy Income: %.1f", eInc),
             "",
 
@@ -4131,6 +4148,7 @@ do
         end
     end
 end
+
 
 
 -- GAME SPEED + PINPOINTER + BUILD POWER (Compact Mode, lower-left corner)
