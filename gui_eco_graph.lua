@@ -4033,12 +4033,12 @@ do
         local metalHint, metalColor, metalIcon
 
         if mNet < 0 then
-            metalHint  = "Stalling metal — eco limited."
+            metalHint  = "Stalling metal"
             metalColor = {1, 0.2, 0.2, 1}
             metalIcon  = "⚠️ "
 
         elseif mInc < 5 then
-            metalHint  = "Metal income very low — ratio may be misleading."
+            metalHint  = "Metal income very low"
             metalColor = {1, 0.2, 0.2, 1}
             metalIcon  = "⚠️ "
 
