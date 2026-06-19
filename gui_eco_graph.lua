@@ -4032,13 +4032,11 @@ do
         ------------------------------------------------------------
         local metalHint, metalColor, metalIcon
 
-        -- NET OVERRIDE (stalling)
         if mNet < 0 then
             metalHint  = "Stalling metal — eco limited."
-            metalColor = {1, 0.2, 0.2, 1}   -- red
+            metalColor = {1, 0.2, 0.2, 1}
             metalIcon  = "⚠️ "
 
-        -- INCOME-BASED CONTEXT
         elseif mInc < 5 then
             metalHint  = "Metal income very low — ratio may be misleading."
             metalColor = {1, 0.2, 0.2, 1}
@@ -4075,7 +4073,8 @@ do
             string.format("Energy Income: %.1f", eInc),
             "",
 
-            string.format("RATIO: %s", ratioStr),
+            { text = string.format("RATIO: %s", ratioStr), bigger = true },
+            "",
             string.format("Equation: eInc / mInc = %.2f", ratio),
             "",
 
@@ -4125,19 +4124,24 @@ do
         end)
 
         ------------------------------------------------------------
-        -- Draw text (supports centered + styled lines)
+        -- Draw text (supports centered + styled lines + bigger)
         ------------------------------------------------------------
         local y = tipY + th - pad - fontSize
         for _, line in ipairs(lines) do
             if type(line) == "table" then
                 glColor(line.color or {1,1,1,1})
 
+                local size =
+                    line.bigger and (fontSize + 3) or
+                    line.big    and (fontSize + 1) or
+                    fontSize
+
                 if line.center then
-                    local w = glGetTextWidth(line.text) * (fontSize + 1)
+                    local w = glGetTextWidth(line.text) * size
                     local cx = tipX + (tw * 0.5) - (w * 0.5)
-                    glText(line.text, cx, y, line.big and (fontSize + 1) or fontSize, "lo")
+                    glText(line.text, cx, y, size, "lo")
                 else
-                    glText(line.text, tipX + pad, y, line.big and (fontSize + 1) or fontSize, "lo")
+                    glText(line.text, tipX + pad, y, size, "lo")
                 end
             else
                 glColor(1,1,1,1)
