@@ -13,7 +13,7 @@ end
 
 
 -- GLOBAL FONT SCALE (shrink everything proportionally)
-local FONT_SCALE = 0.9  -- try 0.85 first; 0.80 or 0.75 if you want it even shorter
+local FONT_SCALE = 0.99  -- This will affect most of the text size in the widget. Try 0.95, 0.97, 0.995 or 0.999 for different levels of shrinking.
 
 -- Get's Wind Average Information
 local windFunctions = VFS.Include('common/wind_functions.lua')
@@ -3272,7 +3272,7 @@ do
     local commandersLabelY = statsY
     local countY = commandersLabelY   -- same line as label
 
-    local baseX = commandersX + 70
+    local baseX = commandersX + 80   -- Increases horizontal spacing from label, but numbers are still centered around commandersX
 
     -- Horizontal spacing for the numbers
     local offset = 18
@@ -3282,7 +3282,7 @@ do
 
     -- Label
     glColor(cfg.titleColor)
-    glText("Commanders:", commandersX, commandersLabelY, fontSize, "oc")
+    glText("Commanders:   ", commandersX, commandersLabelY, fontSize + 3, "oc")
 	
 
     -- Numbers (same column, centered around commandersX)
@@ -3754,7 +3754,7 @@ do
     --------------------------------------------------------
     -- GEOMETRY (mirrored from Metal side)
     --------------------------------------------------------
-    local barX1 = centerX + 240 + energyOffset
+    local barX1 = centerX + 265 + energyOffset
     local barX2 = box.x2 - 150 + energyOffset
 
     local barH  = 12
@@ -3880,7 +3880,7 @@ do
         local barY1 = box.y1 + 5
 
         -- Position: nicely to the right of the storage bar
-        local metalTextX = barX2 + 35     -- ← 90 adjust this if needed Metal Available left to right
+        local metalTextX = barX2 + 25     -- ← 90 adjust this if needed Metal Available left to right
         local metalTextY = barY1 - 2
 
         glText(metalText, metalTextX, metalTextY, metalFont, "l")
@@ -3918,7 +3918,7 @@ do
         glColor(1, 1, 0, 0.90)
 
         -- Recompute Energy bar geometry (must match your actual bar)
-        local barX1 = centerX + 390 -- 345  This is the Energy Available stat just below and right of Wind Bar
+        local barX1 = centerX + 410 -- 390  This is the Energy Available stat just below and right of Wind Bar
         local barX2 = box.x2 - 150
         local barY1 = box.y1 + 5
 
@@ -3929,23 +3929,6 @@ do
         local energyTextY = barY1 - 2
 
         glText(energyText, energyTextX, energyTextY, energyFont, "r")
-
---[[ ------------------------------------------------------------
--- ENERGY ICON ABOVE ENERGY AVAILABLE (Compact View)
-------------------------------------------------------------
-local iconSize = 38
-
--- Center icon horizontally over the Energy Available text
-local iconX = energyTextX - (iconSize * 0.5) - 38  -- Higher moves left
-
--- Place icon above the text
-local iconY = energyTextY + energyFont + 6 - 15
-
-gl.Texture(energyIconPath)
-gl.Color(1,1,1,1)
-gl.TexRect(iconX, iconY, iconX + iconSize, iconY + iconSize)
-gl.Texture(false)
- ]]
 
     end
 end
