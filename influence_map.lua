@@ -11,7 +11,7 @@ return {
     author    = "Armis71 + Copilot",
     date      = "2026",
     license   = "GPLv2",
-    layer     = 0,
+    layer     = -999999,
     enabled   = false
 }
 end
