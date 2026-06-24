@@ -3647,7 +3647,7 @@ end
 -- METAL STORAGE BAR (Compact Mode, bottom-anchored, layered)
 do
     -- This controls left and right length of bar nudge left or right
-	local barX1 = box.x1 + 165 + metalOffset  -- Moves left side of metal storage bar to the right
+	local barX1 = box.x1 + 170 + metalOffset  -- Moves left side of metal storage bar to the right
     local barX2 = centerX - 270 + metalOffset
     local barH  = 12
 	-- Nudge the Storage bar up or down.
@@ -3875,7 +3875,7 @@ do
         glColor(0.6, 0.9, 1.0, 1.0)
 
         -- Recompute bar geometry
-        local barX1 = box.x1 + 150
+        local barX1 = box.x1 + 170   -- Match this with the left side of the Metal Storage bar
         local barX2 = centerX - 250
         local barY1 = box.y1 + 5
 
@@ -5656,7 +5656,7 @@ if compactMode and draggingShareIndicator then
     -- get bar geometry
     local barX1, barX2
     if res == "metal" then
-        barX1 = box.x1 + 160 + metalOffset
+        barX1 = box.x1 + 170 + metalOffset
         barX2 = (box.x1 + (box.x2 - box.x1) * 0.5) - 270 + metalOffset
     else
         -- ENERGY uses global energyOffset
