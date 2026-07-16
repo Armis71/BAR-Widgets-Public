@@ -116,8 +116,6 @@ function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer, weap
     if weaponDefID and weaponDefID >= 0 then
         lastWeaponByAttacker[attackerID] = weaponDefID
     end
-	
-	Spring.Echo("DMG", unitID, "weaponDefID=", weaponDefID)
 end
 
 ------------------------------------------------------------
@@ -139,6 +137,17 @@ local function DetectCommanderDefs()
     end
 end
 
+local function GetTeamUnitsKilled(teamID)
+    if not teamID then return 0 end
+    local historyMax = Spring.GetTeamStatsHistory(teamID)
+    if not historyMax or historyMax < 1 then return 0 end
+    local statsHistory = Spring.GetTeamStatsHistory(teamID, historyMax)
+    if statsHistory and statsHistory[1] then
+        return statsHistory[1].unitsKilled or 0
+    end
+    return 0
+end
+
 local function FormatTimestamp(frame)
     if not frame then return "" end
     local seconds = math.floor(frame / 30)
@@ -146,13 +155,19 @@ local function FormatTimestamp(frame)
 end
 
 local function AssignCustomAINames()
-    if next(aiTeamNameMap) ~= nil then return end
     local teams = spGetTeamList()
     if not teams then return end
     for _, teamID in ipairs(teams) do
-        local _, _, _, isAI = spGetTeamInfo(teamID)
-        if isAI then
-            aiTeamNameMap[teamID] = "Player (AI)"
+        if not aiTeamNameMap[teamID] then
+            local _, _, _, isAI = spGetTeamInfo(teamID)
+            if isAI then
+                -- BAR stores the AI's assigned nickname (e.g. "PsychoPewPew")
+                -- as a game rules param, keyed by teamID.
+                local niceName = Spring.GetGameRulesParam("ainame_" .. teamID)
+                if niceName and niceName ~= "" then
+                    aiTeamNameMap[teamID] = niceName .. " (AI)"
+                end
+            end
         end
     end
 end
@@ -287,7 +302,7 @@ end
 -- CHUNK 3 — ATTACKER RESOLUTION (TOP BAR LOGIC)
 --------------------------------------------------------------------------------
 
-local function ResolveAttacker(unitID, unitTeam)
+local function ResolveAttacker(unitID, unitTeam, attackerID_raw, attackerTeam_raw, attackerDefID_raw)
     -- 1. BAR gadgets store the REAL attacker for nukes and AOE
     local lastID   = Spring.GetUnitRulesParam(unitID, "lastAttacker")
     local lastTeam = Spring.GetUnitRulesParam(unitID, "lastDamageTeam")
@@ -305,6 +320,16 @@ local function ResolveAttacker(unitID, unitTeam)
         if team and def then
             return last, team, def
         end
+    end
+
+    -- 3. Final fallback: the raw attacker info the engine already handed
+    -- us as arguments to UnitDestroyed. This matters most with 3+ teams,
+    -- since kills between two other teams (not involving the local
+    -- player) can have rules-param visibility restricted by LOS, causing
+    -- paths 1 and 2 above to come back empty even though the engine
+    -- itself already told us who did it.
+    if attackerID_raw and attackerTeam_raw then
+        return attackerID_raw, attackerTeam_raw, attackerDefID_raw
     end
 
     return nil, nil, nil
@@ -388,31 +413,46 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID_raw, attac
 	------------------------------------------------------
 	-- Resolve attacker using Top Bar logic
 	------------------------------------------------------
-	local attackerID, attackerTeam, attackerDefID = ResolveAttacker(unitID, unitTeam)
+	local attackerID, attackerTeam, attackerDefID = ResolveAttacker(unitID, unitTeam, attackerID_raw, attackerTeam_raw, attackerDefID_raw)
+	local attackerResolved = attackerID and attackerTeam
 
-	-- First filter: attacker must exist
-	if not attackerID or not attackerTeam then
-		return
-	end
+	if attackerResolved then
+		------------------------------------------------------
+		-- Chain-explosion root tracing MUST happen BEFORE
+		-- any team filtering, because engine often reports
+		-- commander explosions as self-damage.
+		------------------------------------------------------
+		attackerID, attackerTeam, attackerDefID =
+			ResolveChainExplosionRoot(unitID, attackerID, attackerTeam, attackerDefID)
 
-	------------------------------------------------------
-	-- Chain-explosion root tracing MUST happen BEFORE
-	-- any team filtering, because engine often reports
-	-- commander explosions as self-damage.
-	------------------------------------------------------
-	attackerID, attackerTeam, attackerDefID =
-		ResolveChainExplosionRoot(unitID, attackerID, attackerTeam, attackerDefID)
-
-	-- Now apply the real team filter
-	if not attackerID or not attackerTeam or attackerTeam == unitTeam then
-		return
+		-- Same-team death (friendly fire / suicide) is not a kill by an
+		-- opponent, so skip it entirely -- this is a deliberate
+		-- exclusion, unlike the "couldn't identify the attacker" case
+		-- below, which we still want to log.
+		if attackerTeam == unitTeam then
+			return
+		end
 	end
 
     ------------------------------------------------------
     -- Killer label + victim name
     ------------------------------------------------------
-    local killerKey, killerName, killerTeamID = GetKillerLabel(attackerID)
-    if not killerKey then return end
+    local killerKey, killerName, killerTeamID
+    if attackerResolved then
+        killerKey, killerName, killerTeamID = GetKillerLabel(attackerID)
+    end
+
+    if not killerKey then
+        -- We know a real commander died (all filters above already
+        -- passed), but couldn't identify who did it -- most likely a
+        -- vision/LOS gap for a kill that didn't involve the local
+        -- player's ally-team (common in 3+ team games). Log it as
+        -- Unknown instead of silently dropping a confirmed death.
+        killerKey = "UNKNOWN"
+        killerName = "Unknown"
+        killerTeamID = nil
+        attackerDefID = nil
+    end
 
     local victimName = GetVictimName(unitTeam)
 
@@ -433,7 +473,9 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID_raw, attac
     end
 
     -- cleanup
-    lastWeaponByAttacker[attackerID] = nil
+    if attackerID then
+        lastWeaponByAttacker[attackerID] = nil
+    end
 
     ------------------------------------------------------
     -- Record kill
@@ -553,9 +595,17 @@ glColor(1,1,1,1)
     --------------------------------------------------------
     local sortedKillers = {}
     for killerKey, total in pairs(commanderKills) do
-        sortedKillers[#sortedKillers+1] = { key=killerKey, total=total }
+        local entries = commanderKillReasons[killerKey]
+        local killerTeamID = entries and entries[1] and entries[1].killerTeamID
+        local unitsKilled = GetTeamUnitsKilled(killerTeamID)
+        sortedKillers[#sortedKillers+1] = { key=killerKey, total=total, unitsKilled=unitsKilled }
     end
-    table.sort(sortedKillers, function(a,b) return a.total > b.total end)
+    table.sort(sortedKillers, function(a,b)
+        if a.total ~= b.total then
+            return a.total > b.total
+        end
+        return a.unitsKilled > b.unitsKilled
+    end)
 
     --------------------------------------------------------
     -- DRAW LIST
@@ -567,7 +617,12 @@ glColor(1,1,1,1)
 
         if entries and #entries > 0 then
             local first = entries[1]
-            local kr,kg,kb = spGetTeamColor(first.killerTeamID)
+            local kr,kg,kb
+            if first.killerTeamID then
+                kr,kg,kb = spGetTeamColor(first.killerTeamID)
+            else
+                kr,kg,kb = 0.7,0.7,0.7
+            end
             glColor(kr or 1, kg or 1, kb or 1, 1)
             glText(string.format("%s: %d", first.killerName, total), x1+12, y, 16, "o")
             glColor(1,1,1,1)
@@ -615,6 +670,18 @@ glColor(1,1,1,1)
     -- END CLIPPING
     --------------------------------------------------------
     glScissor(false)
+
+    --------------------------------------------------------
+    -- FIXED FOOTER (tie-breaker remark)
+    --------------------------------------------------------
+    local footerText = "Tie-breaker is total units killed"
+    local footerSize = 12
+    local footerWidth = glGetTextWidth(footerText) * footerSize
+    local footerX = x1 + (w * 0.5) - (footerWidth * 0.5)
+    local footerY = y1 + 8
+    glColor(1,1,1,0.5)
+    glText(footerText, footerX, footerY, footerSize, "o")
+    glColor(1,1,1,1)
 
     --------------------------------------------------------
     -- UPDATE CONTENT HEIGHT + GLOBAL MAXSCROLL
