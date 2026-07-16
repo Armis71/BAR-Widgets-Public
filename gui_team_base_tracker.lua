@@ -459,6 +459,29 @@ end
 -- main base), by binning stationary structures into a coarse grid and
 -- picking the cell with the highest total metal cost. Computed on
 -- demand (double-click), not every recount, since it scans every unit.
+-- Classifies a building into a functional category, so base-diversity
+-- checks can tell "an actual base" (factory + metal + energy mixed)
+-- apart from a monoculture farm, even if that farm has several
+-- different unit defs (e.g. multiple turbine tiers/skins) that are
+-- still functionally all the same thing.
+local function classifyBuildingCategory(ud)
+  if labDisplayNames[ud.name] then
+    return "factory"
+  end
+  if ud.extractsMetal and ud.extractsMetal > 0 then
+    return "metal"
+  end
+  if (ud.energyMake and ud.energyMake > 0)
+     or (ud.windGenerator and ud.windGenerator > 0)
+     or (ud.tidalGenerator and ud.tidalGenerator > 0) then
+    return "energy"
+  end
+  if ud.weapons and #ud.weapons > 0 then
+    return "defense"
+  end
+  return "other"
+end
+
 local function findTeamBaseLocation(teamID)
   local units = Spring.GetTeamUnits(teamID)
   if not units or #units == 0 then return nil end
@@ -470,28 +493,61 @@ local function findTeamBaseLocation(teamID)
     local unitDefID = Spring.GetUnitDefID(unitID)
     local ud = UnitDefs[unitDefID]
     if ud and not ud.canMove then
-      local x, y, z = Spring.GetUnitPosition(unitID)
-      if x then
-        local key = math.floor(x / cellSize) .. "," .. math.floor(z / cellSize)
-        local cell = cells[key]
-        if not cell then
-          cell = { totalMetal = 0, sumX = 0, sumZ = 0, count = 0 }
-          cells[key] = cell
+      local _, _, _, _, buildProgress = Spring.GetUnitHealth(unitID)
+      if buildProgress == 1 then
+        local x, y, z = Spring.GetUnitPosition(unitID)
+        if x then
+          local key = math.floor(x / cellSize) .. "," .. math.floor(z / cellSize)
+          local cell = cells[key]
+          if not cell then
+            cell = { totalMetal = 0, sumX = 0, sumZ = 0, count = 0, categories = {}, categoryCount = 0 }
+            cells[key] = cell
+          end
+          cell.totalMetal = cell.totalMetal + (ud.metalCost or 0)
+          cell.sumX = cell.sumX + x
+          cell.sumZ = cell.sumZ + z
+          cell.count = cell.count + 1
+          local category = classifyBuildingCategory(ud)
+          if not cell.categories[category] then
+            cell.categories[category] = true
+            cell.categoryCount = cell.categoryCount + 1
+          end
         end
-        cell.totalMetal = cell.totalMetal + (ud.metalCost or 0)
-        cell.sumX = cell.sumX + x
-        cell.sumZ = cell.sumZ + z
-        cell.count = cell.count + 1
       end
     end
   end
 
+  local minCategoryCount = 3
+
   local bestCell = nil
-  local bestMetal = -1
+  local bestScore = -1
   for _, cell in pairs(cells) do
-    if cell.totalMetal > bestMetal then
-      bestMetal = cell.totalMetal
-      bestCell = cell
+    -- Require real functional variety (factory + metal + energy, etc.),
+    -- not just weight for it: a monoculture farm (all tidal generators,
+    -- all wind turbines, etc.) can pack in far more buildings per cell
+    -- than a genuine base ever does, and can even span a couple of
+    -- different unit defs (tiers/skins) while still being functionally
+    -- one category -- so a diversity *multiplier* alone can still lose
+    -- to sheer volume. Disqualifying low-diversity cells outright is
+    -- more decisive.
+    if cell.categoryCount >= minCategoryCount then
+      local score = cell.totalMetal * cell.count
+      if score > bestScore then
+        bestScore = score
+        bestCell = cell
+      end
+    end
+  end
+
+  -- Fallback for an early-game base that doesn't have 3 distinct
+  -- categories yet -- rank everything so we still return something.
+  if not bestCell then
+    for _, cell in pairs(cells) do
+      local score = cell.totalMetal * cell.count * cell.categoryCount
+      if score > bestScore then
+        bestScore = score
+        bestCell = cell
+      end
     end
   end
 
