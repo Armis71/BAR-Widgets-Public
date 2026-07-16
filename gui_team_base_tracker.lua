@@ -201,8 +201,8 @@ local statDescriptions = {
 local viewModeDescriptions = {
   minimal = "Minimal - Labs and Commander only",
   eco     = "Eco - Fusion, AFUS, Epic AFUS",
-  defense = "Defense - Pulsar, Anti-Nuke, Pinpointer, Intrusion CM, Juno",
-  offense = "Offense - Nuke Silo, Super Weapon, LRPC, Napalm/Pawn Launcher",
+  defense = "Defense - Pulsar, Anti-Nuke, Pinpointer, ICM, Juno",
+  offense = "Offense - Nukes, Super Weapon, LRPC, Napalm/Pawn",
   all     = "All - every tracked structure, no filter",
 }
 
@@ -982,6 +982,8 @@ function widget:Initialize()
   sectionsSwapped = Spring.GetConfigInt("LabTracker_Swapped", 0) == 1
   local viewModeKeys = {"minimal", "eco", "defense", "offense", "all"}
   activeViewMode = viewModeKeys[Spring.GetConfigInt("LabTracker_ViewMode", 5)] or "all"
+  local savedStatSortIdx = Spring.GetConfigInt("LabTracker_StatSort", 0)
+  statSortKey = (savedStatSortIdx > 0 and statColumns[savedStatSortIdx] and statColumns[savedStatSortIdx].key) or nil
   recountLabs()
 end
 
@@ -1049,6 +1051,14 @@ function widget:MousePress(mx,my,button)
       else
         statSortKey = col.key
       end
+      local savedIdx = 0
+      for i, c in ipairs(statColumns) do
+        if c.key == statSortKey then
+          savedIdx = i
+          break
+        end
+      end
+      Spring.SetConfigInt("LabTracker_StatSort", savedIdx)
       rebuildLayout()
       return true
     end
@@ -1347,8 +1357,15 @@ function widget:DrawScreen()
     local descText = (hoverStatKey and statDescriptions[hoverStatKey])
                    or (hoverViewModeKey and viewModeDescriptions[hoverViewModeKey])
     if descText then
+      local maxDescWidth = totalWidth - padding * 4
+      local descFontSize = 13
+      local minDescFontSize = 8
+      while descFontSize > minDescFontSize
+            and gl.GetTextWidth(descText) * descFontSize > maxDescWidth do
+        descFontSize = descFontSize - 0.5
+      end
       gl.Color(0.75, 0.85, 1, 0.95)
-      gl.Text(descText, (x + x + totalWidth) / 2, headerRect.y1 + 12, 13, "oc")
+      gl.Text(descText, (x + x + totalWidth) / 2, headerRect.y1 + 12, descFontSize, "oc")
     end
   end
 
