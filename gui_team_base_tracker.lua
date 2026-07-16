@@ -10,9 +10,9 @@ function widget:GetInfo()
   }
 end
 
--------------------------------------------------------------
+------------------------------------------------------------
 -- CONFIG
--------------------------------------------------------------
+------------------------------------------------------------
 
 local defaultX, defaultY = 300, 500
 local chartX, chartY     = defaultX, defaultY
@@ -165,6 +165,27 @@ local statColumns = {
   {key = "uk",  label = "UK"},
 }
 local statsRowH = 30
+local viewModeColumns = {
+  {key = "minimal", label = "Minimal"},
+  {key = "eco",     label = "Eco"},
+  {key = "defense", label = "Defense"},
+  {key = "offense", label = "Offense"},
+  {key = "all",     label = "All"},
+}
+local viewModeRowH = 26
+local viewModeExtraCategories = {
+  eco = {
+    "Fusion Reactor", "Advanced Fusion Reactor", "Epic AFUS",
+  },
+  defense = {
+    "Pulsar", "Epic Pulsar", "Anti-Nuke", "Pinpointer",
+    "Intrusion CM", "Juno",
+  },
+  offense = {
+    "Nuke Silo", "Super Weapon", "LRPC", "Napalm Launcher",
+    "Pawn Launcher",
+  },
+}
 local statDescriptions = {
   mps = "M/s - metal income per sec",
   eps = "E/s - energy income per sec",
@@ -175,6 +196,14 @@ local statDescriptions = {
   dd  = "DD - Damage dealt",
   up  = "UP - Units produced",
   uk  = "UK - Units killed",
+}
+
+local viewModeDescriptions = {
+  minimal = "Minimal - Labs and Commander only",
+  eco     = "Eco - Fusion, AFUS, Epic AFUS",
+  defense = "Defense - Pulsar, Anti-Nuke, Pinpointer, Intrusion CM, Juno",
+  offense = "Offense - Nuke Silo, Super Weapon, LRPC, Napalm/Pawn Launcher",
+  all     = "All - every tracked structure, no filter",
 }
 
 local techTierOrder = {
@@ -213,6 +242,23 @@ local techTierOrder = {
   ["Intrusion CM"]                    = 18,
   ["Napalm Launcher"]                 = 19,
 }
+
+-- Commander + core Labs (tiers 0-4) are always shown regardless of
+-- view mode; Eco/Defense/Offense each add their own extra categories
+-- on top of that core set. "All" removes the filter entirely.
+local function isCategoryVisibleInView(category, viewMode)
+  if viewMode == "all" then return true end
+  local tier = techTierOrder[category]
+  if tier and tier <= 4 then return true end
+  if viewMode == "minimal" then return false end
+  local extras = viewModeExtraCategories[viewMode]
+  if extras then
+    for _, c in ipairs(extras) do
+      if c == category then return true end
+    end
+  end
+  return false
+end
 
 ------------------------------------------------------------
 -- ICON MAP (keys now match labDisplayNames values)
@@ -341,6 +387,7 @@ local rowRects = {}
 local iconRects = {}
 local hoverIcon = nil
 local hoverStatKey = nil
+local hoverViewModeKey = nil
 local hoverTeamID = nil
 local selectedTeamID = nil
 local lastClickTime = 0
@@ -382,6 +429,14 @@ local statHeaderRects = {
   dd  = {x1=0,y1=0,x2=0,y2=0},
   up  = {x1=0,y1=0,x2=0,y2=0},
   uk  = {x1=0,y1=0,x2=0,y2=0},
+}
+local activeViewMode = "all"
+local viewModeRects = {
+  minimal = {x1=0,y1=0,x2=0,y2=0},
+  eco     = {x1=0,y1=0,x2=0,y2=0},
+  defense = {x1=0,y1=0,x2=0,y2=0},
+  offense = {x1=0,y1=0,x2=0,y2=0},
+  all     = {x1=0,y1=0,x2=0,y2=0},
 }
 
 -- Cached, ready-to-draw layout. Rebuilt only when the underlying data
@@ -747,6 +802,7 @@ function rebuildLayout()
 
     local icons = {}
     for _, labName in ipairs(ownedLabs) do
+      if isCategoryVisibleInView(labName, activeViewMode) then
       local defName
       if labName == "Commander" then
         local comList = teamLabPositions[t.teamID] and teamLabPositions[t.teamID]["Commander"]
@@ -795,6 +851,7 @@ function rebuildLayout()
           count = t.labs[labName] or 1,
           tierLabel = tierLabel,
         }
+      end
       end
     end
 
@@ -878,6 +935,16 @@ local function hitStatHeader(mx,my)
   return nil
 end
 
+local function hitViewModeButton(mx,my)
+  for _, col in ipairs(viewModeColumns) do
+    local r = viewModeRects[col.key]
+    if mx>=r.x1 and mx<=r.x2 and my>=r.y1 and my<=r.y2 then
+      return col.key
+    end
+  end
+  return nil
+end
+
 local function jumpCameraTo(x, y, z, height, transitionTime)
   local camState = Spring.GetCameraState()
   camState.px = x
@@ -913,6 +980,8 @@ function widget:Initialize()
   minimized = Spring.GetConfigInt("LabTracker_Minimized", 0) == 1
   sectionsExpanded = Spring.GetConfigInt("LabTracker_Expanded", 0) == 1
   sectionsSwapped = Spring.GetConfigInt("LabTracker_Swapped", 0) == 1
+  local viewModeKeys = {"minimal", "eco", "defense", "offense", "all"}
+  activeViewMode = viewModeKeys[Spring.GetConfigInt("LabTracker_ViewMode", 5)] or "all"
   recountLabs()
 end
 
@@ -979,6 +1048,21 @@ function widget:MousePress(mx,my,button)
         statSortKey = nil
       else
         statSortKey = col.key
+      end
+      rebuildLayout()
+      return true
+    end
+  end
+
+  for _, col in ipairs(viewModeColumns) do
+    local hr = viewModeRects[col.key]
+    if mx>=hr.x1 and mx<=hr.x2 and my>=hr.y1 and my<=hr.y2 then
+      activeViewMode = col.key
+      for i, k in ipairs({"minimal", "eco", "defense", "offense", "all"}) do
+        if k == activeViewMode then
+          Spring.SetConfigInt("LabTracker_ViewMode", i)
+          break
+        end
       end
       rebuildLayout()
       return true
@@ -1144,6 +1228,7 @@ function widget:DrawScreen()
     hoverTeamID = hitTeamRow(mx, my)
     hoverIcon   = hitIcon(mx, my)
     hoverStatKey = hitStatHeader(mx, my)
+    hoverViewModeKey = hitViewModeButton(mx, my)
   end
 
   if followingUnitID and lastAppliedCamPos then
@@ -1218,7 +1303,7 @@ function widget:DrawScreen()
   for _, item in ipairs(layoutItems) do
     contentHeight = contentHeight + ((item.itype == "team") and rowH or dividerRowH)
   end
-  local height = rowH + statsRowH + contentHeight + padding * 2
+  local height = rowH + statsRowH + viewModeRowH + contentHeight + padding * 2
 
   gl.Color(0,0,0,backgroundOpacity)
   gl.Rect(x, y - height, x + totalWidth, y + padding)
@@ -1259,7 +1344,8 @@ function widget:DrawScreen()
   end
 
   do
-    local descText = hoverStatKey and statDescriptions[hoverStatKey]
+    local descText = (hoverStatKey and statDescriptions[hoverStatKey])
+                   or (hoverViewModeKey and viewModeDescriptions[hoverViewModeKey])
     if descText then
       gl.Color(0.75, 0.85, 1, 0.95)
       gl.Text(descText, (x + x + totalWidth) / 2, headerRect.y1 + 12, 13, "oc")
@@ -1299,6 +1385,38 @@ function widget:DrawScreen()
 
     gl.Color(1, 1, 1, 1)
     rowY = rowY - statsRowH
+  end
+
+  do
+    local vmTop = rowY
+    local vmBottom = rowY - viewModeRowH
+    local vmColW = totalWidth / #viewModeColumns
+    local vmFontSize = 12
+
+    gl.Color(0.15, 0.15, 0.15, 0.75)
+    gl.Rect(x, vmBottom, x + totalWidth, vmTop)
+
+    local vmCy = (vmTop + vmBottom) / 2
+    for i, col in ipairs(viewModeColumns) do
+      local cx1 = x + (i - 1) * vmColW
+      local cx2 = x + i * vmColW
+      local ccx = (cx1 + cx2) / 2
+
+      local hr = viewModeRects[col.key]
+      hr.x1, hr.y1, hr.x2, hr.y2 = cx1, vmBottom, cx2, vmTop
+
+      if activeViewMode == col.key then
+        gl.Color(1, 0.85, 0.2, 0.9)
+        gl.Rect(cx1, vmBottom, cx2, vmTop)
+        gl.Color(0, 0, 0, 1)
+      else
+        gl.Color(1, 1, 1, 0.85)
+      end
+      gl.Text(col.label, ccx, vmCy - vmFontSize * 0.3, vmFontSize, "oc")
+    end
+
+    gl.Color(1, 1, 1, 1)
+    rowY = rowY - viewModeRowH
   end
 
   expandToggleRect.x1, expandToggleRect.y1, expandToggleRect.x2, expandToggleRect.y2 = 0, 0, 0, 0
