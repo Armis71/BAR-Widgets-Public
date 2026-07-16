@@ -75,6 +75,78 @@ local labDisplayNames = {
   legadvshipyard = "T2 Advanced Shipyard",
   leggant     = "Experimental Gantry",
   leggantuw   = "Experimental Gantry UW",
+
+  -- Fusion Reactors (T2 energy)
+  armfus      = "Fusion Reactor",
+  corfus      = "Fusion Reactor",
+  legfus      = "Fusion Reactor",
+
+  -- Advanced Fusion Reactors (AFUS)
+  armafus     = "Advanced Fusion Reactor",
+  corafus     = "Advanced Fusion Reactor",
+  legafus     = "Advanced Fusion Reactor",
+  armafust3   = "Epic AFUS",
+  corafust3   = "Epic AFUS",
+  legafust3   = "Epic AFUS",
+
+  -- LRPC (Long Range Plasma Cannon) -- Armada's equivalent
+  -- (armvulc/Ragnarok) is tracked under Super Weapon instead, since
+  -- it doubles as Armada's superweapon rather than a separate unit.
+  armbrtha    = "LRPC",
+  corint      = "LRPC",
+  leglrpc     = "LRPC",
+
+  -- Nuke Silos
+  armsilo     = "Nuke Silo",
+  corsilo     = "Nuke Silo",
+  legsilo     = "Nuke Silo",
+
+  -- Anti-Nukes
+  armamd        = "Anti-Nuke",
+  corfmd        = "Anti-Nuke",
+  legabm        = "Anti-Nuke",
+
+  -- Super Weapons (Ragnarok, Calamity, Starfall)
+  armvulc      = "Super Weapon",
+  corbuzz      = "Super Weapon",
+  legstarfall  = "Super Weapon",
+
+  -- Plasma Pulsar and equivalents (T3 area-denial defense towers).
+  -- Note: Legion's Bastion has no epic variant yet (confirmed via
+  -- BAR issue tracker), unlike Armada's Pulsar and Cortex's Bulwark.
+  armanni      = "Pulsar",
+  cordoom      = "Pulsar",
+  legbastion   = "Pulsar",
+  armannit3    = "Epic Pulsar",
+  cordoomt3    = "Epic Pulsar",
+
+  -- Pinpointers
+  armtarg      = "Pinpointer",
+  cortarg      = "Pinpointer",
+  legtarg      = "Pinpointer",
+
+  -- Junos
+  armjuno      = "Juno",
+  corjuno      = "Juno",
+  legjuno      = "Juno",
+
+  -- Experimental Aircraft Plant/Gantry (T3/T4 aircraft-specific
+  -- factory, distinct from the general Experimental Gantry above)
+  armapt3      = "Experimental Aircraft Plant",
+  corapt3      = "Experimental Aircraft Plant",
+  legapt3      = "Experimental Aircraft Plant",
+
+  -- Pawn Launcher (Armada only -- no confirmed Cortex/Legion equivalent)
+  armbotrail   = "Pawn Launcher",
+
+  -- Intrusion Countermeasure System
+  armsd        = "Intrusion CM",
+  corsd        = "Intrusion CM",
+  legsd        = "Intrusion CM",
+
+  -- Long Range Napalm Launcher (Legion only -- no confirmed
+  -- Cortex/Armada equivalent)
+  legperdition = "Napalm Launcher",
 }
 
 ------------------------------------------------------------
@@ -124,6 +196,22 @@ local techTierOrder = {
 
   ["Experimental Gantry"]            = 3,
   ["Experimental Gantry UW"]         = 4,
+
+  ["Fusion Reactor"]                 = 5,
+  ["Advanced Fusion Reactor"]        = 6,
+  ["LRPC"]                           = 7,
+  ["Nuke Silo"]                      = 8,
+  ["Anti-Nuke"]                      = 9,
+  ["Super Weapon"]                   = 10,
+  ["Pulsar"]                         = 11,
+  ["Pinpointer"]                     = 12,
+  ["Juno"]                           = 13,
+  ["Experimental Aircraft Plant"]    = 14,
+  ["Epic AFUS"]                       = 15,
+  ["Epic Pulsar"]                     = 16,
+  ["Pawn Launcher"]                   = 17,
+  ["Intrusion CM"]                    = 18,
+  ["Napalm Launcher"]                 = 19,
 }
 
 ------------------------------------------------------------
@@ -167,6 +255,20 @@ local iconMap = {
     ["T2 Advanced Shipyard"]           = "armasy",
     ["Experimental Gantry"]            = "armshltx",
     ["Experimental Gantry UW"]         = "armshltxuw",
+    ["Fusion Reactor"]                 = "armfus",
+    ["Advanced Fusion Reactor"]        = "armafus",
+    ["LRPC"]                           = "armbrtha",
+    ["Nuke Silo"]                      = "armsilo",
+    ["Anti-Nuke"]                      = "armamd",
+    ["Super Weapon"]                   = "armvulc",
+    ["Pulsar"]                          = "armanni",
+    ["Pinpointer"]                      = "armtarg",
+    ["Juno"]                            = "armjuno",
+    ["Experimental Aircraft Plant"]     = "armapt3",
+    ["Epic AFUS"]                       = "armafust3",
+    ["Epic Pulsar"]                     = "armannit3",
+    ["Pawn Launcher"]                   = "armbotrail",
+    ["Intrusion CM"]                    = "armsd",
   },
   cor = {
     ["T1 Bot Lab"]                     = "corlab",
@@ -183,6 +285,19 @@ local iconMap = {
     ["T2 Advanced Shipyard"]           = "corasy",
     ["Experimental Gantry"]            = "corgant",
     ["Experimental Gantry UW"]         = "corgantuw",
+    ["Fusion Reactor"]                 = "corfus",
+    ["Advanced Fusion Reactor"]        = "corafus",
+    ["LRPC"]                           = "corint",
+    ["Nuke Silo"]                      = "corsilo",
+    ["Anti-Nuke"]                      = "corfmd",
+    ["Super Weapon"]                   = "corbuzz",
+    ["Pulsar"]                          = "cordoom",
+    ["Pinpointer"]                      = "cortarg",
+    ["Juno"]                            = "corjuno",
+    ["Experimental Aircraft Plant"]     = "corapt3",
+    ["Epic AFUS"]                       = "corafust3",
+    ["Epic Pulsar"]                     = "cordoomt3",
+    ["Intrusion CM"]                    = "corsd",
   },
   leg = {
     ["T1 Bot Lab"]                     = "leglab",
@@ -199,6 +314,19 @@ local iconMap = {
     ["T2 Advanced Shipyard"]           = "legadvshipyard",
     ["Experimental Gantry"]            = "leggant",
     ["Experimental Gantry UW"]         = "leggantuw",
+    ["Fusion Reactor"]                 = "legfus",
+    ["Advanced Fusion Reactor"]        = "legafus",
+    ["LRPC"]                           = "leglrpc",
+    ["Nuke Silo"]                      = "legsilo",
+    ["Anti-Nuke"]                      = "legabm",
+    ["Super Weapon"]                   = "legstarfall",
+    ["Pulsar"]                          = "legbastion",
+    ["Pinpointer"]                      = "legtarg",
+    ["Juno"]                            = "legjuno",
+    ["Experimental Aircraft Plant"]     = "legapt3",
+    ["Epic AFUS"]                       = "legafust3",
+    ["Intrusion CM"]                    = "legsd",
+    ["Napalm Launcher"]                 = "legperdition",
   },
 }
 
@@ -633,7 +761,34 @@ function rebuildLayout()
                         or (tier == 1 and "T1")
                         or (tier == 2 and "T2")
                         or ((tier == 3 or tier == 4) and "EXP")
+                        or (tier == 5 and "FUS")
+                        or (tier == 6 and "AFUS")
+                        or (tier == 7 and "LRPC")
+                        or (tier == 8 and "NUKE")
+                        or (tier == 9 and "ANTI")
+                        or (tier == 10 and "SW")
+                        or (tier == 11 and "PLSR")
+                        or (tier == 12 and "PIN")
+                        or (tier == 13 and "JUNO")
+                        or (tier == 14 and "XAIR")
+                        or (tier == 15 and "EAFUS")
+                        or (tier == 16 and "EPLSR")
+                        or (tier == 17 and "PWN")
+                        or (tier == 18 and "ICM")
+                        or (tier == 19 and "NAPLM")
                         or nil
+
+        -- Cortex's Pulsar-tier unit is actually called "Bulwark", so
+        -- give it its own badge text instead of the generic PLSR/EPLSR
+        -- used by Armada's Pulsar and Legion's Bastion.
+        if faction == "cor" then
+          if tier == 11 then tierLabel = "BULW" end
+          if tier == 16 then tierLabel = "EBULW" end
+        end
+        if faction == "leg" then
+          if tier == 11 then tierLabel = "BAST" end
+          if tier == 16 then tierLabel = "EBAST" end
+        end
         icons[#icons+1] = {
           defName = defName,
           labName = labName,
