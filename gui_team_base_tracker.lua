@@ -970,6 +970,42 @@ local function followCameraTo(x, y, z)
   Spring.SetCameraState(camState, 0)
 end
 
+-- Jumps to (and cycles through, on repeated calls) all instances of a
+-- given icon's structure/commander type for a team. Shared by both the
+-- double-click handler and the spacebar-while-hovering shortcut.
+local function cycleAndJumpToIcon(teamID, labName)
+  local clickKey = teamID .. "|" .. labName
+  local list = teamLabPositions[teamID] and teamLabPositions[teamID][labName]
+  if not list or #list == 0 then return end
+
+  local idx = (iconCycleIndex[clickKey] or 0) % #list + 1
+  iconCycleIndex[clickKey] = idx
+  local pos = list[idx]
+
+  jumpCameraTo(pos.x, pos.y, pos.z, 2000)
+  flashMarker = {
+    x = pos.x, y = pos.y, z = pos.z,
+    startTime = os.clock(),
+    unitID = (labName == "Commander") and pos.unitID or nil,
+  }
+  if labName == "Commander" and pos.unitID then
+    followingUnitID = pos.unitID
+    lastAppliedCamPos = nil
+  end
+  selectedTeamID = teamID
+end
+
+-- Jumps to (and flashes) a team's metal-weighted base center. Shared by
+-- both the row double-click handler and the spacebar shortcut.
+local function jumpToTeamBaseCenter(teamID)
+  selectedTeamID = teamID
+  local bx, by, bz = findTeamBaseLocation(teamID)
+  if bx then
+    jumpCameraTo(bx, by, bz, 2500)
+    flashMarker = { x = bx, y = by, z = bz, startTime = os.clock(), unitID = nil }
+  end
+end
+
 ------------------------------------------------------------
 -- ENGINE EVENTS (RECOUNT-BASED)
 ------------------------------------------------------------
@@ -1094,24 +1130,7 @@ function widget:MousePress(mx,my,button)
     local clickKey = iconRect.teamID .. "|" .. iconRect.labName
 
     if clickKey == lastIconClickKey and (t - lastIconClickTime) <= doubleClickThreshold then
-      local list = teamLabPositions[iconRect.teamID] and teamLabPositions[iconRect.teamID][iconRect.labName]
-      if list and #list > 0 then
-        local idx = (iconCycleIndex[clickKey] or 0) % #list + 1
-        iconCycleIndex[clickKey] = idx
-        local pos = list[idx]
-
-        jumpCameraTo(pos.x, pos.y, pos.z, 2000)
-        flashMarker = {
-          x = pos.x, y = pos.y, z = pos.z,
-          startTime = os.clock(),
-          unitID = (iconRect.labName == "Commander") and pos.unitID or nil,
-        }
-        if iconRect.labName == "Commander" and pos.unitID then
-          followingUnitID = pos.unitID
-          lastAppliedCamPos = nil
-        end
-      end
-      selectedTeamID = iconRect.teamID
+      cycleAndJumpToIcon(iconRect.teamID, iconRect.labName)
       lastIconClickKey = nil
       return true
     end
@@ -1128,17 +1147,12 @@ function widget:MousePress(mx,my,button)
 
   local t = os.clock()
   if teamID == lastClickTeamID and (t - lastClickTime) <= doubleClickThreshold then
-    selectedTeamID = teamID
     local _, leaderPlayerID = Spring.GetTeamInfo(teamID, false)
     if leaderPlayerID and leaderPlayerID >= 0 then
       Spring.SendCommands("spectatorview " .. leaderPlayerID)
     end
 
-    local bx, by, bz = findTeamBaseLocation(teamID)
-    if bx then
-      jumpCameraTo(bx, by, bz, 2500)
-      flashMarker = { x = bx, y = by, z = bz, startTime = os.clock(), unitID = nil }
-    end
+    jumpToTeamBaseCenter(teamID)
 
     return true
   end
@@ -1171,6 +1185,20 @@ function widget:MouseRelease(mx, my, button)
     Spring.SetConfigInt("LabTracker_Y", chartY)
     return true
   end
+end
+
+function widget:KeyPress(key, mods, isRepeat)
+  if isRepeat then return false end
+  if key == string.byte(" ") then
+    if hoverIcon then
+      cycleAndJumpToIcon(hoverIcon.teamID, hoverIcon.labName)
+      return true
+    elseif hoverTeamID then
+      jumpToTeamBaseCenter(hoverTeamID)
+      return true
+    end
+  end
+  return false
 end
 
 ------------------------------------------------------------
