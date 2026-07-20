@@ -17,13 +17,15 @@ end
 local defaultX, defaultY = 300, 500
 local chartX, chartY     = defaultX, defaultY
 
-local iconSize           = 60
+local iconSize           = 64
 local rowH               = iconSize + 10
 local nameColW           = iconSize * 2.5   -- widened for truncation original is 3.8
 local padding            = 6
 local doubleClickThreshold = 0.25
 local dividerRowH = 36
+local pinDividerRowH = 14
 local nameFontSize       = 16
+local badgeFontSizeBySize = { [96] = 21.6, [88] = 19.8, [80] = 18.0, [72] = 16.2, [64] = 14.4, [56] = 12.6, [48] = 10.8, [40] = 9.0 }
 local backgroundOpacity  = 0.8    -- panel background opacity: 0 = fully transparent, 1 = fully opaque
 
 ------------------------------------------------------------
@@ -147,6 +149,133 @@ local labDisplayNames = {
   -- Long Range Napalm Launcher (Legion only -- no confirmed
   -- Cortex/Armada equivalent)
   legperdition = "Napalm Launcher",
+
+  -- Geothermal Powerplants
+  armgeo   = "Geothermal Powerplant",
+  corgeo   = "Geothermal Powerplant",
+  leggeo   = "Geothermal Powerplant",
+
+  armuwgeo = "Offshore Geothermal Powerplant",
+  coruwgeo = "Offshore Geothermal Powerplant",
+  leguwgeo = "Offshore Geothermal Powerplant",
+
+  armageo  = "Advanced Geothermal Powerplant",
+  corageo  = "Advanced Geothermal Powerplant",
+  legageo  = "Advanced Geothermal Powerplant",
+
+  armuwageo      = "Advanced Offshore Geothermal Powerplant",
+  coruwageo      = "Advanced Offshore Geothermal Powerplant",
+  leganavaladvgeo = "Advanced Offshore Geothermal Powerplant",
+
+  -- "Prude" -- Armada only, no confirmed Cortex/Legion equivalent
+  armgmm   = "Safe Geothermal Powerplant",
+
+  -- Basic economy
+  armmex   = "Metal Extractor",
+  cormex   = "Metal Extractor",
+  legmex   = "Metal Extractor",
+
+  armmoho  = "Advanced Metal Extractor",
+  cormoho  = "Advanced Metal Extractor",
+  legmoho  = "Advanced Metal Extractor",
+
+  armsolar = "Solar Collector",
+  corsolar = "Solar Collector",
+  legsolar = "Solar Collector",
+
+  armadvsol = "Advanced Solar Collector",
+  coradvsol = "Advanced Solar Collector",
+  legadvsol = "Advanced Solar Collector",
+
+  armwin   = "Wind Turbine",
+  corwin   = "Wind Turbine",
+  legwin   = "Wind Turbine",
+
+  armwint2 = "Advanced Wind Turbine",
+  corwint2 = "Advanced Wind Turbine",
+  legwint2 = "Advanced Wind Turbine",
+
+  armtide  = "Tidal Generator",
+  cortide  = "Tidal Generator",
+  legtide  = "Tidal Generator",
+
+  armmstor = "Metal Storage",
+  cormstor = "Metal Storage",
+  legmstor = "Metal Storage",
+
+  armestor = "Energy Storage",
+  corestor = "Energy Storage",
+  legestor = "Energy Storage",
+
+  armmakr  = "Energy Converter",
+  cormakr  = "Energy Converter",
+  legeconv = "Energy Converter",
+
+  armmmkr  = "Advanced Energy Converter",
+  cormmkr  = "Advanced Energy Converter",
+  legadveconv = "Advanced Energy Converter",
+
+  armmmkrt3   = "Epic Energy Converter",
+  cormmkrt3   = "Epic Energy Converter",
+  legadveconvt3 = "Epic Energy Converter",
+
+  -- Detection & support
+  armrad   = "Radar Tower",
+  corrad   = "Radar Tower",
+  legrad   = "Radar Tower",
+
+  armarad  = "Advanced Radar Tower",
+  corarad  = "Advanced Radar Tower",
+  legarad  = "Advanced Radar Tower",
+
+  armsonar = "Sonar Station",
+  corsonar = "Sonar Station",
+
+  armason  = "Advanced Sonar Station",
+  corason  = "Advanced Sonar Station",
+
+  armnanotc = "Construction Turret",
+  cornanotc = "Construction Turret",
+  legnanotc = "Construction Turret",
+
+  armnanotct2 = "Advanced Construction Turret",
+  cornanotct2 = "Advanced Construction Turret",
+  legnanotct2 = "Advanced Construction Turret",
+
+  -- Naval detection
+  armfrad  = "Naval Radar / Sonar Tower",
+  corfrad  = "Naval Radar / Sonar Tower",
+  legfrad  = "Naval Radar / Sonar Tower",
+
+  -- Auscultor -- Legion only, no confirmed Armada/Cortex equivalent
+  leganavalsonarstation = "Auscultor",
+
+  -- Basic Defense Turret (T1)
+  armllt = "Basic Defense Turret",
+  corllt = "Basic Defense Turret",
+  leglht = "Basic Defense Turret",
+
+  -- Anti-Air Tower (T1)
+  armflak = "Anti-Air Tower",
+  corflak = "Anti-Air Tower",
+  legrl   = "Anti-Air Tower",
+
+  -- Naval Anti-Air Turret
+  armfflak = "Naval Anti-Air Turret",
+  corenaa  = "Naval Anti-Air Turret",
+  legfrl   = "Naval Anti-Air Turret",
+
+  -- Plasma Shield / Deflector -- no confirmed Cortex equivalent
+  armgate     = "Plasma Shield",
+  legdeflector = "Plasma Shield",
+
+  -- Faction-unique defense structures
+  armamb  = "Pop-up Plasma Artillery",     -- Armada only
+  armguard = "Area Control Plasma Artillery", -- Armada only
+  armemp  = "EMP Missile Launcher",         -- Armada only
+  corerad = "AA Missile Battery",           -- Cortex only
+  corhllt = "Anti-Swarm Double Guard",      -- Cortex only
+  legrampart = "Rampart",                   -- Legion only, hybrid Anti-Nuke/Jammer/Radar/Drone
 }
 
 ------------------------------------------------------------
@@ -160,8 +289,8 @@ local statColumns = {
   {key = "ep",  label = "EP"},
   {key = "av",  label = "AV"},
   {key = "dv",  label = "DV"},
-  {key = "dd",  label = "DD"},
   {key = "up",  label = "UP"},
+  {key = "dd",  label = "DD"},
   {key = "uk",  label = "UK"},
 }
 local statsRowH = 30
@@ -176,10 +305,26 @@ local viewModeRowH = 26
 local viewModeExtraCategories = {
   eco = {
     "Fusion Reactor", "Advanced Fusion Reactor", "Epic AFUS",
+    "Geothermal Powerplant", "Offshore Geothermal Powerplant",
+    "Advanced Geothermal Powerplant", "Advanced Offshore Geothermal Powerplant",
+    "Safe Geothermal Powerplant",
+    "Metal Extractor", "Advanced Metal Extractor",
+    "Solar Collector", "Advanced Solar Collector",
+    "Wind Turbine", "Advanced Wind Turbine",
+    "Tidal Generator", "Metal Storage", "Energy Storage",
+    "Energy Converter", "Advanced Energy Converter", "Epic Energy Converter",
+    "Construction Turret", "Advanced Construction Turret",
   },
   defense = {
     "Pulsar", "Epic Pulsar", "Anti-Nuke", "Pinpointer",
     "Intrusion CM", "Juno",
+    "Radar Tower", "Advanced Radar Tower",
+    "Sonar Station", "Advanced Sonar Station",
+    "Naval Radar / Sonar Tower", "Auscultor",
+    "Basic Defense Turret", "Anti-Air Tower", "Naval Anti-Air Turret",
+    "Plasma Shield", "Pop-up Plasma Artillery", "Area Control Plasma Artillery",
+    "EMP Missile Launcher", "AA Missile Battery", "Anti-Swarm Double Guard",
+    "Rampart",
   },
   offense = {
     "Nuke Silo", "Super Weapon", "LRPC", "Napalm Launcher",
@@ -193,15 +338,15 @@ local statDescriptions = {
   ep  = "EP - total energy produced",
   av  = "AV - Army value in metal + Com",
   dv  = "DV - Defense value in metal",
-  dd  = "DD - Damage dealt",
+  dd  = "DD - Damage dealt to enemies",
   up  = "UP - Units produced",
-  uk  = "UK - Units killed",
+  uk  = "UK - Enemy units killed",
 }
 
 local viewModeDescriptions = {
   minimal = "Minimal - Labs and Commander only",
-  eco     = "Eco - Fusion, AFUS, Epic AFUS",
-  defense = "Defense - Pulsar, Anti-Nuke, Pinpointer, ICM, Juno",
+  eco     = "Eco - Fusion, Geothermal, Mex, Solar, Wind, Storage",
+  defense = "Defense - Pulsar, Anti-Nuke, Radar/Sonar, Pinpointer, ICM, Juno",
   offense = "Offense - Nukes, Super Weapon, LRPC, Napalm/Pawn",
   all     = "All - every tracked structure, no filter",
 }
@@ -241,6 +386,43 @@ local techTierOrder = {
   ["Pawn Launcher"]                   = 17,
   ["Intrusion CM"]                    = 18,
   ["Napalm Launcher"]                 = 19,
+  ["Geothermal Powerplant"]                    = 20,
+  ["Offshore Geothermal Powerplant"]           = 21,
+  ["Advanced Geothermal Powerplant"]           = 22,
+  ["Advanced Offshore Geothermal Powerplant"]  = 23,
+  ["Safe Geothermal Powerplant"]               = 24,
+
+  ["Metal Extractor"]                   = 25,
+  ["Advanced Metal Extractor"]          = 26,
+  ["Solar Collector"]                   = 27,
+  ["Advanced Solar Collector"]          = 28,
+  ["Wind Turbine"]                      = 29,
+  ["Advanced Wind Turbine"]             = 30,
+  ["Tidal Generator"]                   = 31,
+  ["Metal Storage"]                     = 32,
+  ["Energy Storage"]                    = 33,
+  ["Energy Converter"]                  = 34,
+  ["Advanced Energy Converter"]         = 35,
+  ["Epic Energy Converter"]             = 36,
+  ["Radar Tower"]                       = 37,
+  ["Advanced Radar Tower"]              = 38,
+  ["Sonar Station"]                     = 39,
+  ["Advanced Sonar Station"]            = 40,
+  ["Construction Turret"]               = 41,
+  ["Advanced Construction Turret"]      = 42,
+  ["Naval Radar / Sonar Tower"]          = 43,
+  ["Auscultor"]                          = 44,
+
+  ["Basic Defense Turret"]              = 45,
+  ["Anti-Air Tower"]                    = 46,
+  ["Naval Anti-Air Turret"]             = 47,
+  ["Plasma Shield"]                     = 48,
+  ["Pop-up Plasma Artillery"]           = 49,
+  ["Area Control Plasma Artillery"]     = 50,
+  ["EMP Missile Launcher"]              = 51,
+  ["AA Missile Battery"]                = 52,
+  ["Anti-Swarm Double Guard"]           = 53,
+  ["Rampart"]                           = 54,
 }
 
 -- Commander + core Labs (tiers 0-4) are always shown regardless of
@@ -250,6 +432,7 @@ local function isCategoryVisibleInView(category, viewMode)
   if viewMode == "all" then return true end
   local tier = techTierOrder[category]
   if tier and tier <= 4 then return true end
+  if category == "Experimental Aircraft Plant" then return true end
   if viewMode == "minimal" then return false end
   local extras = viewModeExtraCategories[viewMode]
   if extras then
@@ -315,6 +498,37 @@ local iconMap = {
     ["Epic Pulsar"]                     = "armannit3",
     ["Pawn Launcher"]                   = "armbotrail",
     ["Intrusion CM"]                    = "armsd",
+    ["Geothermal Powerplant"]                   = "armgeo",
+    ["Offshore Geothermal Powerplant"]          = "armuwgeo",
+    ["Advanced Geothermal Powerplant"]          = "armageo",
+    ["Advanced Offshore Geothermal Powerplant"] = "armuwageo",
+    ["Safe Geothermal Powerplant"]              = "armgmm",
+    ["Metal Extractor"]                   = "armmex",
+    ["Advanced Metal Extractor"]          = "armmoho",
+    ["Solar Collector"]                   = "armsolar",
+    ["Advanced Solar Collector"]          = "armadvsol",
+    ["Wind Turbine"]                      = "armwin",
+    ["Advanced Wind Turbine"]             = "armwint2",
+    ["Tidal Generator"]                   = "armtide",
+    ["Metal Storage"]                     = "armmstor",
+    ["Energy Storage"]                    = "armestor",
+    ["Energy Converter"]                  = "armmakr",
+    ["Advanced Energy Converter"]         = "armmmkr",
+    ["Epic Energy Converter"]             = "armmmkrt3",
+    ["Radar Tower"]                       = "armrad",
+    ["Advanced Radar Tower"]              = "armarad",
+    ["Sonar Station"]                     = "armsonar",
+    ["Advanced Sonar Station"]            = "armason",
+    ["Construction Turret"]               = "armnanotc",
+    ["Advanced Construction Turret"]      = "armnanotct2",
+    ["Naval Radar / Sonar Tower"]          = "armfrad",
+    ["Basic Defense Turret"]              = "armllt",
+    ["Anti-Air Tower"]                    = "armflak",
+    ["Naval Anti-Air Turret"]             = "armfflak",
+    ["Plasma Shield"]                     = "armgate",
+    ["Pop-up Plasma Artillery"]           = "armamb",
+    ["Area Control Plasma Artillery"]     = "armguard",
+    ["EMP Missile Launcher"]              = "armemp",
   },
   cor = {
     ["T1 Bot Lab"]                     = "corlab",
@@ -344,6 +558,34 @@ local iconMap = {
     ["Epic AFUS"]                       = "corafust3",
     ["Epic Pulsar"]                     = "cordoomt3",
     ["Intrusion CM"]                    = "corsd",
+    ["Geothermal Powerplant"]                   = "corgeo",
+    ["Offshore Geothermal Powerplant"]          = "coruwgeo",
+    ["Advanced Geothermal Powerplant"]          = "corageo",
+    ["Advanced Offshore Geothermal Powerplant"] = "coruwageo",
+    ["Metal Extractor"]                   = "cormex",
+    ["Advanced Metal Extractor"]          = "cormoho",
+    ["Solar Collector"]                   = "corsolar",
+    ["Advanced Solar Collector"]          = "coradvsol",
+    ["Wind Turbine"]                      = "corwin",
+    ["Advanced Wind Turbine"]             = "corwint2",
+    ["Tidal Generator"]                   = "cortide",
+    ["Metal Storage"]                     = "cormstor",
+    ["Energy Storage"]                    = "corestor",
+    ["Energy Converter"]                  = "cormakr",
+    ["Advanced Energy Converter"]         = "cormmkr",
+    ["Epic Energy Converter"]             = "cormmkrt3",
+    ["Radar Tower"]                       = "corrad",
+    ["Advanced Radar Tower"]              = "corarad",
+    ["Sonar Station"]                     = "corsonar",
+    ["Advanced Sonar Station"]            = "corason",
+    ["Construction Turret"]               = "cornanotc",
+    ["Advanced Construction Turret"]      = "cornanotct2",
+    ["Naval Radar / Sonar Tower"]          = "corfrad",
+    ["Basic Defense Turret"]              = "corllt",
+    ["Anti-Air Tower"]                    = "corflak",
+    ["Naval Anti-Air Turret"]             = "corenaa",
+    ["AA Missile Battery"]                = "corerad",
+    ["Anti-Swarm Double Guard"]           = "corhllt",
   },
   leg = {
     ["T1 Bot Lab"]                     = "leglab",
@@ -373,6 +615,33 @@ local iconMap = {
     ["Epic AFUS"]                       = "legafust3",
     ["Intrusion CM"]                    = "legsd",
     ["Napalm Launcher"]                 = "legperdition",
+    ["Geothermal Powerplant"]                   = "leggeo",
+    ["Offshore Geothermal Powerplant"]          = "leguwgeo",
+    ["Advanced Geothermal Powerplant"]          = "legageo",
+    ["Advanced Offshore Geothermal Powerplant"] = "leganavaladvgeo",
+    ["Metal Extractor"]                   = "legmex",
+    ["Advanced Metal Extractor"]          = "legmoho",
+    ["Solar Collector"]                   = "legsolar",
+    ["Advanced Solar Collector"]          = "legadvsol",
+    ["Wind Turbine"]                      = "legwin",
+    ["Advanced Wind Turbine"]             = "legwint2",
+    ["Tidal Generator"]                   = "legtide",
+    ["Metal Storage"]                     = "legmstor",
+    ["Energy Storage"]                    = "legestor",
+    ["Energy Converter"]                  = "legeconv",
+    ["Advanced Energy Converter"]         = "legadveconv",
+    ["Epic Energy Converter"]             = "legadveconvt3",
+    ["Radar Tower"]                       = "legrad",
+    ["Advanced Radar Tower"]              = "legarad",
+    ["Construction Turret"]               = "legnanotc",
+    ["Advanced Construction Turret"]      = "legnanotct2",
+    ["Naval Radar / Sonar Tower"]          = "legfrad",
+    ["Auscultor"]                          = "leganavalsonarstation",
+    ["Basic Defense Turret"]              = "leglht",
+    ["Anti-Air Tower"]                    = "legrl",
+    ["Naval Anti-Air Turret"]             = "legfrl",
+    ["Plasma Shield"]                     = "legdeflector",
+    ["Rampart"]                           = "legrampart",
   },
 }
 
@@ -385,35 +654,49 @@ local teamFaction = {}
 local teamLabPositions = {}
 local rowRects = {}
 local iconRects = {}
-local hoverIcon = nil
-local hoverStatKey = nil
-local hoverViewModeKey = nil
-local hoverTeamID = nil
+local hoverState = { icon = nil, statKey = nil, viewModeKey = nil, teamID = nil }
+local followState = { unitID = nil, camPos = nil }
+local dragState = { active = false, startX = 0, startY = 0, offsetX = 0, offsetY = 0 }
+local uiRects = {
+  header = {x1=0,y1=0,x2=0,y2=0},
+  minPill = {x1=0,y1=0,x2=0,y2=0},
+  iconToggle = {x1=0,y1=0,x2=0,y2=0},
+  expandToggle = {x1=0,y1=0,x2=0,y2=0},
+  swapToggle = {x1=0,y1=0,x2=0,y2=0},
+}
+local cachedLayout = { items = {}, maxIcons = 0, totalWidth = 0, headerFontSize = 0, statLeaders = {} }
 local selectedTeamID = nil
+local pinnedTeamIDs = {}
+local MAX_PINNED = 3
+local lastRightClickTeamID = nil
+local lastRightClickTime = 0
+local cachedTopTeamID = nil
 local lastClickTime = 0
 local lastClickTeamID = nil
 local lastIconClickTime = 0
 local lastIconClickKey = nil
 local iconCycleIndex = {}
 local mouseX, mouseY = 0, 0
-local followingUnitID = nil
-local lastAppliedCamPos = nil
 local flashMarker = nil
 
-local dragging = false
-local dragStartX = 0
-local dragStartY = 0
-local dragOffsetX = 0
-local dragOffsetY = 0
 
-local headerRect = {x1=0,y1=0,x2=0,y2=0}
 local minimized = false
-local minimizedRect = {x1=0,y1=0,x2=0,y2=0}
-local iconToggleRect = {x1=0,y1=0,x2=0,y2=0}
+local leaderboardState = {
+  mode = false,
+  rect = {x1=0,y1=0,x2=0,y2=0},
+  panelRect = {x1=0,y1=0,x2=0,y2=0},
+  scrollOffset = 0,
+  scrollActive = false,
+  scrollMaxOffset = 0,
+}
+local sizeMenu = {
+  open = false,
+  toggleRect = {x1=0,y1=0,x2=0,y2=0},
+  optionRects = {},
+  options = {96, 88, 80, 72, 64, 56, 48, 40},
+}
 local sectionsExpanded = false
-local expandToggleRect = {x1=0,y1=0,x2=0,y2=0}
 local sectionsSwapped = false
-local swapToggleRect = {x1=0,y1=0,x2=0,y2=0}
 local pressWasOnMinimizedIcon = false
 local teamArmyValue = {}
 local teamDefenseValue = {}
@@ -442,10 +725,6 @@ local viewModeRects = {
 -- Cached, ready-to-draw layout. Rebuilt only when the underlying data
 -- actually changes (once/sec via recountLabs, or instantly on an
 -- Expand/Swap click) instead of every single render frame.
-local cachedLayoutItems = {}
-local cachedMaxIcons = 0
-local cachedTotalWidth = 0
-local cachedHeaderFontSize = 0
 local rebuildLayout -- forward declaration; defined after its helper functions below
 
 
@@ -567,12 +846,12 @@ end
 ------------------------------------------------------------
 
 local function hitHeader(mx,my)
-  local r = headerRect
+  local r = uiRects.header
   return mx>=r.x1 and mx<=r.x2 and my>=r.y1 and my<=r.y2
 end
 
-local function truncateName(name)
-  local maxWidth = nameColW - padding * 2
+local function truncateName(name, extraReserved)
+  local maxWidth = nameColW - padding * 2 - (extraReserved or 0)
   local test = name
   while gl.GetTextWidth(test) * nameFontSize > maxWidth do
     test = test:sub(1, #test - 1)
@@ -633,7 +912,7 @@ local function getTeamName(teamID)
 
   -- Not AI and no bound player found at all -- a human team whose
   -- player slot dropped out entirely, rather than an actual bot.
-  return "Disconnected"
+  return "Disconnected", true
 end
 
 
@@ -747,16 +1026,30 @@ local function getSortedTeams()
   local teams = {}
   for _, teamID in ipairs(Spring.GetTeamList()) do
     if teamID ~= Spring.GetGaiaTeamID() then
-      local _, _, _, _, _, allyTeam = Spring.GetTeamInfo(teamID, false)
-      teams[#teams+1] = {
-        teamID  = teamID,
-        allyTeam= allyTeam,
-        name    = getTeamName(teamID),
-        labs    = teamLabs[teamID] or {},
-      }
+      local name, isEmptyDisconnected = getTeamName(teamID)
+      if not isEmptyDisconnected then
+        local _, _, _, _, _, allyTeam = Spring.GetTeamInfo(teamID, false)
+        teams[#teams+1] = {
+          teamID  = teamID,
+          allyTeam= allyTeam,
+          name    = name,
+          labs    = teamLabs[teamID] or {},
+        }
+      end
     end
   end
   table.sort(teams, function(a,b)
+    if leaderboardState.mode then
+      if statSortKey then
+        local as = (teamStats[a.teamID] and teamStats[a.teamID][statSortKey]) or 0
+        local bs = (teamStats[b.teamID] and teamStats[b.teamID][statSortKey]) or 0
+        if as ~= bs then
+          return as > bs
+        end
+      end
+      return a.name < b.name
+    end
+
     local aMine = (a.allyTeam == myAllyTeam)
     local bMine = (b.allyTeam == myAllyTeam)
     if sectionsSwapped then
@@ -783,6 +1076,67 @@ end
 function rebuildLayout()
   local teams = getSortedTeams()
 
+  do
+    local rankKey = statSortKey or "av"
+    local bestTeamID, bestVal = nil, nil
+    for _, t in ipairs(teams) do
+      local v = (teamStats[t.teamID] and teamStats[t.teamID][rankKey]) or 0
+      if bestVal == nil or v > bestVal then
+        bestVal = v
+        bestTeamID = t.teamID
+      end
+    end
+    cachedTopTeamID = (bestVal and bestVal > 0) and bestTeamID or nil
+  end
+
+  do
+    -- Group by actual allyteam (not "mine vs other"), tracking each
+    -- group's real representative color. This scales to any number of
+    -- ally-teams (FFA included) with no special-casing: whichever
+    -- group leads a stat, its own real color is used for the stripe.
+    local allyGroups = {}
+    for _, t in ipairs(teams) do
+      local ally = t.allyTeam
+      if not allyGroups[ally] then
+        local r, g, b = Spring.GetTeamColor(t.teamID)
+        local sums = {}
+        for _, col in ipairs(statColumns) do
+          sums[col.key] = 0
+        end
+        allyGroups[ally] = { sums = sums, color = { r or 1, g or 1, b or 1 } }
+      end
+      local ts = teamStats[t.teamID]
+      if ts then
+        local sums = allyGroups[ally].sums
+        for _, col in ipairs(statColumns) do
+          sums[col.key] = sums[col.key] + (ts[col.key] or 0)
+        end
+      end
+    end
+
+    cachedLayout.statLeaders = {}
+    for _, col in ipairs(statColumns) do
+      local bestVal = nil
+      for _, grp in pairs(allyGroups) do
+        local v = grp.sums[col.key]
+        if bestVal == nil or v > bestVal then
+          bestVal = v
+        end
+      end
+      if bestVal ~= nil then
+        local leaders = {}
+        for ally, grp in pairs(allyGroups) do
+          if grp.sums[col.key] == bestVal then
+            leaders[#leaders+1] = ally
+          end
+        end
+        if #leaders == 1 then
+          cachedLayout.statLeaders[col.key] = allyGroups[leaders[1]].color
+        end
+      end
+    end
+  end
+
   local rawItems = {}
   for _, t in ipairs(teams) do
     local faction = getFaction(t.teamID)
@@ -804,9 +1158,42 @@ function rebuildLayout()
     for _, labName in ipairs(ownedLabs) do
       if isCategoryVisibleInView(labName, activeViewMode) then
       local defName
+      local overlayDefNames = nil
       if labName == "Commander" then
         local comList = teamLabPositions[t.teamID] and teamLabPositions[t.teamID]["Commander"]
         defName = comList and comList[1] and comList[1].defName
+
+        -- If there's more than one commander (resurrected/given from
+        -- another faction, or a duplicate), the team's HOME faction
+        -- commander (if still alive) stays the main full-size icon --
+        -- everything else becomes a small overlay icon stacked from
+        -- the top-left corner. If the home-faction commander has died,
+        -- whichever one is first in the list simply becomes the new
+        -- main icon (matching "if the original dies, the resurrected
+        -- one becomes the new full icon").
+        if comList and #comList > 1 then
+          local primaryIdx = nil
+          for i, com in ipairs(comList) do
+            local prefix = com.defName and com.defName:sub(1,3)
+            if prefix == faction then
+              primaryIdx = i
+              break
+            end
+          end
+          if not primaryIdx then primaryIdx = 1 end
+
+          defName = comList[primaryIdx].defName
+
+          local extras = {}
+          for i, com in ipairs(comList) do
+            if i ~= primaryIdx then
+              extras[#extras+1] = com.defName
+            end
+          end
+          if #extras > 0 then
+            overlayDefNames = extras
+          end
+        end
       else
         local factionMap = iconMap[faction]
         defName = factionMap and factionMap[labName]
@@ -832,6 +1219,41 @@ function rebuildLayout()
                         or (tier == 17 and "PWN")
                         or (tier == 18 and "ICM")
                         or (tier == 19 and "NAPLM")
+                        or (tier == 20 and "GEO")
+                        or (tier == 21 and "OGEO")
+                        or (tier == 22 and "AGEO")
+                        or (tier == 23 and "AOGEO")
+                        or (tier == 24 and "SGEO")
+                        or (tier == 25 and "MEX")
+                        or (tier == 26 and "AMEX")
+                        or (tier == 27 and "SOL")
+                        or (tier == 28 and "ASOL")
+                        or (tier == 29 and "WIND")
+                        or (tier == 30 and "AWIND")
+                        or (tier == 31 and "TIDE")
+                        or (tier == 32 and "MSTOR")
+                        or (tier == 33 and "ESTOR")
+                        or (tier == 34 and "CONV")
+                        or (tier == 35 and "ACONV")
+                        or (tier == 36 and "ECONV")
+                        or (tier == 37 and "RAD")
+                        or (tier == 38 and "ARAD")
+                        or (tier == 39 and "SONAR")
+                        or (tier == 40 and "ASONAR")
+                        or (tier == 41 and "NANO")
+                        or (tier == 42 and "ANANO")
+                        or (tier == 43 and "NRAD")
+                        or (tier == 44 and "AUSC")
+                        or (tier == 45 and "T1LT")
+                        or (tier == 46 and "AA")
+                        or (tier == 47 and "NAVAA")
+                        or (tier == 48 and "SHIELD")
+                        or (tier == 49 and "POPUP")
+                        or (tier == 50 and "ARTY")
+                        or (tier == 51 and "EMP")
+                        or (tier == 52 and "AAMSL")
+                        or (tier == 53 and "TWIN")
+                        or (tier == 54 and "RAMPT")
                         or nil
 
         -- Cortex's Pulsar-tier unit is actually called "Bulwark", so
@@ -844,9 +1266,11 @@ function rebuildLayout()
         if faction == "leg" then
           if tier == 11 then tierLabel = "BAST" end
           if tier == 16 then tierLabel = "EBAST" end
+          if tier == 45 then tierLabel = "T1HT" end
         end
         icons[#icons+1] = {
           defName = defName,
+          overlayDefNames = overlayDefNames,
           labName = labName,
           count = t.labs[labName] or 1,
           tierLabel = tierLabel,
@@ -855,21 +1279,63 @@ function rebuildLayout()
       end
     end
 
+    local badgeReserve = 0
+    if t.teamID == cachedTopTeamID then badgeReserve = badgeReserve + 22 end
+    for _, pid in ipairs(pinnedTeamIDs) do
+      if pid == t.teamID then
+        badgeReserve = badgeReserve + 22
+        break
+      end
+    end
+
     rawItems[#rawItems+1] = {
       itype = "team",
       teamID = t.teamID,
       allyTeam = t.allyTeam,
-      displayName = truncateName(t.name),
+      displayName = truncateName(t.name, badgeReserve),
       colorR = r or 1, colorG = g or 1, colorB = b or 1,
       icons = icons,
     }
   end
 
   local items = {}
+
+  local pinnedItems = {}
+  local remainingRawItems = {}
   do
+    local rawByTeamID = {}
+    for _, it in ipairs(rawItems) do
+      rawByTeamID[it.teamID] = it
+    end
+    local pinnedSet = {}
+    for _, pid in ipairs(pinnedTeamIDs) do
+      if rawByTeamID[pid] then
+        pinnedItems[#pinnedItems+1] = rawByTeamID[pid]
+        pinnedSet[pid] = true
+      end
+    end
+    for _, it in ipairs(rawItems) do
+      if not pinnedSet[it.teamID] then
+        remainingRawItems[#remainingRawItems+1] = it
+      end
+    end
+  end
+
+  if #pinnedItems > 0 then
+    for _, it in ipairs(pinnedItems) do
+      items[#items+1] = it
+    end
+    items[#items+1] = { itype = "pindivider" }
+  end
+
+  if leaderboardState.mode then
+    for _, it in ipairs(remainingRawItems) do
+      items[#items+1] = it
+    end
+  else
     local prevAllyTeam = nil
     local usedMainToggle = false
-    for _, it in ipairs(rawItems) do
+    for _, it in ipairs(remainingRawItems) do
       if prevAllyTeam ~= nil and it.allyTeam ~= prevAllyTeam then
         if not usedMainToggle then
           usedMainToggle = true
@@ -886,7 +1352,7 @@ function rebuildLayout()
     end
   end
 
-  cachedLayoutItems = items
+  cachedLayout.items = items
 
   local maxIcons = 0
   for _, item in ipairs(items) do
@@ -894,17 +1360,38 @@ function rebuildLayout()
       maxIcons = #item.icons
     end
   end
-  cachedMaxIcons = maxIcons
+  cachedLayout.maxIcons = maxIcons
 
-  cachedHeaderFontSize = math.floor(iconSize * 0.55)
+  cachedLayout.headerFontSize = math.floor(iconSize * 0.55)
   local toggleFontSize = 14
   local togglePad = 6
   local toggleButtonWidth = gl.GetTextWidth("Icon") * toggleFontSize + togglePad * 2
-  local headerTextWidth = gl.GetTextWidth("Base Tracker") * cachedHeaderFontSize + padding * 2
-                         + toggleButtonWidth + padding * 2
+  local lbButtonWidth = gl.GetTextWidth("Leaderboard") * 13 + 6 * 2 + 10
+  local szButtonWidth = gl.GetTextWidth("Size") * 13 + 6 * 2 + 10
+  local headerTextWidth = gl.GetTextWidth("Base Tracker") * cachedLayout.headerFontSize + padding * 2
+                         + toggleButtonWidth + lbButtonWidth + szButtonWidth + padding * 2
 
-  cachedTotalWidth = nameColW + (cachedMaxIcons * iconSize) + padding * 2
-  cachedTotalWidth = math.max(cachedTotalWidth, headerTextWidth)
+  cachedLayout.totalWidth = nameColW + (cachedLayout.maxIcons * iconSize) + padding * 2
+  cachedLayout.totalWidth = math.max(cachedLayout.totalWidth, headerTextWidth)
+end
+
+local function isPinned(teamID)
+  for _, id in ipairs(pinnedTeamIDs) do
+    if id == teamID then return true end
+  end
+  return false
+end
+
+local function togglePin(teamID)
+  for i, id in ipairs(pinnedTeamIDs) do
+    if id == teamID then
+      table.remove(pinnedTeamIDs, i)
+      return
+    end
+  end
+  if #pinnedTeamIDs < MAX_PINNED then
+    pinnedTeamIDs[#pinnedTeamIDs+1] = teamID
+  end
 end
 
 local function hitTeamRow(mx,my)
@@ -989,8 +1476,8 @@ local function cycleAndJumpToIcon(teamID, labName)
     unitID = (labName == "Commander") and pos.unitID or nil,
   }
   if labName == "Commander" and pos.unitID then
-    followingUnitID = pos.unitID
-    lastAppliedCamPos = nil
+    followState.unitID = pos.unitID
+    followState.camPos = nil
   end
   selectedTeamID = teamID
 end
@@ -1020,11 +1507,22 @@ function widget:Initialize()
   activeViewMode = viewModeKeys[Spring.GetConfigInt("LabTracker_ViewMode", 5)] or "all"
   local savedStatSortIdx = Spring.GetConfigInt("LabTracker_StatSort", 0)
   statSortKey = (savedStatSortIdx > 0 and statColumns[savedStatSortIdx] and statColumns[savedStatSortIdx].key) or nil
+  leaderboardState.mode = Spring.GetConfigInt("LabTracker_Leaderboard", 0) == 1
+  local savedIconSize = Spring.GetConfigInt("LabTracker_IconSize", iconSize)
+  local validSize = false
+  for _, s in ipairs(sizeMenu.options) do
+    if s == savedIconSize then validSize = true end
+  end
+  if validSize then
+    iconSize = savedIconSize
+    rowH = iconSize + 10
+    nameColW = iconSize * 2.5
+  end
   recountLabs()
 end
 
 function widget:GameFrame(frame)
-  if frame % 30 == 0 then
+  if frame % 150 == 0 then
     recountLabs()
   end
 end
@@ -1036,34 +1534,83 @@ end
 ------------------------------------------------------------
 
 function widget:MousePress(mx,my,button)
-  if button ~= 1 then return false end
+  if button ~= 1 and button ~= 3 then return false end
+
+  if button == 3 then
+    local teamID = hitTeamRow(mx, my)
+    if not teamID then return false end
+
+    local t = os.clock()
+    if teamID == lastRightClickTeamID and (t - lastRightClickTime) <= doubleClickThreshold then
+      togglePin(teamID)
+      lastRightClickTeamID = nil
+      rebuildLayout()
+      return true
+    end
+
+    lastRightClickTeamID = teamID
+    lastRightClickTime = t
+    return true
+  end
 
   -- Any click interrupts an active camera-follow; the Commander
   -- double-click branch below re-engages it if that's what happened.
-  followingUnitID = nil
+  followState.unitID = nil
 
   if minimized then
-    local r = minimizedRect
+    local r = uiRects.minPill
     if mx>=r.x1 and mx<=r.x2 and my>=r.y1 and my<=r.y2 then
-      dragging = true
-      dragStartX = mx
-      dragStartY = my
-      dragOffsetX = chartX
-      dragOffsetY = chartY
+      dragState.active = true
+      dragState.startX = mx
+      dragState.startY = my
+      dragState.offsetX = chartX
+      dragState.offsetY = chartY
       pressWasOnMinimizedIcon = true
       return true
     end
     return false
   end
 
-  local tr = iconToggleRect
+  if sizeMenu.open then
+    for _, r in ipairs(sizeMenu.optionRects) do
+      if mx>=r.x1 and mx<=r.x2 and my>=r.y1 and my<=r.y2 then
+        iconSize = r.size
+        rowH = iconSize + 10
+        nameColW = iconSize * 2.5
+        Spring.SetConfigInt("LabTracker_IconSize", iconSize)
+        sizeMenu.open = false
+        rebuildLayout()
+        return true
+      end
+    end
+  end
+
+  local sr = sizeMenu.toggleRect
+  if mx>=sr.x1 and mx<=sr.x2 and my>=sr.y1 and my<=sr.y2 then
+    sizeMenu.open = not sizeMenu.open
+    return true
+  end
+
+  if sizeMenu.open then
+    sizeMenu.open = false
+  end
+
+  local lr = leaderboardState.rect
+  if mx>=lr.x1 and mx<=lr.x2 and my>=lr.y1 and my<=lr.y2 then
+    leaderboardState.mode = not leaderboardState.mode
+    Spring.SetConfigInt("LabTracker_Leaderboard", leaderboardState.mode and 1 or 0)
+    rebuildLayout()
+    return true
+  end
+
+  local tr = uiRects.iconToggle
   if mx>=tr.x1 and mx<=tr.x2 and my>=tr.y1 and my<=tr.y2 then
     minimized = true
     Spring.SetConfigInt("LabTracker_Minimized", 1)
     return true
   end
 
-  local sr = swapToggleRect
+  local sr = uiRects.swapToggle
   if mx>=sr.x1 and mx<=sr.x2 and my>=sr.y1 and my<=sr.y2 then
     sectionsSwapped = not sectionsSwapped
     Spring.SetConfigInt("LabTracker_Swapped", sectionsSwapped and 1 or 0)
@@ -1071,7 +1618,7 @@ function widget:MousePress(mx,my,button)
     return true
   end
 
-  local er = expandToggleRect
+  local er = uiRects.expandToggle
   if mx>=er.x1 and mx<=er.x2 and my>=er.y1 and my<=er.y2 then
     sectionsExpanded = not sectionsExpanded
     Spring.SetConfigInt("LabTracker_Expanded", sectionsExpanded and 1 or 0)
@@ -1116,11 +1663,11 @@ function widget:MousePress(mx,my,button)
   end
 
   if hitHeader(mx,my) then
-    dragging = true
-    dragStartX = mx
-    dragStartY = my
-    dragOffsetX = chartX
-    dragOffsetY = chartY
+    dragState.active = true
+    dragState.startX = mx
+    dragState.startY = my
+    dragState.offsetX = chartX
+    dragState.offsetY = chartY
     return true
   end
 
@@ -1169,12 +1716,12 @@ end
 ------------------------------------------------------------
 
 function widget:MouseRelease(mx, my, button)
-  if button == 1 and dragging then
-    dragging = false
+  if button == 1 and dragState.active then
+    dragState.active = false
 
     if pressWasOnMinimizedIcon then
       pressWasOnMinimizedIcon = false
-      local movedDist = math.sqrt((mx-dragStartX)^2 + (my-dragStartY)^2)
+      local movedDist = math.sqrt((mx-dragState.startX)^2 + (my-dragState.startY)^2)
       if movedDist < 5 then
         minimized = false
         Spring.SetConfigInt("LabTracker_Minimized", 0)
@@ -1190,15 +1737,96 @@ end
 function widget:KeyPress(key, mods, isRepeat)
   if isRepeat then return false end
   if key == string.byte(" ") then
-    if hoverIcon then
-      cycleAndJumpToIcon(hoverIcon.teamID, hoverIcon.labName)
+    if hoverState.icon then
+      cycleAndJumpToIcon(hoverState.icon.teamID, hoverState.icon.labName)
       return true
-    elseif hoverTeamID then
-      jumpToTeamBaseCenter(hoverTeamID)
+
+    elseif hoverState.teamID then
+      jumpToTeamBaseCenter(hoverState.teamID)
+      return true
+
+    elseif hoverState.sizeOption then
+      iconSize = hoverState.sizeOption.size
+      rowH = iconSize + 10
+      nameColW = iconSize * 2.5
+      Spring.SetConfigInt("LabTracker_IconSize", iconSize)
+      sizeMenu.open = false
+      rebuildLayout()
+      return true
+
+    elseif hoverState.sizeToggle then
+      sizeMenu.open = not sizeMenu.open
+      return true
+
+    elseif hoverState.leaderboardToggle then
+      leaderboardState.mode = not leaderboardState.mode
+      Spring.SetConfigInt("LabTracker_Leaderboard", leaderboardState.mode and 1 or 0)
+      rebuildLayout()
+      return true
+
+    elseif hoverState.iconToggle then
+      minimized = true
+      Spring.SetConfigInt("LabTracker_Minimized", 1)
+      return true
+
+    elseif hoverState.expandToggle then
+      sectionsExpanded = not sectionsExpanded
+      Spring.SetConfigInt("LabTracker_Expanded", sectionsExpanded and 1 or 0)
+      rebuildLayout()
+      return true
+
+    elseif hoverState.swapToggle then
+      sectionsSwapped = not sectionsSwapped
+      Spring.SetConfigInt("LabTracker_Swapped", sectionsSwapped and 1 or 0)
+      rebuildLayout()
+      return true
+
+    elseif hoverState.statKey then
+      if statSortKey == hoverState.statKey then
+        statSortKey = nil
+      else
+        statSortKey = hoverState.statKey
+      end
+      local savedIdx = 0
+      for i, c in ipairs(statColumns) do
+        if c.key == statSortKey then
+          savedIdx = i
+          break
+        end
+      end
+      Spring.SetConfigInt("LabTracker_StatSort", savedIdx)
+      rebuildLayout()
+      return true
+
+    elseif hoverState.viewModeKey then
+      activeViewMode = hoverState.viewModeKey
+      for i, k in ipairs({"minimal", "eco", "defense", "offense", "all"}) do
+        if k == activeViewMode then
+          Spring.SetConfigInt("LabTracker_ViewMode", i)
+          break
+        end
+      end
+      rebuildLayout()
       return true
     end
   end
   return false
+end
+
+function widget:MouseWheel(up, value)
+  if not leaderboardState.scrollActive then return false end
+  local mx, my = Spring.GetMouseState()
+  if mx < leaderboardState.panelRect.x1 or mx > leaderboardState.panelRect.x2 or my < leaderboardState.panelRect.y1 or my > leaderboardState.panelRect.y2 then
+    return false
+  end
+
+  local step = 40
+  if up then
+    leaderboardState.scrollOffset = math.max(0, leaderboardState.scrollOffset - step)
+  else
+    leaderboardState.scrollOffset = math.min(leaderboardState.scrollMaxOffset, leaderboardState.scrollOffset + step)
+  end
+  return true
 end
 
 ------------------------------------------------------------
@@ -1259,37 +1887,52 @@ function widget:DrawScreen()
   local mx, my = Spring.GetMouseState()
   mouseX, mouseY = mx, my
 
-  if dragging then
-    chartX = dragOffsetX + (mx - dragStartX)
-    chartY = dragOffsetY + (my - dragStartY)
+  if dragState.active then
+    chartX = dragState.offsetX + (mx - dragState.startX)
+    chartY = dragState.offsetY + (my - dragState.startY)
   else
-    hoverTeamID = hitTeamRow(mx, my)
-    hoverIcon   = hitIcon(mx, my)
-    hoverStatKey = hitStatHeader(mx, my)
-    hoverViewModeKey = hitViewModeButton(mx, my)
+    hoverState.teamID = hitTeamRow(mx, my)
+    hoverState.icon   = hitIcon(mx, my)
+    hoverState.statKey = hitStatHeader(mx, my)
+    hoverState.viewModeKey = hitViewModeButton(mx, my)
+
+    local function ptIn(r)
+      return r and mx>=r.x1 and mx<=r.x2 and my>=r.y1 and my<=r.y2
+    end
+    hoverState.sizeToggle = ptIn(sizeMenu.toggleRect)
+    hoverState.leaderboardToggle = ptIn(leaderboardState.rect)
+    hoverState.iconToggle = ptIn(uiRects.iconToggle)
+    hoverState.expandToggle = ptIn(uiRects.expandToggle)
+    hoverState.swapToggle = ptIn(uiRects.swapToggle)
+    hoverState.sizeOption = nil
+    if sizeMenu.open then
+      for _, r in ipairs(sizeMenu.optionRects) do
+        if ptIn(r) then hoverState.sizeOption = r; break end
+      end
+    end
   end
 
-  if followingUnitID and lastAppliedCamPos then
+  if followState.unitID and followState.camPos then
     local camState = Spring.GetCameraState()
-    local dx = (camState.px or lastAppliedCamPos.px) - lastAppliedCamPos.px
-    local dz = (camState.pz or lastAppliedCamPos.pz) - lastAppliedCamPos.pz
+    local dx = (camState.px or followState.camPos.px) - followState.camPos.px
+    local dz = (camState.pz or followState.camPos.pz) - followState.camPos.pz
     if math.sqrt(dx*dx + dz*dz) > 5 then
       -- player panned/rotated the camera manually (edge-scroll, arrow
       -- keys, middle-mouse drag, etc.) -- hand control back to them
-      followingUnitID = nil
+      followState.unitID = nil
     end
   end
 
-  if followingUnitID then
-    local fx, fy, fz = Spring.GetUnitPosition(followingUnitID)
+  if followState.unitID then
+    local fx, fy, fz = Spring.GetUnitPosition(followState.unitID)
     if fx then
       followCameraTo(fx, fy, fz)
-      lastAppliedCamPos = { px = fx, pz = fz }
+      followState.camPos = { px = fx, pz = fz }
     else
-      followingUnitID = nil
+      followState.unitID = nil
     end
   else
-    lastAppliedCamPos = nil
+    followState.camPos = nil
   end
 
   if minimized then
@@ -1302,7 +1945,7 @@ function widget:DrawScreen()
     local px1, py1 = chartX, chartY - buttonH
     local px2, py2 = chartX + buttonW, chartY
 
-    minimizedRect.x1, minimizedRect.y1, minimizedRect.x2, minimizedRect.y2 = px1, py1, px2, py2
+    uiRects.minPill.x1, uiRects.minPill.y1, uiRects.minPill.x2, uiRects.minPill.y2 = px1, py1, px2, py2
 
     gl.Color(0, 0, 0, 0.55)
     gl.Rect(px1, py1, px2, py2)
@@ -1327,33 +1970,58 @@ function widget:DrawScreen()
   rowRects = {}
   iconRects = {}
 
-  local layoutItems = cachedLayoutItems
+  local layoutItems = cachedLayout.items
   if #layoutItems == 0 then return end
 
-  local maxIcons = cachedMaxIcons
-  local headerFontSize = cachedHeaderFontSize
-  local totalWidth = cachedTotalWidth
+  local maxIcons = cachedLayout.maxIcons
+  local headerFontSize = cachedLayout.headerFontSize
+  local totalWidth = cachedLayout.totalWidth
 
   local x = chartX
   local y = chartY
 
   local contentHeight = 0
   for _, item in ipairs(layoutItems) do
-    contentHeight = contentHeight + ((item.itype == "team") and rowH or dividerRowH)
+    local h = rowH
+    if item.itype == "pindivider" then h = pinDividerRowH
+    elseif item.itype ~= "team" then h = dividerRowH end
+    contentHeight = contentHeight + h
   end
   local height = rowH + statsRowH + viewModeRowH + contentHeight + padding * 2
 
+  local fixedHeaderHeight = rowH + statsRowH + viewModeRowH
+  local viewportHeightUnclamped = contentHeight
+  -- Same scroll mechanism as before, now triggered by overflow in
+  -- ANY mode (Leaderboard or normal grouped/expanded), not just
+  -- Leaderboard specifically -- the underlying field names still say
+  -- "leaderboardState" from when this was first built, but the logic
+  -- itself is generic.
+  leaderboardState.scrollActive = (y - height) < 0
+
+  local drawHeight = height
+  local viewportHeight = viewportHeightUnclamped
+  if leaderboardState.scrollActive then
+    drawHeight = math.min(height, y)
+    viewportHeight = drawHeight - fixedHeaderHeight - padding * 2
+    leaderboardState.scrollMaxOffset = math.max(0, contentHeight - viewportHeight)
+    leaderboardState.scrollOffset = math.max(0, math.min(leaderboardState.scrollOffset, leaderboardState.scrollMaxOffset))
+  else
+    leaderboardState.scrollOffset = 0
+    leaderboardState.scrollMaxOffset = 0
+  end
+
   gl.Color(0,0,0,backgroundOpacity)
-  gl.Rect(x, y - height, x + totalWidth, y + padding)
+  gl.Rect(x, y - drawHeight, x + totalWidth, y + padding)
+  leaderboardState.panelRect.x1, leaderboardState.panelRect.y1, leaderboardState.panelRect.x2, leaderboardState.panelRect.y2 = x, y - drawHeight, x + totalWidth, y + padding
 
   local headerHeight = rowH
-  headerRect.x1 = x
-  headerRect.y1 = y - headerHeight
-  headerRect.x2 = x + totalWidth
-  headerRect.y2 = y
+  uiRects.header.x1 = x
+  uiRects.header.y1 = y - headerHeight
+  uiRects.header.x2 = x + totalWidth
+  uiRects.header.y2 = y
 
   gl.Color(0.1,0.1,0.1,0.8)
-  gl.Rect(headerRect.x1, headerRect.y1, headerRect.x2, headerRect.y2)
+  gl.Rect(uiRects.header.x1, uiRects.header.y1, uiRects.header.x2, uiRects.header.y2)
 
   gl.Color(1,1,1,1)
   gl.Text("Base Tracker", x + padding, y - rowH*0.3 - 7, headerFontSize, "o")
@@ -1366,13 +2034,73 @@ function widget:DrawScreen()
     local togglePillW = toggleTW + togglePad * 2
     local togglePillH = toggleFontSize + togglePad * 2
 
-    local tx2 = headerRect.x2 - togglePad
+    local tx2 = uiRects.header.x2 - togglePad
     local tx1 = tx2 - togglePillW
-    local ty2 = headerRect.y2 - togglePad
+    local ty2 = uiRects.header.y2 - togglePad
     local ty1 = ty2 - togglePillH
     local tcy = (ty1 + ty2) / 2
 
-    iconToggleRect.x1, iconToggleRect.y1, iconToggleRect.x2, iconToggleRect.y2 = tx1, ty1, tx2, ty2
+    uiRects.iconToggle.x1, uiRects.iconToggle.y1, uiRects.iconToggle.x2, uiRects.iconToggle.y2 = tx1, ty1, tx2, ty2
+
+    do
+      local lbLabel = "Leaderboard"
+      local lbFontSize = 13
+      local lbPad = 6
+      local lbTW = gl.GetTextWidth(lbLabel) * lbFontSize
+      local lbPillW = lbTW + lbPad * 2
+      local lbPillH = lbFontSize + lbPad * 2
+
+      local lbGap = 10
+      local lbx2 = tx1 - lbGap
+      local lbx1 = lbx2 - lbPillW
+      local lbcy = tcy
+      local lby1 = lbcy - lbPillH / 2
+      local lby2 = lbcy + lbPillH / 2
+
+      leaderboardState.rect.x1, leaderboardState.rect.y1, leaderboardState.rect.x2, leaderboardState.rect.y2 = lbx1, lby1, lbx2, lby2
+
+      if leaderboardState.mode then
+        gl.Color(1, 0.85, 0.2, 0.9)
+        gl.Rect(lbx1, lby1, lbx2, lby2)
+        gl.Color(0, 0, 0, 1)
+      else
+        gl.Color(1, 1, 1, 0.15)
+        gl.Rect(lbx1, lby1, lbx2, lby2)
+        gl.Color(1, 1, 1, 0.9)
+      end
+      gl.Text(lbLabel, (lbx1 + lbx2) / 2, lbcy - lbFontSize * 0.3, lbFontSize, "oc")
+      gl.Color(1, 1, 1, 1)
+
+      do
+        local szLabel = "Size"
+        local szFontSize = 13
+        local szPad = 6
+        local szTW = gl.GetTextWidth(szLabel) * szFontSize
+        local szPillW = szTW + szPad * 2
+        local szPillH = lbPillH
+
+        local szGap = 10
+        local szx2 = lbx1 - szGap
+        local szx1 = szx2 - szPillW
+        local szcy = lbcy
+        local szy1 = szcy - szPillH / 2
+        local szy2 = szcy + szPillH / 2
+
+        sizeMenu.toggleRect.x1, sizeMenu.toggleRect.y1, sizeMenu.toggleRect.x2, sizeMenu.toggleRect.y2 = szx1, szy1, szx2, szy2
+
+        if sizeMenu.open then
+          gl.Color(1, 0.85, 0.2, 0.9)
+          gl.Rect(szx1, szy1, szx2, szy2)
+          gl.Color(0, 0, 0, 1)
+        else
+          gl.Color(1, 1, 1, 0.15)
+          gl.Rect(szx1, szy1, szx2, szy2)
+          gl.Color(1, 1, 1, 0.9)
+        end
+        gl.Text(szLabel, (szx1 + szx2) / 2, szcy - szFontSize * 0.3, szFontSize, "oc")
+        gl.Color(1, 1, 1, 1)
+      end
+    end
 
     gl.Color(1, 1, 1, 0.15)
     gl.Rect(tx1, ty1, tx2, ty2)
@@ -1382,8 +2110,8 @@ function widget:DrawScreen()
   end
 
   do
-    local descText = (hoverStatKey and statDescriptions[hoverStatKey])
-                   or (hoverViewModeKey and viewModeDescriptions[hoverViewModeKey])
+    local descText = (hoverState.statKey and statDescriptions[hoverState.statKey])
+                   or (hoverState.viewModeKey and viewModeDescriptions[hoverState.viewModeKey])
     if descText then
       local maxDescWidth = totalWidth - padding * 4
       local descFontSize = 13
@@ -1393,7 +2121,10 @@ function widget:DrawScreen()
         descFontSize = descFontSize - 0.5
       end
       gl.Color(0.75, 0.85, 1, 0.95)
-      gl.Text(descText, (x + x + totalWidth) / 2, headerRect.y1 + 12, descFontSize, "oc")
+      local descY = (uiRects.iconToggle.y1 + uiRects.header.y1) / 2
+      descY = math.min(descY, uiRects.iconToggle.y1 - 7 - descFontSize * 0.6)
+      descY = math.max(descY, uiRects.header.y1 + 4)
+      gl.Text(descText, (x + x + totalWidth) / 2, descY, descFontSize, "oc")
     end
   end
 
@@ -1426,6 +2157,16 @@ function widget:DrawScreen()
         gl.Color(1, 1, 1, 0.85)
       end
       gl.Text(col.label, ccx, ccy - statFontSize * 0.3, statFontSize, "oc")
+
+      local leaderColor = cachedLayout.statLeaders[col.key]
+      if leaderColor then
+        local boost = 1.6
+        local br = math.min(1, leaderColor[1] * boost)
+        local bg = math.min(1, leaderColor[2] * boost)
+        local bb = math.min(1, leaderColor[3] * boost)
+        gl.Color(br, bg, bb, 1)
+        gl.Rect(cx1, statsBottom, cx2 - 1, statsBottom + 6)
+      end
     end
 
     gl.Color(1, 1, 1, 1)
@@ -1464,11 +2205,23 @@ function widget:DrawScreen()
     rowY = rowY - viewModeRowH
   end
 
-  expandToggleRect.x1, expandToggleRect.y1, expandToggleRect.x2, expandToggleRect.y2 = 0, 0, 0, 0
-  swapToggleRect.x1, swapToggleRect.y1, swapToggleRect.x2, swapToggleRect.y2 = 0, 0, 0, 0
+  uiRects.expandToggle.x1, uiRects.expandToggle.y1, uiRects.expandToggle.x2, uiRects.expandToggle.y2 = 0, 0, 0, 0
+  uiRects.swapToggle.x1, uiRects.swapToggle.y1, uiRects.swapToggle.x2, uiRects.swapToggle.y2 = 0, 0, 0, 0
+
+  if leaderboardState.scrollActive then
+    rowY = rowY + leaderboardState.scrollOffset
+    gl.Scissor(true)
+    gl.Scissor(x, y - drawHeight + padding, totalWidth, viewportHeight)
+  end
 
   for _, item in ipairs(layoutItems) do
-    if item.itype == "divider" then
+    if item.itype == "pindivider" then
+      local lineY = rowY - pinDividerRowH / 2
+      gl.Color(1, 0.8, 0.2, 0.7)
+      gl.Rect(x, lineY - 1, x + totalWidth, lineY + 1)
+      rowY = rowY - pinDividerRowH
+
+    elseif item.itype == "divider" then
       gl.Color(1,1,1,0.5)
       local lineY = rowY - dividerRowH / 2
       gl.Rect(x, lineY - 1, x + totalWidth, lineY + 1)
@@ -1522,12 +2275,12 @@ function widget:DrawScreen()
         gl.Vertex(iconCenterX, botApexY)
       end)
 
-      local iconPad = 5
-      swapToggleRect.x1, swapToggleRect.y1, swapToggleRect.x2, swapToggleRect.y2 =
+      local iconPad = 16
+      uiRects.swapToggle.x1, uiRects.swapToggle.y1, uiRects.swapToggle.x2, uiRects.swapToggle.y2 =
         iconCenterX - iconTriW/2 - iconPad, botApexY - iconPad,
         iconCenterX + iconTriW/2 + iconPad, topApexY + iconPad
 
-      expandToggleRect.x1, expandToggleRect.y1, expandToggleRect.x2, expandToggleRect.y2 =
+      uiRects.expandToggle.x1, uiRects.expandToggle.y1, uiRects.expandToggle.x2, uiRects.expandToggle.y2 =
         x, slotBottom, x + totalWidth, slotTop
 
       gl.Color(1,1,1,1)
@@ -1544,7 +2297,7 @@ function widget:DrawScreen()
       y2 = rowY,
     }
 
-    local isHover    = (teamID == hoverTeamID)
+    local isHover    = (teamID == hoverState.teamID)
     local isSelected = (teamID == selectedTeamID)
 
     if isSelected then
@@ -1564,6 +2317,26 @@ function widget:DrawScreen()
     gl.Color(0.8, 0.8, 0.8, 0.6)
     gl.Text("Base Center", x + padding, nameY - subFontSize * 1.6, subFontSize, "o")
 
+    do
+      local badgeFontSize = 14
+      local badgeY = rowY - 16
+      local badgeRightEdge = x + padding + nameColW - 4
+      gl.Color(1, 0.85, 0.2, 1)
+
+      if teamID == cachedTopTeamID then
+        local label = "🏆"
+        local w = gl.GetTextWidth(label) * badgeFontSize
+        gl.Text(label, badgeRightEdge - w, badgeY, badgeFontSize, "o")
+        badgeRightEdge = badgeRightEdge - w - 6
+      end
+
+      if isPinned(teamID) then
+        local label = "📌"
+        local w = gl.GetTextWidth(label) * badgeFontSize
+        gl.Text(label, badgeRightEdge - w, badgeY, badgeFontSize, "o")
+      end
+    end
+
     local colIndex = 0
     for _, iconData in ipairs(item.icons) do
       local defName = iconData.defName
@@ -1579,11 +2352,33 @@ function widget:DrawScreen()
         gl.TexRect(ix, iy, ix+iconSize, iy+iconSize)
         gl.Texture(false)
 
+        if iconData.overlayDefNames then
+          local miniSize = iconSize * 0.4
+          local miniGap = 2
+          for i, odn in ipairs(iconData.overlayDefNames) do
+            local oud = UnitDefNames[odn]
+            if oud then
+              local mx1 = ix
+              local mx2 = ix + miniSize
+              local my2 = iy + iconSize - (i - 1) * (miniSize + miniGap)
+              local my1 = my2 - miniSize
+
+              gl.Color(0,0,0,0.9)
+              gl.Rect(mx1 - 1, my1 - 1, mx2 + 1, my2 + 1)
+
+              gl.Color(1,1,1,1)
+              gl.Texture("#"..oud.id)
+              gl.TexRect(mx1, my1, mx2, my2)
+              gl.Texture(false)
+            end
+          end
+        end
+
         local isFollowedCommander = false
-        if labName == "Commander" and followingUnitID
+        if labName == "Commander" and followState.unitID
            and teamLabPositions[teamID] and teamLabPositions[teamID]["Commander"] then
           for _, comEntry in ipairs(teamLabPositions[teamID]["Commander"]) do
-            if comEntry.unitID == followingUnitID then
+            if comEntry.unitID == followState.unitID then
               isFollowedCommander = true
               break
             end
@@ -1609,7 +2404,7 @@ function widget:DrawScreen()
 
         local tierLabel = iconData.tierLabel
         if tierLabel then
-          local tierSize = 14.4
+          local tierSize = badgeFontSizeBySize[iconSize] or (iconSize * 0.225)
           local padX, padY = 3.6, 2.4
           local tw = gl.GetTextWidth(tierLabel) * tierSize
           local th = tierSize * 1.1
@@ -1645,11 +2440,60 @@ function widget:DrawScreen()
     end
   end
 
+  if leaderboardState.scrollActive then
+    gl.Scissor(false)
+
+    local glowAlpha = 1
+
+    local arrowW = 32.2
+    local arrowH = 18.4
+    local arrowCx = x + totalWidth / 2
+    local shadowOffset = 2
+
+    if leaderboardState.scrollOffset > 0 then
+      -- Not showing the true #1 -- more content above, scroll up to see it
+      local topY = y - fixedHeaderHeight - 3
+
+      gl.Color(0, 0, 0, glowAlpha * 0.6)
+      gl.BeginEnd(GL.TRIANGLES, function()
+        gl.Vertex(arrowCx - arrowW/2 + shadowOffset, topY - arrowH - shadowOffset)
+        gl.Vertex(arrowCx + arrowW/2 + shadowOffset, topY - arrowH - shadowOffset)
+        gl.Vertex(arrowCx + shadowOffset, topY - shadowOffset)
+      end)
+
+      gl.Color(1, 1, 1, glowAlpha)
+      gl.BeginEnd(GL.TRIANGLES, function()
+        gl.Vertex(arrowCx - arrowW/2, topY - arrowH)
+        gl.Vertex(arrowCx + arrowW/2, topY - arrowH)
+        gl.Vertex(arrowCx, topY)
+      end)
+    end
+
+    if leaderboardState.scrollOffset < leaderboardState.scrollMaxOffset then
+      -- More content below -- scroll down to see it
+      local botY = y - drawHeight + padding + 3
+
+      gl.Color(0, 0, 0, glowAlpha * 0.6)
+      gl.BeginEnd(GL.TRIANGLES, function()
+        gl.Vertex(arrowCx - arrowW/2 + shadowOffset, botY + arrowH - shadowOffset)
+        gl.Vertex(arrowCx + arrowW/2 + shadowOffset, botY + arrowH - shadowOffset)
+        gl.Vertex(arrowCx + shadowOffset, botY - shadowOffset)
+      end)
+
+      gl.Color(1, 1, 1, glowAlpha)
+      gl.BeginEnd(GL.TRIANGLES, function()
+        gl.Vertex(arrowCx - arrowW/2, botY + arrowH)
+        gl.Vertex(arrowCx + arrowW/2, botY + arrowH)
+        gl.Vertex(arrowCx, botY)
+      end)
+    end
+  end
+
   gl.Color(1,1,1,1)
 
-  if hoverIcon then
-    local labName = hoverIcon.labName
-    local prefix  = hoverIcon.defName:sub(1,3)
+  if hoverState.icon then
+    local labName = hoverState.icon.labName
+    local prefix  = hoverState.icon.defName:sub(1,3)
     local factionName = factionFullNames[prefix]
 
     if labName and factionName then
@@ -1667,6 +2511,51 @@ function widget:DrawScreen()
 
       gl.Color(1,1,1,1)
       gl.Text(tooltipText, tx + padX, ty + padY, tooltipFontSize, "")
+    end
+  end
+
+  if sizeMenu.open then
+    local szFontSize = 12
+    local optW = 44
+    local optH = 25
+    local optGap = 6
+    local totalMenuW = (optW + optGap) * #sizeMenu.options - optGap
+    local menuCenterX = x + totalWidth / 2
+    local menuX1 = menuCenterX - totalMenuW / 2
+    local menuX2 = menuX1 + totalMenuW
+    local menuY2 = sizeMenu.toggleRect.y1 - 4
+    local menuY1 = menuY2 - optH
+
+    sizeMenu.optionRects = {}
+    for i, sizeVal in ipairs(sizeMenu.options) do
+      local ox1 = menuX1 + (i - 1) * (optW + optGap)
+      local ox2 = ox1 + optW
+      sizeMenu.optionRects[i] = {x1 = ox1, y1 = menuY1, x2 = ox2, y2 = menuY2, size = sizeVal}
+
+      if sizeVal == iconSize then
+        gl.Color(1, 0.85, 0.2, 1)
+        gl.Rect(ox1, menuY1, ox2, menuY2)
+        gl.Color(0, 0, 0, 1)
+      else
+        gl.Color(0.32, 0.36, 0.42, 1)
+        gl.Rect(ox1, menuY1, ox2, menuY2)
+        gl.Color(1, 1, 1, 0.95)
+      end
+
+      gl.Color(0.7, 0.75, 0.85, 1)
+      gl.LineWidth(1.5)
+      gl.BeginEnd(GL.LINE_LOOP, function()
+        gl.Vertex(ox1, menuY1); gl.Vertex(ox2, menuY1)
+        gl.Vertex(ox2, menuY2); gl.Vertex(ox1, menuY2)
+      end)
+      gl.LineWidth(1)
+
+      if sizeVal == iconSize then
+        gl.Color(0, 0, 0, 1)
+      else
+        gl.Color(1, 1, 1, 0.95)
+      end
+      gl.Text(tostring(sizeVal), (ox1 + ox2) / 2, (menuY1 + menuY2) / 2 - szFontSize * 0.3, szFontSize, "oc")
     end
   end
 
