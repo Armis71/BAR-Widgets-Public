@@ -671,10 +671,6 @@ local MAX_PINNED = 3
 local lastRightClickTeamID = nil
 local lastRightClickTime = 0
 local cachedTopTeamID = nil
-local lastClickTime = 0
-local lastClickTeamID = nil
-local lastIconClickTime = 0
-local lastIconClickKey = nil
 local iconCycleIndex = {}
 local mouseX, mouseY = 0, 0
 local flashMarker = nil
@@ -1673,41 +1669,23 @@ function widget:MousePress(mx,my,button)
 
   local iconRect = hitIcon(mx,my)
   if iconRect then
-    local t = os.clock()
-    local clickKey = iconRect.teamID .. "|" .. iconRect.labName
-
-    if clickKey == lastIconClickKey and (t - lastIconClickTime) <= doubleClickThreshold then
-      cycleAndJumpToIcon(iconRect.teamID, iconRect.labName)
-      lastIconClickKey = nil
-      return true
-    end
-
     selectedTeamID = iconRect.teamID
-    lastIconClickKey = clickKey
-    lastIconClickTime = t
-    lastClickTeamID = nil
+    cycleAndJumpToIcon(iconRect.teamID, iconRect.labName)
     return true
   end
 
   local teamID = hitTeamRow(mx,my)
   if not teamID then return false end
 
-  local t = os.clock()
-  if teamID == lastClickTeamID and (t - lastClickTime) <= doubleClickThreshold then
-    local _, leaderPlayerID = Spring.GetTeamInfo(teamID, false)
-    if leaderPlayerID and leaderPlayerID >= 0 then
-      Spring.SendCommands("spectatorview " .. leaderPlayerID)
-    end
+  selectedTeamID = teamID
 
-    jumpToTeamBaseCenter(teamID)
-
-    return true
+  local _, leaderPlayerID = Spring.GetTeamInfo(teamID, false)
+  if leaderPlayerID and leaderPlayerID >= 0 then
+    Spring.SendCommands("spectatorview " .. leaderPlayerID)
   end
 
-  selectedTeamID = teamID
-  lastClickTeamID = teamID
-  lastClickTime = t
-  lastIconClickKey = nil
+  jumpToTeamBaseCenter(teamID)
+
   return true
 end
 
