@@ -358,13 +358,13 @@ local viewModeDescriptions = {
 local unitViewModeColumns = {
   {key = "tech1", label = "Tech 1"},
   {key = "tech2", label = "Tech 2"},
-  {key = "tech3", label = "T3"},
+  {key = "tech3", label = "Tech 3"},
   {key = "all",   label = "All"},
 }
 local unitViewModeDescriptions = {
   tech1 = "Tech 1 - basic units (Commander always shown)",
   tech2 = "Tech 2 - advanced units (Commander always shown)",
-  tech3 = "T3 - experimental units (Commander always shown)",
+  tech3 = "Tech 3 - experimental units (Commander always shown)",
   all   = "All - every tracked unit, no filter",
 }
 
@@ -1288,26 +1288,41 @@ function rebuildLayout()
   end
 
   do
-    -- Group by actual allyteam (not "mine vs other"), tracking each
-    -- group's real representative color. This scales to any number of
-    -- ally-teams (FFA included) with no special-casing: whichever
-    -- group leads a stat, its own real color is used for the stripe.
-    local allyGroups = {}
+    -- Fairness: while actively playing a live game, this widget must
+    -- never expose which team/ally is ahead on a stat other than your
+    -- own -- that's hidden information the game doesn't otherwise
+    -- give you access to. So when not spectating, only your own
+    -- allyteam is ever considered here, regardless of Leaderboard
+    -- mode; the strip just confirms your own team's color rather
+    -- than comparing against anyone else's.
+    --
+    -- Spectating or watching a replay has no such restriction (full
+    -- info is fair for a non-participant), and there the grouping
+    -- matches what's on screen: by allyteam when Leaderboard is off
+    -- (grouped view), or by individual team when Leaderboard is on
+    -- (since that view is no longer grouped).
+    local spectating = Spring.GetSpectatingState()
+    local myAllyTeam = Spring.GetMyAllyTeamID()
+    local perIndividual = spectating and leaderboardState.mode
+
+    local groups = {}
     for _, t in ipairs(teams) do
-      local ally = t.allyTeam
-      if not allyGroups[ally] then
-        local r, g, b = Spring.GetTeamColor(t.teamID)
-        local sums = {}
-        for _, col in ipairs(statColumns) do
-          sums[col.key] = 0
+      if spectating or t.allyTeam == myAllyTeam then
+        local key = perIndividual and t.teamID or t.allyTeam
+        if not groups[key] then
+          local r, g, b = Spring.GetTeamColor(t.teamID)
+          local sums = {}
+          for _, col in ipairs(statColumns) do
+            sums[col.key] = 0
+          end
+          groups[key] = { sums = sums, color = { r or 1, g or 1, b or 1 } }
         end
-        allyGroups[ally] = { sums = sums, color = { r or 1, g or 1, b or 1 } }
-      end
-      local ts = teamStats[t.teamID]
-      if ts then
-        local sums = allyGroups[ally].sums
-        for _, col in ipairs(statColumns) do
-          sums[col.key] = sums[col.key] + (ts[col.key] or 0)
+        local ts = teamStats[t.teamID]
+        if ts then
+          local sums = groups[key].sums
+          for _, col in ipairs(statColumns) do
+            sums[col.key] = sums[col.key] + (ts[col.key] or 0)
+          end
         end
       end
     end
@@ -1315,7 +1330,7 @@ function rebuildLayout()
     cachedLayout.statLeaders = {}
     for _, col in ipairs(statColumns) do
       local bestVal = nil
-      for _, grp in pairs(allyGroups) do
+      for _, grp in pairs(groups) do
         local v = grp.sums[col.key]
         if bestVal == nil or v > bestVal then
           bestVal = v
@@ -1323,13 +1338,13 @@ function rebuildLayout()
       end
       if bestVal ~= nil then
         local leaders = {}
-        for ally, grp in pairs(allyGroups) do
+        for key, grp in pairs(groups) do
           if grp.sums[col.key] == bestVal then
-            leaders[#leaders+1] = ally
+            leaders[#leaders+1] = key
           end
         end
         if #leaders == 1 then
-          cachedLayout.statLeaders[col.key] = allyGroups[leaders[1]].color
+          cachedLayout.statLeaders[col.key] = groups[leaders[1]].color
         end
       end
     end
@@ -2240,11 +2255,18 @@ function widget:DrawScreen()
 
   gl.Color(1,1,1,1)
   local titleText = trackerTitle()
-  gl.Text(titleText, x + padding, y - rowH*0.3 - 7, headerFontSize, "o")
+  local titleTextY = y - rowH*0.3 - 7
+  gl.Text(titleText, x + padding, titleTextY, headerFontSize, "o")
 
+  -- Toggle hitbox hugs just the rendered "Base Tracker"/"Unit Tracker"
+  -- label (a little padding for comfort), instead of the whole header
+  -- row's height. The old version used the full header height here,
+  -- which left a big dead strip below the text that ate clicks meant
+  -- to drag the panel (title is checked before hitHeader/dragging).
+  local titleClickPad = 4
   local titleWidth = gl.GetTextWidth(titleText) * headerFontSize
   uiRects.title.x1, uiRects.title.y1, uiRects.title.x2, uiRects.title.y2 =
-    x + padding, uiRects.header.y1, x + padding + titleWidth, uiRects.header.y2
+    x + padding, titleTextY - titleClickPad, x + padding + titleWidth, titleTextY + headerFontSize + titleClickPad
 
   do
     local toggleLabel = "Icon"
