@@ -351,6 +351,23 @@ local viewModeDescriptions = {
   all     = "All - every tracked structure, no filter",
 }
 
+-- Unit Tracker mode replaces the Minimal/Eco/Defense/Offense filter row
+-- with a tech-level filter. Tiers come straight from each unit's own
+-- customParams.techlevel (BAR's standard field), so this works across
+-- every unit in the game with no per-unit curation needed.
+local unitViewModeColumns = {
+  {key = "tech1", label = "Tech 1"},
+  {key = "tech2", label = "Tech 2"},
+  {key = "tech3", label = "T3"},
+  {key = "all",   label = "All"},
+}
+local unitViewModeDescriptions = {
+  tech1 = "Tech 1 - basic units (Commander always shown)",
+  tech2 = "Tech 2 - advanced units (Commander always shown)",
+  tech3 = "T3 - experimental units (Commander always shown)",
+  all   = "All - every tracked unit, no filter",
+}
+
 local techTierOrder = {
   ["Commander"]                       = 0,
 
@@ -441,6 +458,16 @@ local function isCategoryVisibleInView(category, viewMode)
     end
   end
   return false
+end
+
+-- Unit Tracker's equivalent filter: tier comes directly from the
+-- unit's own techlevel (1/2/3+), no curated category list needed.
+local function isUnitVisibleInView(tier, unitViewMode)
+  if unitViewMode == "all" then return true end
+  if unitViewMode == "tech1" then return tier <= 1 end
+  if unitViewMode == "tech2" then return tier == 2 end
+  if unitViewMode == "tech3" then return tier >= 3 end
+  return true
 end
 
 ------------------------------------------------------------
@@ -663,6 +690,7 @@ local uiRects = {
   iconToggle = {x1=0,y1=0,x2=0,y2=0},
   expandToggle = {x1=0,y1=0,x2=0,y2=0},
   swapToggle = {x1=0,y1=0,x2=0,y2=0},
+  title = {x1=0,y1=0,x2=0,y2=0},
 }
 local cachedLayout = { items = {}, maxIcons = 0, totalWidth = 0, headerFontSize = 0, statLeaders = {} }
 local selectedTeamID = nil
@@ -672,6 +700,10 @@ local lastRightClickTeamID = nil
 local lastRightClickTime = 0
 local cachedTopTeamID = nil
 local iconCycleIndex = {}
+-- Per-unit kill counts, built locally from UnitDestroyed callins since
+-- BAR doesn't expose this as a queryable stat. Used to order Unit
+-- Tracker's cycle-through-instances by performance.
+local unitKillCount = {}
 local mouseX, mouseY = 0, 0
 local flashMarker = nil
 
@@ -710,12 +742,34 @@ local statHeaderRects = {
   uk  = {x1=0,y1=0,x2=0,y2=0},
 }
 local activeViewMode = "all"
+-- trackerMode switches the whole widget between tracking structures
+-- ("base") and mobile units ("unit"). Each mode keeps its own filter
+-- selection so switching back and forth doesn't lose either one.
+local trackerMode = "base"
+local activeUnitViewMode = "all"
+
+-- Returns whichever filter-row column set/state applies to the
+-- current tracker mode, so click handling and drawing share one
+-- source of truth instead of duplicating the branch everywhere.
+local function currentViewModeColumns()
+  return (trackerMode == "unit") and unitViewModeColumns or viewModeColumns
+end
+local function currentActiveViewMode()
+  return (trackerMode == "unit") and activeUnitViewMode or activeViewMode
+end
+local function trackerTitle()
+  return (trackerMode == "unit") and "Unit Tracker" or "Base Tracker"
+end
+
 local viewModeRects = {
   minimal = {x1=0,y1=0,x2=0,y2=0},
   eco     = {x1=0,y1=0,x2=0,y2=0},
   defense = {x1=0,y1=0,x2=0,y2=0},
   offense = {x1=0,y1=0,x2=0,y2=0},
   all     = {x1=0,y1=0,x2=0,y2=0},
+  tech1   = {x1=0,y1=0,x2=0,y2=0},
+  tech2   = {x1=0,y1=0,x2=0,y2=0},
+  tech3   = {x1=0,y1=0,x2=0,y2=0},
 }
 
 -- Cached, ready-to-draw layout. Rebuilt only when the underlying data
@@ -763,38 +817,37 @@ local function recountLabs()
       end
 
       local name = ud.name
-      local category = labDisplayNames[name]
+      local prefix = name:sub(1,3)
+      local faction = "arm"
+      if prefix == "cor" then faction = "cor" end
+      if prefix == "leg" then faction = "leg" end
 
-      if category then
-        -- check if lab is FINISHED
-        local _, _, _, _, buildProgress = Spring.GetUnitHealth(unitID)
-        if buildProgress == 1 then
+      local labCategory = labDisplayNames[name]
 
-          -- detect faction from unit name prefix
-          local prefix = name:sub(1,3)
-          local faction = "arm"
-          if prefix == "cor" then faction = "cor" end
-          if prefix == "leg" then faction = "leg" end
+      if labCategory then
+        -- Structure lab -- Base Tracker only. Being a known lab
+        -- defName excludes it from the mobile-unit branch below
+        -- entirely, regardless of trackerMode or what ud.canMove
+        -- says (factory buildings can apparently report canMove
+        -- true in this engine, which is what let labs leak into
+        -- Unit Tracker before this was nested like this).
+        if trackerMode == "base" then
+          local _, _, _, _, buildProgress = Spring.GetUnitHealth(unitID)
+          if buildProgress == 1 then
+            teamFaction[teamID] = faction
 
-          teamFaction[teamID] = faction
+            teamLabs[teamID] = teamLabs[teamID] or {}
+            teamLabs[teamID][labCategory] = (teamLabs[teamID][labCategory] or 0) + 1
 
-          teamLabs[teamID] = teamLabs[teamID] or {}
-          teamLabs[teamID][category] = (teamLabs[teamID][category] or 0) + 1
-
-          local px, py, pz = Spring.GetUnitPosition(unitID)
-          if px then
-            teamLabPositions[teamID] = teamLabPositions[teamID] or {}
-            teamLabPositions[teamID][category] = teamLabPositions[teamID][category] or {}
-            table.insert(teamLabPositions[teamID][category], { x = px, y = py, z = pz })
+            local px, py, pz = Spring.GetUnitPosition(unitID)
+            if px then
+              teamLabPositions[teamID] = teamLabPositions[teamID] or {}
+              teamLabPositions[teamID][labCategory] = teamLabPositions[teamID][labCategory] or {}
+              table.insert(teamLabPositions[teamID][labCategory], { x = px, y = py, z = pz })
+            end
           end
         end
       elseif isCommanderDef[unitDefID] then
-        -- detect faction from unit name prefix (same convention as labs)
-        local prefix = name:sub(1,3)
-        local faction = "arm"
-        if prefix == "cor" then faction = "cor" end
-        if prefix == "leg" then faction = "leg" end
-
         teamFaction[teamID] = faction
 
         teamLabs[teamID] = teamLabs[teamID] or {}
@@ -807,6 +860,30 @@ local function recountLabs()
           -- Commander skins vary per player, so store the exact
           -- defName here (unlike labs, which resolve it via iconMap)
           table.insert(teamLabPositions[teamID]["Commander"], { x = px, y = py, z = pz, defName = name, unitID = unitID })
+        end
+      elseif trackerMode == "unit" and ud.canMove then
+        -- Every other mobile unit: constructors, repair/reclaim bots,
+        -- combat units, radar/jammer bots, etc. Keyed by the unit's
+        -- own defName -- guaranteed unique per unit type, unlike a
+        -- cosmetic name field that might not vary the way expected.
+        local _, _, _, _, buildProgress = Spring.GetUnitHealth(unitID)
+        if buildProgress == 1 then
+          teamFaction[teamID] = faction
+          local tier = tonumber(ud.customParams and ud.customParams.techlevel) or 1
+
+          teamLabs[teamID] = teamLabs[teamID] or {}
+          teamLabs[teamID][name] = (teamLabs[teamID][name] or 0) + 1
+
+          local px, py, pz = Spring.GetUnitPosition(unitID)
+          if px then
+            teamLabPositions[teamID] = teamLabPositions[teamID] or {}
+            teamLabPositions[teamID][name] = teamLabPositions[teamID][name] or {}
+            table.insert(teamLabPositions[teamID][name], {
+              x = px, y = py, z = pz,
+              defName = name, tier = tier, unitID = unitID,
+              humanName = ud.translatedHumanName,
+            })
+          end
         end
       end
     end
@@ -1069,6 +1146,131 @@ local function getSortedTeams()
   return teams
 end
 
+-- Resolves a structure or Commander category to its icon defName, any
+-- Commander overlay defNames, and its badge text. Shared by Base
+-- Tracker's structure list and Unit Tracker's always-visible
+-- Commander+Labs section, so both resolve identically. Returns nil
+-- defName if the category can't be resolved to a real unit texture.
+local function resolveStructureIcon(t, faction, labName)
+  local defName
+  local overlayDefNames = nil
+  if labName == "Commander" then
+    local comList = teamLabPositions[t.teamID] and teamLabPositions[t.teamID]["Commander"]
+    defName = comList and comList[1] and comList[1].defName
+
+    -- If there's more than one commander (resurrected/given from
+    -- another faction, or a duplicate), the team's HOME faction
+    -- commander (if still alive) stays the main full-size icon --
+    -- everything else becomes a small overlay icon stacked from
+    -- the top-left corner. If the home-faction commander has died,
+    -- whichever one is first in the list simply becomes the new
+    -- main icon (matching "if the original dies, the resurrected
+    -- one becomes the new full icon").
+    if comList and #comList > 1 then
+      local primaryIdx = nil
+      for i, com in ipairs(comList) do
+        local prefix = com.defName and com.defName:sub(1,3)
+        if prefix == faction then
+          primaryIdx = i
+          break
+        end
+      end
+      if not primaryIdx then primaryIdx = 1 end
+
+      defName = comList[primaryIdx].defName
+
+      local extras = {}
+      for i, com in ipairs(comList) do
+        if i ~= primaryIdx then
+          extras[#extras+1] = com.defName
+        end
+      end
+      if #extras > 0 then
+        overlayDefNames = extras
+      end
+    end
+  else
+    local factionMap = iconMap[faction]
+    defName = factionMap and factionMap[labName]
+  end
+
+  if not (defName and UnitDefNames[defName]) then
+    return nil
+  end
+
+  local tier = techTierOrder[labName]
+  local tierLabel = (tier == 0 and "COM")
+                  or (tier == 1 and "T1")
+                  or (tier == 2 and "T2")
+                  or ((tier == 3 or tier == 4) and "EXP")
+                  or (tier == 5 and "FUS")
+                  or (tier == 6 and "AFUS")
+                  or (tier == 7 and "LRPC")
+                  or (tier == 8 and "NUKE")
+                  or (tier == 9 and "ANTI")
+                  or (tier == 10 and "SW")
+                  or (tier == 11 and "PLSR")
+                  or (tier == 12 and "PIN")
+                  or (tier == 13 and "JUNO")
+                  or (tier == 14 and "XAIR")
+                  or (tier == 15 and "EAFUS")
+                  or (tier == 16 and "EPLSR")
+                  or (tier == 17 and "PWN")
+                  or (tier == 18 and "ICM")
+                  or (tier == 19 and "NAPLM")
+                  or (tier == 20 and "GEO")
+                  or (tier == 21 and "OGEO")
+                  or (tier == 22 and "AGEO")
+                  or (tier == 23 and "AOGEO")
+                  or (tier == 24 and "SGEO")
+                  or (tier == 25 and "MEX")
+                  or (tier == 26 and "AMEX")
+                  or (tier == 27 and "SOL")
+                  or (tier == 28 and "ASOL")
+                  or (tier == 29 and "WIND")
+                  or (tier == 30 and "AWIND")
+                  or (tier == 31 and "TIDE")
+                  or (tier == 32 and "MSTOR")
+                  or (tier == 33 and "ESTOR")
+                  or (tier == 34 and "CONV")
+                  or (tier == 35 and "ACONV")
+                  or (tier == 36 and "ECONV")
+                  or (tier == 37 and "RAD")
+                  or (tier == 38 and "ARAD")
+                  or (tier == 39 and "SONAR")
+                  or (tier == 40 and "ASONAR")
+                  or (tier == 41 and "NANO")
+                  or (tier == 42 and "ANANO")
+                  or (tier == 43 and "NRAD")
+                  or (tier == 44 and "AUSC")
+                  or (tier == 45 and "T1LT")
+                  or (tier == 46 and "AA")
+                  or (tier == 47 and "NAVAA")
+                  or (tier == 48 and "SHIELD")
+                  or (tier == 49 and "POPUP")
+                  or (tier == 50 and "ARTY")
+                  or (tier == 51 and "EMP")
+                  or (tier == 52 and "AAMSL")
+                  or (tier == 53 and "TWIN")
+                  or (tier == 54 and "RAMPT")
+                  or nil
+
+  -- Cortex's Pulsar-tier unit is actually called "Bulwark", so
+  -- give it its own badge text instead of the generic PLSR/EPLSR
+  -- used by Armada's Pulsar and Legion's Bastion.
+  if faction == "cor" then
+    if tier == 11 then tierLabel = "BULW" end
+    if tier == 16 then tierLabel = "EBULW" end
+  end
+  if faction == "leg" then
+    if tier == 11 then tierLabel = "BAST" end
+    if tier == 16 then tierLabel = "EBAST" end
+    if tier == 45 then tierLabel = "T1HT" end
+  end
+
+  return defName, overlayDefNames, tierLabel
+end
+
 function rebuildLayout()
   local teams = getSortedTeams()
 
@@ -1135,151 +1337,122 @@ function rebuildLayout()
 
   local rawItems = {}
   for _, t in ipairs(teams) do
-    local faction = getFaction(t.teamID)
     local r, g, b = Spring.GetTeamColor(t.teamID)
-
-    local ownedLabs = {}
-    for labName, _ in pairs(t.labs) do
-      if type(labName) == "string" then
-        ownedLabs[#ownedLabs+1] = labName
-      end
-    end
-    table.sort(ownedLabs, function(a, b2)
-      local ta, tb = techTierOrder[a] or 99, techTierOrder[b2] or 99
-      if ta == tb then return a < b2 end
-      return ta < tb
-    end)
-
     local icons = {}
-    for _, labName in ipairs(ownedLabs) do
-      if isCategoryVisibleInView(labName, activeViewMode) then
-      local defName
-      local overlayDefNames = nil
-      if labName == "Commander" then
-        local comList = teamLabPositions[t.teamID] and teamLabPositions[t.teamID]["Commander"]
-        defName = comList and comList[1] and comList[1].defName
 
-        -- If there's more than one commander (resurrected/given from
-        -- another faction, or a duplicate), the team's HOME faction
-        -- commander (if still alive) stays the main full-size icon --
-        -- everything else becomes a small overlay icon stacked from
-        -- the top-left corner. If the home-faction commander has died,
-        -- whichever one is first in the list simply becomes the new
-        -- main icon (matching "if the original dies, the resurrected
-        -- one becomes the new full icon").
-        if comList and #comList > 1 then
-          local primaryIdx = nil
-          for i, com in ipairs(comList) do
-            local prefix = com.defName and com.defName:sub(1,3)
-            if prefix == faction then
-              primaryIdx = i
-              break
+    local faction = getFaction(t.teamID)
+
+    if trackerMode == "unit" then
+      -- Unit Tracker: Commander stays visible always, unaffected by
+      -- the Tech1/2/3 filter, plus every mobile unit the team owns
+      -- (bots, vehicles, ships, hovercraft, constructors, etc.),
+      -- filtered by tier. No structures/labs in this mode. Commander
+      -- resolves via the shared helper; individual units resolve
+      -- straight from their own defName -- no curated map needed.
+      local ownedCats = {}
+      for catName, _ in pairs(t.labs) do
+        if type(catName) == "string" then
+          ownedCats[#ownedCats+1] = catName
+        end
+      end
+
+      -- Commander first, then construction/builder units, then
+      -- everything else, each group internally sorted by tier.
+      local function unitSortRank(catName)
+        if techTierOrder[catName] ~= nil then
+          return techTierOrder[catName]
+        end
+        local posList = teamLabPositions[t.teamID] and teamLabPositions[t.teamID][catName]
+        local tier = (posList and posList[1] and posList[1].tier) or 99
+        local defName = posList and posList[1] and posList[1].defName
+        local defID = defName and UnitDefNames[defName]
+        local ud = defID and UnitDefs[defID]
+        local isBuilder = ud and ud.isBuilder
+        local group = isBuilder and 1 or 2
+        return 100 + group * 1000 + tier
+      end
+      table.sort(ownedCats, function(a, b2)
+        local ta, tb = unitSortRank(a), unitSortRank(b2)
+        if ta == tb then return a < b2 end
+        return ta < tb
+      end)
+
+      for _, catName in ipairs(ownedCats) do
+        if techTierOrder[catName] ~= nil then
+          -- Commander or a lab category -- always visible, unaffected
+          -- by the Tech1/2/3 filter.
+          local defName, overlayDefNames, tierLabel = resolveStructureIcon(t, faction, catName)
+          if defName then
+            icons[#icons+1] = {
+              defName = defName,
+              overlayDefNames = overlayDefNames,
+              labName = catName,
+              count = t.labs[catName] or 1,
+              tierLabel = tierLabel,
+            }
+          end
+        else
+          local posList = teamLabPositions[t.teamID] and teamLabPositions[t.teamID][catName]
+          local tier = (posList and posList[1] and posList[1].tier) or 1
+          if isUnitVisibleInView(tier, activeUnitViewMode) then
+            local defName = posList and posList[1] and posList[1].defName
+            if defName and UnitDefNames[defName] then
+              local ud = UnitDefs[UnitDefNames[defName]]
+              local isBuilder = ud and ud.isBuilder
+              local tierBase = (tier <= 1 and "T1") or (tier == 2 and "T2") or "T3"
+              local tierLabel = isBuilder and (tierBase .. "C") or tierBase
+              -- translatedHumanName is the field BAR's own UI uses for
+              -- proper unit names (confirmed via BAR's unit_auto_group
+              -- widget). Kept the non-whitespace guard as a defensive
+              -- fallback in case it's ever blank for some unit.
+              local humanName = posList[1] and posList[1].humanName
+              local displayLabel = (humanName and humanName:match("%S")) and humanName or catName
+              icons[#icons+1] = {
+                defName = defName,
+                overlayDefNames = nil,
+                labName = catName,
+                displayLabel = displayLabel,
+                count = t.labs[catName] or 1,
+                tierLabel = tierLabel,
+              }
             end
           end
-          if not primaryIdx then primaryIdx = 1 end
-
-          defName = comList[primaryIdx].defName
-
-          local extras = {}
-          for i, com in ipairs(comList) do
-            if i ~= primaryIdx then
-              extras[#extras+1] = com.defName
-            end
-          end
-          if #extras > 0 then
-            overlayDefNames = extras
-          end
         end
-      else
-        local factionMap = iconMap[faction]
-        defName = factionMap and factionMap[labName]
       end
-      if defName and UnitDefNames[defName] then
-        local tier = techTierOrder[labName]
-        local tierLabel = (tier == 0 and "COM")
-                        or (tier == 1 and "T1")
-                        or (tier == 2 and "T2")
-                        or ((tier == 3 or tier == 4) and "EXP")
-                        or (tier == 5 and "FUS")
-                        or (tier == 6 and "AFUS")
-                        or (tier == 7 and "LRPC")
-                        or (tier == 8 and "NUKE")
-                        or (tier == 9 and "ANTI")
-                        or (tier == 10 and "SW")
-                        or (tier == 11 and "PLSR")
-                        or (tier == 12 and "PIN")
-                        or (tier == 13 and "JUNO")
-                        or (tier == 14 and "XAIR")
-                        or (tier == 15 and "EAFUS")
-                        or (tier == 16 and "EPLSR")
-                        or (tier == 17 and "PWN")
-                        or (tier == 18 and "ICM")
-                        or (tier == 19 and "NAPLM")
-                        or (tier == 20 and "GEO")
-                        or (tier == 21 and "OGEO")
-                        or (tier == 22 and "AGEO")
-                        or (tier == 23 and "AOGEO")
-                        or (tier == 24 and "SGEO")
-                        or (tier == 25 and "MEX")
-                        or (tier == 26 and "AMEX")
-                        or (tier == 27 and "SOL")
-                        or (tier == 28 and "ASOL")
-                        or (tier == 29 and "WIND")
-                        or (tier == 30 and "AWIND")
-                        or (tier == 31 and "TIDE")
-                        or (tier == 32 and "MSTOR")
-                        or (tier == 33 and "ESTOR")
-                        or (tier == 34 and "CONV")
-                        or (tier == 35 and "ACONV")
-                        or (tier == 36 and "ECONV")
-                        or (tier == 37 and "RAD")
-                        or (tier == 38 and "ARAD")
-                        or (tier == 39 and "SONAR")
-                        or (tier == 40 and "ASONAR")
-                        or (tier == 41 and "NANO")
-                        or (tier == 42 and "ANANO")
-                        or (tier == 43 and "NRAD")
-                        or (tier == 44 and "AUSC")
-                        or (tier == 45 and "T1LT")
-                        or (tier == 46 and "AA")
-                        or (tier == 47 and "NAVAA")
-                        or (tier == 48 and "SHIELD")
-                        or (tier == 49 and "POPUP")
-                        or (tier == 50 and "ARTY")
-                        or (tier == 51 and "EMP")
-                        or (tier == 52 and "AAMSL")
-                        or (tier == 53 and "TWIN")
-                        or (tier == 54 and "RAMPT")
-                        or nil
-
-        -- Cortex's Pulsar-tier unit is actually called "Bulwark", so
-        -- give it its own badge text instead of the generic PLSR/EPLSR
-        -- used by Armada's Pulsar and Legion's Bastion.
-        if faction == "cor" then
-          if tier == 11 then tierLabel = "BULW" end
-          if tier == 16 then tierLabel = "EBULW" end
+    else
+      local ownedLabs = {}
+      for labName, _ in pairs(t.labs) do
+        if type(labName) == "string" then
+          ownedLabs[#ownedLabs+1] = labName
         end
-        if faction == "leg" then
-          if tier == 11 then tierLabel = "BAST" end
-          if tier == 16 then tierLabel = "EBAST" end
-          if tier == 45 then tierLabel = "T1HT" end
-        end
-        icons[#icons+1] = {
-          defName = defName,
-          overlayDefNames = overlayDefNames,
-          labName = labName,
-          count = t.labs[labName] or 1,
-          tierLabel = tierLabel,
-        }
       end
+      table.sort(ownedLabs, function(a, b2)
+        local ta, tb = techTierOrder[a] or 99, techTierOrder[b2] or 99
+        if ta == tb then return a < b2 end
+        return ta < tb
+      end)
+
+      for _, labName in ipairs(ownedLabs) do
+        if isCategoryVisibleInView(labName, activeViewMode) then
+          local defName, overlayDefNames, tierLabel = resolveStructureIcon(t, faction, labName)
+          if defName then
+            icons[#icons+1] = {
+              defName = defName,
+              overlayDefNames = overlayDefNames,
+              labName = labName,
+              count = t.labs[labName] or 1,
+              tierLabel = tierLabel,
+            }
+          end
+        end
       end
     end
 
     local badgeReserve = 0
-    if t.teamID == cachedTopTeamID then badgeReserve = badgeReserve + 22 end
+    if t.teamID == cachedTopTeamID then badgeReserve = badgeReserve + 44 end
     for _, pid in ipairs(pinnedTeamIDs) do
       if pid == t.teamID then
-        badgeReserve = badgeReserve + 22
+        badgeReserve = badgeReserve + 44
         break
       end
     end
@@ -1364,7 +1537,7 @@ function rebuildLayout()
   local toggleButtonWidth = gl.GetTextWidth("Icon") * toggleFontSize + togglePad * 2
   local lbButtonWidth = gl.GetTextWidth("Leaderboard") * 13 + 6 * 2 + 10
   local szButtonWidth = gl.GetTextWidth("Size") * 13 + 6 * 2 + 10
-  local headerTextWidth = gl.GetTextWidth("Base Tracker") * cachedLayout.headerFontSize + padding * 2
+  local headerTextWidth = gl.GetTextWidth(trackerTitle()) * cachedLayout.headerFontSize + padding * 2
                          + toggleButtonWidth + lbButtonWidth + szButtonWidth + padding * 2
 
   cachedLayout.totalWidth = nameColW + (cachedLayout.maxIcons * iconSize) + padding * 2
@@ -1419,7 +1592,7 @@ local function hitStatHeader(mx,my)
 end
 
 local function hitViewModeButton(mx,my)
-  for _, col in ipairs(viewModeColumns) do
+  for _, col in ipairs(currentViewModeColumns()) do
     local r = viewModeRects[col.key]
     if mx>=r.x1 and mx<=r.x2 and my>=r.y1 and my<=r.y2 then
       return col.key
@@ -1454,12 +1627,27 @@ local function followCameraTo(x, y, z)
 end
 
 -- Jumps to (and cycles through, on repeated calls) all instances of a
--- given icon's structure/commander type for a team. Shared by both the
--- double-click handler and the spacebar-while-hovering shortcut.
+-- given icon's structure/commander/unit type for a team. Shared by
+-- both the click handler and the spacebar-while-hovering shortcut.
+-- For individual units (which carry a unitID), each call cycles
+-- through them ordered by current kill count -- most kills first,
+-- down to 0, then wrapping back around -- rather than build order.
 local function cycleAndJumpToIcon(teamID, labName)
   local clickKey = teamID .. "|" .. labName
-  local list = teamLabPositions[teamID] and teamLabPositions[teamID][labName]
-  if not list or #list == 0 then return end
+  local rawList = teamLabPositions[teamID] and teamLabPositions[teamID][labName]
+  if not rawList or #rawList == 0 then return end
+
+  local list = rawList
+  if rawList[1] and rawList[1].unitID then
+    list = {}
+    for i, entry in ipairs(rawList) do list[i] = entry end
+    table.sort(list, function(a, b)
+      local ka = unitKillCount[a.unitID] or 0
+      local kb = unitKillCount[b.unitID] or 0
+      if ka ~= kb then return ka > kb end
+      return a.unitID < b.unitID
+    end)
+  end
 
   local idx = (iconCycleIndex[clickKey] or 0) % #list + 1
   iconCycleIndex[clickKey] = idx
@@ -1469,9 +1657,9 @@ local function cycleAndJumpToIcon(teamID, labName)
   flashMarker = {
     x = pos.x, y = pos.y, z = pos.z,
     startTime = os.clock(),
-    unitID = (labName == "Commander") and pos.unitID or nil,
+    unitID = pos.unitID,
   }
-  if labName == "Commander" and pos.unitID then
+  if pos.unitID then
     followState.unitID = pos.unitID
     followState.camPos = nil
   end
@@ -1501,6 +1689,9 @@ function widget:Initialize()
   sectionsSwapped = Spring.GetConfigInt("LabTracker_Swapped", 0) == 1
   local viewModeKeys = {"minimal", "eco", "defense", "offense", "all"}
   activeViewMode = viewModeKeys[Spring.GetConfigInt("LabTracker_ViewMode", 5)] or "all"
+  local unitViewModeKeys = {"tech1", "tech2", "tech3", "all"}
+  activeUnitViewMode = unitViewModeKeys[Spring.GetConfigInt("LabTracker_UnitViewMode", 4)] or "all"
+  trackerMode = (Spring.GetConfigInt("LabTracker_Mode", 0) == 1) and "unit" or "base"
   local savedStatSortIdx = Spring.GetConfigInt("LabTracker_StatSort", 0)
   statSortKey = (savedStatSortIdx > 0 and statColumns[savedStatSortIdx] and statColumns[savedStatSortIdx].key) or nil
   leaderboardState.mode = Spring.GetConfigInt("LabTracker_Leaderboard", 0) == 1
@@ -1520,6 +1711,15 @@ end
 function widget:GameFrame(frame)
   if frame % 150 == 0 then
     recountLabs()
+  end
+end
+
+-- Tracks kills per attacking unit locally, since BAR doesn't expose
+-- this as a queryable stat -- used to order Unit Tracker's
+-- cycle-through-instances by kill count.
+function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerDefID, attackerTeam, weaponDefID)
+  if attackerID and attackerID ~= unitID then
+    unitKillCount[attackerID] = (unitKillCount[attackerID] or 0) + 1
   end
 end
 
@@ -1549,8 +1749,8 @@ function widget:MousePress(mx,my,button)
     return true
   end
 
-  -- Any click interrupts an active camera-follow; the Commander
-  -- double-click branch below re-engages it if that's what happened.
+  -- Any click interrupts an active camera-follow; cycleAndJumpToIcon
+  -- below re-engages it if the clicked icon represents a live unit.
   followState.unitID = nil
 
   if minimized then
@@ -1643,19 +1843,38 @@ function widget:MousePress(mx,my,button)
     end
   end
 
-  for _, col in ipairs(viewModeColumns) do
+  for _, col in ipairs(currentViewModeColumns()) do
     local hr = viewModeRects[col.key]
     if mx>=hr.x1 and mx<=hr.x2 and my>=hr.y1 and my<=hr.y2 then
-      activeViewMode = col.key
-      for i, k in ipairs({"minimal", "eco", "defense", "offense", "all"}) do
-        if k == activeViewMode then
-          Spring.SetConfigInt("LabTracker_ViewMode", i)
-          break
+      if trackerMode == "unit" then
+        activeUnitViewMode = col.key
+        for i, k in ipairs({"tech1", "tech2", "tech3", "all"}) do
+          if k == activeUnitViewMode then
+            Spring.SetConfigInt("LabTracker_UnitViewMode", i)
+            break
+          end
+        end
+      else
+        activeViewMode = col.key
+        for i, k in ipairs({"minimal", "eco", "defense", "offense", "all"}) do
+          if k == activeViewMode then
+            Spring.SetConfigInt("LabTracker_ViewMode", i)
+            break
+          end
         end
       end
       rebuildLayout()
       return true
     end
+  end
+
+  local titr = uiRects.title
+  if mx>=titr.x1 and mx<=titr.x2 and my>=titr.y1 and my<=titr.y2 then
+    trackerMode = (trackerMode == "unit") and "base" or "unit"
+    Spring.SetConfigInt("LabTracker_Mode", trackerMode == "unit" and 1 or 0)
+    recountLabs()
+    rebuildLayout()
+    return true
   end
 
   if hitHeader(mx,my) then
@@ -1777,13 +1996,30 @@ function widget:KeyPress(key, mods, isRepeat)
       return true
 
     elseif hoverState.viewModeKey then
-      activeViewMode = hoverState.viewModeKey
-      for i, k in ipairs({"minimal", "eco", "defense", "offense", "all"}) do
-        if k == activeViewMode then
-          Spring.SetConfigInt("LabTracker_ViewMode", i)
-          break
+      if trackerMode == "unit" then
+        activeUnitViewMode = hoverState.viewModeKey
+        for i, k in ipairs({"tech1", "tech2", "tech3", "all"}) do
+          if k == activeUnitViewMode then
+            Spring.SetConfigInt("LabTracker_UnitViewMode", i)
+            break
+          end
+        end
+      else
+        activeViewMode = hoverState.viewModeKey
+        for i, k in ipairs({"minimal", "eco", "defense", "offense", "all"}) do
+          if k == activeViewMode then
+            Spring.SetConfigInt("LabTracker_ViewMode", i)
+            break
+          end
         end
       end
+      rebuildLayout()
+      return true
+
+    elseif hoverState.titleToggle then
+      trackerMode = (trackerMode == "unit") and "base" or "unit"
+      Spring.SetConfigInt("LabTracker_Mode", trackerMode == "unit" and 1 or 0)
+      recountLabs()
       rebuildLayout()
       return true
     end
@@ -1882,6 +2118,7 @@ function widget:DrawScreen()
     hoverState.iconToggle = ptIn(uiRects.iconToggle)
     hoverState.expandToggle = ptIn(uiRects.expandToggle)
     hoverState.swapToggle = ptIn(uiRects.swapToggle)
+    hoverState.titleToggle = ptIn(uiRects.title)
     hoverState.sizeOption = nil
     if sizeMenu.open then
       for _, r in ipairs(sizeMenu.optionRects) do
@@ -1936,7 +2173,7 @@ function widget:DrawScreen()
     local cy = (py1 + py2) * 0.5
 
     gl.Color(1, 1, 1, 1)
-    gl.Text("Base Tracker", cx, cy + 10, 20, "oc")
+    gl.Text(trackerTitle(), cx, cy + 10, 20, "oc")
 
     gl.Color(0.3, 1, 0.3, 1)
     gl.Text("minimized", cx, cy - 20, 16, "oc")
@@ -2002,7 +2239,12 @@ function widget:DrawScreen()
   gl.Rect(uiRects.header.x1, uiRects.header.y1, uiRects.header.x2, uiRects.header.y2)
 
   gl.Color(1,1,1,1)
-  gl.Text("Base Tracker", x + padding, y - rowH*0.3 - 7, headerFontSize, "o")
+  local titleText = trackerTitle()
+  gl.Text(titleText, x + padding, y - rowH*0.3 - 7, headerFontSize, "o")
+
+  local titleWidth = gl.GetTextWidth(titleText) * headerFontSize
+  uiRects.title.x1, uiRects.title.y1, uiRects.title.x2, uiRects.title.y2 =
+    x + padding, uiRects.header.y1, x + padding + titleWidth, uiRects.header.y2
 
   do
     local toggleLabel = "Icon"
@@ -2088,8 +2330,9 @@ function widget:DrawScreen()
   end
 
   do
+    local vmDescriptions = (trackerMode == "unit") and unitViewModeDescriptions or viewModeDescriptions
     local descText = (hoverState.statKey and statDescriptions[hoverState.statKey])
-                   or (hoverState.viewModeKey and viewModeDescriptions[hoverState.viewModeKey])
+                   or (hoverState.viewModeKey and vmDescriptions[hoverState.viewModeKey])
     if descText then
       local maxDescWidth = totalWidth - padding * 4
       local descFontSize = 13
@@ -2152,16 +2395,18 @@ function widget:DrawScreen()
   end
 
   do
+    local vmCols = currentViewModeColumns()
+    local vmActive = currentActiveViewMode()
     local vmTop = rowY
     local vmBottom = rowY - viewModeRowH
-    local vmColW = totalWidth / #viewModeColumns
+    local vmColW = totalWidth / #vmCols
     local vmFontSize = 12
 
     gl.Color(0.15, 0.15, 0.15, 0.75)
     gl.Rect(x, vmBottom, x + totalWidth, vmTop)
 
     local vmCy = (vmTop + vmBottom) / 2
-    for i, col in ipairs(viewModeColumns) do
+    for i, col in ipairs(vmCols) do
       local cx1 = x + (i - 1) * vmColW
       local cx2 = x + i * vmColW
       local ccx = (cx1 + cx2) / 2
@@ -2169,7 +2414,7 @@ function widget:DrawScreen()
       local hr = viewModeRects[col.key]
       hr.x1, hr.y1, hr.x2, hr.y2 = cx1, vmBottom, cx2, vmTop
 
-      if activeViewMode == col.key then
+      if vmActive == col.key then
         gl.Color(1, 0.85, 0.2, 0.9)
         gl.Rect(cx1, vmBottom, cx2, vmTop)
         gl.Color(0, 0, 0, 1)
@@ -2296,8 +2541,8 @@ function widget:DrawScreen()
     gl.Text("Base Center", x + padding, nameY - subFontSize * 1.6, subFontSize, "o")
 
     do
-      local badgeFontSize = 14
-      local badgeY = rowY - 16
+      local badgeFontSize = 28
+      local badgeY = rowY - 26
       local badgeRightEdge = x + padding + nameColW - 4
       gl.Color(1, 0.85, 0.2, 1)
 
@@ -2352,17 +2597,16 @@ function widget:DrawScreen()
           end
         end
 
-        local isFollowedCommander = false
-        if labName == "Commander" and followState.unitID
-           and teamLabPositions[teamID] and teamLabPositions[teamID]["Commander"] then
-          for _, comEntry in ipairs(teamLabPositions[teamID]["Commander"]) do
-            if comEntry.unitID == followState.unitID then
-              isFollowedCommander = true
+        local isFollowed = false
+        if followState.unitID and teamLabPositions[teamID] and teamLabPositions[teamID][labName] then
+          for _, entry in ipairs(teamLabPositions[teamID][labName]) do
+            if entry.unitID == followState.unitID then
+              isFollowed = true
               break
             end
           end
         end
-        if isFollowedCommander then
+        if isFollowed then
           gl.Color(0.3,1,0.3,0.9)
           local bw = 2
           gl.Rect(ix, iy, ix+iconSize, iy+bw)
@@ -2408,6 +2652,7 @@ function widget:DrawScreen()
           defName=defName,
           teamID=teamID,
           labName=labName,
+          displayLabel=iconData.displayLabel,
         }
 
         colIndex = colIndex + 1
@@ -2470,7 +2715,7 @@ function widget:DrawScreen()
   gl.Color(1,1,1,1)
 
   if hoverState.icon then
-    local labName = hoverState.icon.labName
+    local labName = hoverState.icon.displayLabel or hoverState.icon.labName
     local prefix  = hoverState.icon.defName:sub(1,3)
     local factionName = factionFullNames[prefix]
 
