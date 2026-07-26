@@ -691,8 +691,27 @@ local uiRects = {
   expandToggle = {x1=0,y1=0,x2=0,y2=0},
   swapToggle = {x1=0,y1=0,x2=0,y2=0},
   title = {x1=0,y1=0,x2=0,y2=0},
+  resizeHandle = {x1=0,y1=0,x2=0,y2=0},
 }
-local cachedLayout = { items = {}, maxIcons = 0, totalWidth = 0, headerFontSize = 0, statLeaders = {} }
+local cachedLayout = { items = {}, maxIcons = 0, totalWidth = 0, autoWidth = 0, minWidth = 0, iconContentWidth = 0, headerFontSize = 0, statLeaders = {} }
+
+-- Manual width resize (the "<>" handle in the header). Disabled (red) by
+-- default: the panel keeps auto-fitting to however many icons a row
+-- needs, exactly like before this feature existed. Right-clicking the
+-- handle enables it (white); only then can it be left-click dragged to
+-- expand/compress the panel. If that makes a row's icons wider than the
+-- panel, the icon columns clip and become horizontally scrollable via
+-- the mouse wheel instead of spilling out or overlapping.
+local resizeHandleState = { enabled = false }
+local resizeDragState = { active = false, startX = 0, startWidth = 0 }
+local manualWidth = nil
+local currentTotalWidth = 0
+-- Horizontal icon scroll is per-team (like per-row scrolling in a
+-- spreadsheet): each row keeps its own offset/maxOffset so scrolling
+-- one player's overflowing row never hides another row's icons that
+-- already fit. "enabled" just means "resize handle is on" -- used to
+-- gate whether MouseWheel should even look at this at all.
+local hScrollState = { enabled = false, offsetByTeam = {}, maxOffsetByTeam = {} }
 local selectedTeamID = nil
 local pinnedTeamIDs = {}
 local MAX_PINNED = 3
@@ -1555,8 +1574,16 @@ function rebuildLayout()
   local headerTextWidth = gl.GetTextWidth(trackerTitle()) * cachedLayout.headerFontSize + padding * 2
                          + toggleButtonWidth + lbButtonWidth + szButtonWidth + padding * 2
 
-  cachedLayout.totalWidth = nameColW + (cachedLayout.maxIcons * iconSize) + padding * 2
-  cachedLayout.totalWidth = math.max(cachedLayout.totalWidth, headerTextWidth)
+  -- "auto" is the natural width: wide enough for the name column plus
+  -- every icon in the widest row (or the header/buttons if that's
+  -- wider). "min" is the hard floor a manual resize can't go below --
+  -- it protects the name column and header buttons from ever getting
+  -- clipped, even when the resize handle is dragged all the way in.
+  cachedLayout.iconContentWidth = cachedLayout.maxIcons * iconSize
+  local autoContentWidth = nameColW + cachedLayout.iconContentWidth + padding * 2
+  cachedLayout.minWidth = math.max(nameColW + padding * 2, headerTextWidth)
+  cachedLayout.autoWidth = math.max(autoContentWidth, cachedLayout.minWidth)
+  cachedLayout.totalWidth = cachedLayout.autoWidth
 end
 
 local function isPinned(teamID)
@@ -1710,6 +1737,9 @@ function widget:Initialize()
   local savedStatSortIdx = Spring.GetConfigInt("LabTracker_StatSort", 0)
   statSortKey = (savedStatSortIdx > 0 and statColumns[savedStatSortIdx] and statColumns[savedStatSortIdx].key) or nil
   leaderboardState.mode = Spring.GetConfigInt("LabTracker_Leaderboard", 0) == 1
+  resizeHandleState.enabled = Spring.GetConfigInt("LabTracker_ResizeEnabled", 0) == 1
+  local savedManualWidth = Spring.GetConfigInt("LabTracker_Width", 0)
+  manualWidth = (savedManualWidth > 0) and savedManualWidth or nil
   local savedIconSize = Spring.GetConfigInt("LabTracker_IconSize", iconSize)
   local validSize = false
   for _, s in ipairs(sizeMenu.options) do
@@ -1748,6 +1778,18 @@ function widget:MousePress(mx,my,button)
   if button ~= 1 and button ~= 3 then return false end
 
   if button == 3 then
+    local rzr = uiRects.resizeHandle
+    if mx>=rzr.x1 and mx<=rzr.x2 and my>=rzr.y1 and my<=rzr.y2 then
+      resizeHandleState.enabled = not resizeHandleState.enabled
+      Spring.SetConfigInt("LabTracker_ResizeEnabled", resizeHandleState.enabled and 1 or 0)
+      if resizeHandleState.enabled and not manualWidth then
+        -- First time enabling: start from the current auto-fit width
+        -- so the panel doesn't jump size the instant it's turned on.
+        manualWidth = cachedLayout.autoWidth
+      end
+      return true
+    end
+
     local teamID = hitTeamRow(mx, my)
     if not teamID then return false end
 
@@ -1892,6 +1934,19 @@ function widget:MousePress(mx,my,button)
     return true
   end
 
+  -- Only draggable once right-click has enabled it; while disabled
+  -- (red) a left click here just falls through to hitHeader below,
+  -- i.e. it drags the whole panel like normal.
+  if resizeHandleState.enabled then
+    local rzr = uiRects.resizeHandle
+    if mx>=rzr.x1 and mx<=rzr.x2 and my>=rzr.y1 and my<=rzr.y2 then
+      resizeDragState.active = true
+      resizeDragState.startX = mx
+      resizeDragState.startWidth = currentTotalWidth
+      return true
+    end
+  end
+
   if hitHeader(mx,my) then
     dragState.active = true
     dragState.startX = mx
@@ -1944,9 +1999,56 @@ function widget:MouseRelease(mx, my, button)
     Spring.SetConfigInt("LabTracker_Y", chartY)
     return true
   end
+
+  if button == 1 and resizeDragState.active then
+    resizeDragState.active = false
+    Spring.SetConfigInt("LabTracker_Width", math.floor(manualWidth or 0))
+    return true
+  end
 end
 
+-- Filter cycle order for each tracker mode's view-mode row, shared by
+-- the Tab-to-cycle KeyPress handler below and (via index lookup) the
+-- config persistence it needs to match the click handlers' numbering.
+local viewModeCycleOrder = {"minimal", "eco", "defense", "offense", "all"}
+local unitViewModeCycleOrder = {"tech1", "tech2", "tech3", "all"}
+
 function widget:KeyPress(key, mods, isRepeat)
+  -- Tab cycles the active filter row (Minimal/Eco/Defense/Offense/All,
+  -- or Tech1/Tech2/Tech3/All in Unit Tracker) while the mouse is
+  -- anywhere over the panel. Consumes Tab whenever hovering so the
+  -- game's own Tab binding doesn't also fire, but only advances the
+  -- filter on the initial press -- held-down auto-repeat would
+  -- otherwise spam through every filter in under a second.
+  if key == 9 and not minimized then
+    local mx, my = Spring.GetMouseState()
+    local overPanel = mx >= leaderboardState.panelRect.x1 and mx <= leaderboardState.panelRect.x2
+                  and my >= leaderboardState.panelRect.y1 and my <= leaderboardState.panelRect.y2
+    if overPanel then
+      if not isRepeat then
+        if trackerMode == "unit" then
+          local idx = 1
+          for i, k in ipairs(unitViewModeCycleOrder) do
+            if k == activeUnitViewMode then idx = i; break end
+          end
+          idx = (idx % #unitViewModeCycleOrder) + 1
+          activeUnitViewMode = unitViewModeCycleOrder[idx]
+          Spring.SetConfigInt("LabTracker_UnitViewMode", idx)
+        else
+          local idx = 1
+          for i, k in ipairs(viewModeCycleOrder) do
+            if k == activeViewMode then idx = i; break end
+          end
+          idx = (idx % #viewModeCycleOrder) + 1
+          activeViewMode = viewModeCycleOrder[idx]
+          Spring.SetConfigInt("LabTracker_ViewMode", idx)
+        end
+        rebuildLayout()
+      end
+      return true
+    end
+  end
+
   if isRepeat then return false end
   if key == string.byte(" ") then
     if hoverState.icon then
@@ -2043,18 +2145,68 @@ function widget:KeyPress(key, mods, isRepeat)
 end
 
 function widget:MouseWheel(up, value)
-  if not leaderboardState.scrollActive then return false end
   local mx, my = Spring.GetMouseState()
-  if mx < leaderboardState.panelRect.x1 or mx > leaderboardState.panelRect.x2 or my < leaderboardState.panelRect.y1 or my > leaderboardState.panelRect.y2 then
-    return false
+  local overPanel = mx >= leaderboardState.panelRect.x1 and mx <= leaderboardState.panelRect.x2
+                and my >= leaderboardState.panelRect.y1 and my <= leaderboardState.panelRect.y2
+  if not overPanel then return false end
+
+  -- Once the cursor is over the panel at all, the wheel belongs to the
+  -- widget -- always consumed (return true) below, even on the turns
+  -- where none of the widget's own scroll behaviors actually apply, so
+  -- it never leaks through to the game's camera zoom. Only outside the
+  -- panel does the wheel reach the game.
+
+  -- Icon overflow (resize handle enabled + at least one row shrunk
+  -- narrower than its icons need) takes priority over the vertical
+  -- Leaderboard scroll when both happen to be active at once.
+  -- Free-spin: step scales with the wheel's own delta instead of a
+  -- flat notch, so a fast spin covers a lot more ground than a slow
+  -- nudge. Guarded with math.max(1, ...) rather than "value or 1" --
+  -- in Lua, 0 is truthy, so if this engine ever reports value=0 for a
+  -- normal notch scroll, "value or 1" would silently evaluate to 0
+  -- and the step would be zero every time ("the wheel does nothing").
+  if hScrollState.enabled then
+    local magnitude = math.max(1, math.abs(value or 1))
+    local step = 40 * magnitude
+    local delta = up and -step or step
+    local _, ctrl = Spring.GetModKeyState()
+
+    if ctrl then
+      -- Sync-scroll: nudge every overflowing row together, each still
+      -- clamped to its own max so a row with fewer icons never gets
+      -- pushed past what it actually has to show.
+      local movedAny = false
+      for tID, maxOff in pairs(hScrollState.maxOffsetByTeam) do
+        if maxOff > 0.5 then
+          movedAny = true
+          local cur = hScrollState.offsetByTeam[tID] or 0
+          hScrollState.offsetByTeam[tID] = math.max(0, math.min(maxOff, cur + delta))
+        end
+      end
+      if movedAny then return true end
+    else
+      -- Default: only the row currently under the mouse scrolls.
+      local hoverTeamID = hoverState.teamID
+      local maxOff = hoverTeamID and hScrollState.maxOffsetByTeam[hoverTeamID]
+      if hoverTeamID and maxOff and maxOff > 0.5 then
+        local cur = hScrollState.offsetByTeam[hoverTeamID] or 0
+        hScrollState.offsetByTeam[hoverTeamID] = math.max(0, math.min(maxOff, cur + delta))
+        return true
+      end
+    end
   end
 
-  local step = 40
-  if up then
-    leaderboardState.scrollOffset = math.max(0, leaderboardState.scrollOffset - step)
-  else
-    leaderboardState.scrollOffset = math.min(leaderboardState.scrollMaxOffset, leaderboardState.scrollOffset + step)
+  if leaderboardState.scrollActive then
+    local step = 40
+    if up then
+      leaderboardState.scrollOffset = math.max(0, leaderboardState.scrollOffset - step)
+    else
+      leaderboardState.scrollOffset = math.min(leaderboardState.scrollMaxOffset, leaderboardState.scrollOffset + step)
+    end
   end
+
+  -- Still over the panel even though nothing above needed to move --
+  -- consume it anyway so the game doesn't zoom.
   return true
 end
 
@@ -2110,6 +2262,24 @@ end
 -- DRAW
 ------------------------------------------------------------
 
+-- Effective panel width for this frame. While the resize handle is
+-- disabled (red, the default) this always equals the auto-fit width --
+-- identical to the widget's old, non-resizable behavior. Once enabled
+-- (white), a manually dragged width takes over, clamped so the panel
+-- can never shrink past the name column/header buttons or grow past
+-- the screen edge.
+local function getEffectiveTotalWidth(panelX)
+  if not resizeHandleState.enabled then
+    return cachedLayout.autoWidth
+  end
+  local w = manualWidth or cachedLayout.autoWidth
+  local minW = cachedLayout.minWidth
+  local vsx = select(1, Spring.GetViewGeometry())
+  local maxW = (vsx and (vsx - panelX - 20)) or math.huge
+  maxW = math.max(maxW, minW)
+  return math.max(minW, math.min(w, maxW))
+end
+
 function widget:DrawScreen()
   gl.Blending(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA)
 
@@ -2119,6 +2289,13 @@ function widget:DrawScreen()
   if dragState.active then
     chartX = dragState.offsetX + (mx - dragState.startX)
     chartY = dragState.offsetY + (my - dragState.startY)
+  elseif resizeDragState.active then
+    local newWidth = resizeDragState.startWidth + (mx - resizeDragState.startX)
+    local minW = cachedLayout.minWidth
+    local vsx = select(1, Spring.GetViewGeometry())
+    local maxW = (vsx and (vsx - chartX - 20)) or math.huge
+    maxW = math.max(maxW, minW)
+    manualWidth = math.max(minW, math.min(newWidth, maxW))
   else
     hoverState.teamID = hitTeamRow(mx, my)
     hoverState.icon   = hitIcon(mx, my)
@@ -2134,6 +2311,7 @@ function widget:DrawScreen()
     hoverState.expandToggle = ptIn(uiRects.expandToggle)
     hoverState.swapToggle = ptIn(uiRects.swapToggle)
     hoverState.titleToggle = ptIn(uiRects.title)
+    hoverState.resizeHandle = ptIn(uiRects.resizeHandle)
     hoverState.sizeOption = nil
     if sizeMenu.open then
       for _, r in ipairs(sizeMenu.optionRects) do
@@ -2205,10 +2383,21 @@ function widget:DrawScreen()
 
   local maxIcons = cachedLayout.maxIcons
   local headerFontSize = cachedLayout.headerFontSize
-  local totalWidth = cachedLayout.totalWidth
+  local totalWidth = getEffectiveTotalWidth(chartX)
+  currentTotalWidth = totalWidth
 
   local x = chartX
   local y = chartY
+
+  -- Icons only overflow their column (and become horizontally
+  -- scrollable) once the resize handle is enabled and dragged narrower
+  -- than a row needs. Each row's own maxOffsetByTeam entry is computed
+  -- while that row is drawn further down (it depends on that row's own
+  -- icon count and whether it has a Commander to freeze); this just
+  -- resets the per-frame table and flips the master switch MouseWheel
+  -- checks before bothering to look at any row.
+  hScrollState.enabled = resizeHandleState.enabled
+  hScrollState.maxOffsetByTeam = {}
 
   local contentHeight = 0
   for _, item in ipairs(layoutItems) do
@@ -2349,6 +2538,46 @@ function widget:DrawScreen()
 
     gl.Color(1, 1, 1, 0.9)
     gl.Text(toggleLabel, tx1 + togglePad, tcy - toggleFontSize * 0.3, toggleFontSize, "o")
+  end
+
+  -- Manual-resize handle. Red = disabled (auto-fit, default behavior);
+  -- right-click flips it to white = enabled, which is what allows the
+  -- left-click drag in MousePress/DrawScreen above to take effect.
+  do
+    local rzLabel = "<>"
+    local rzFontSize = 15
+    local rzPad = 6
+    local rzTW = gl.GetTextWidth(rzLabel) * rzFontSize
+    local rzPillW = rzTW + rzPad * 2
+    local rzPillH = rzFontSize + rzPad * 2
+
+    local rzx2 = uiRects.header.x2 - padding
+    local rzx1 = rzx2 - rzPillW
+    local rzy1 = uiRects.header.y1 + 4
+    local rzy2 = rzy1 + rzPillH
+    local rzcy = (rzy1 + rzy2) / 2
+
+    uiRects.resizeHandle.x1, uiRects.resizeHandle.y1, uiRects.resizeHandle.x2, uiRects.resizeHandle.y2 =
+      rzx1, rzy1, rzx2, rzy2
+
+    local rzR, rzG, rzB = 1, 0.3, 0.3
+    if resizeHandleState.enabled then rzR, rzG, rzB = 1, 1, 1 end
+
+    if resizeDragState.active then
+      gl.Color(1, 0.85, 0.2, 0.9)
+      gl.Rect(rzx1, rzy1, rzx2, rzy2)
+      gl.Color(0, 0, 0, 1)
+    elseif hoverState.resizeHandle then
+      gl.Color(rzR, rzG, rzB, 0.3)
+      gl.Rect(rzx1, rzy1, rzx2, rzy2)
+      gl.Color(rzR, rzG, rzB, 1)
+    else
+      gl.Color(1, 1, 1, 0.12)
+      gl.Rect(rzx1, rzy1, rzx2, rzy2)
+      gl.Color(rzR, rzG, rzB, 0.9)
+    end
+    gl.Text(rzLabel, (rzx1 + rzx2) / 2, rzcy - rzFontSize * 0.35, rzFontSize, "oc")
+    gl.Color(1, 1, 1, 1)
   end
 
   do
@@ -2582,93 +2811,100 @@ function widget:DrawScreen()
       end
     end
 
-    local colIndex = 0
-    for _, iconData in ipairs(item.icons) do
+    -- Draws one icon at a fixed screen position, plus its overlay
+    -- badges/count/tier-label/click-hitbox. Shared by the frozen
+    -- Commander slot and the scrollable icons below so that drawing
+    -- logic isn't duplicated between the two.
+    local function drawOneIcon(iconData, ix, iy, hitboxClipX1, hitboxClipX2)
       local defName = iconData.defName
       local labName = iconData.labName
       local ud = UnitDefNames[defName]
-      if ud then
+      if not ud then return end
+
+      gl.Color(1,1,1,1)
+      gl.Texture("#"..ud.id)
+      gl.TexRect(ix, iy, ix+iconSize, iy+iconSize)
+      gl.Texture(false)
+
+      if iconData.overlayDefNames then
+        local miniSize = iconSize * 0.4
+        local miniGap = 2
+        for i, odn in ipairs(iconData.overlayDefNames) do
+          local oud = UnitDefNames[odn]
+          if oud then
+            local mx1 = ix
+            local mx2 = ix + miniSize
+            local my2 = iy + iconSize - (i - 1) * (miniSize + miniGap)
+            local my1 = my2 - miniSize
+
+            gl.Color(0,0,0,0.9)
+            gl.Rect(mx1 - 1, my1 - 1, mx2 + 1, my2 + 1)
+
+            gl.Color(1,1,1,1)
+            gl.Texture("#"..oud.id)
+            gl.TexRect(mx1, my1, mx2, my2)
+            gl.Texture(false)
+          end
+        end
+      end
+
+      local isFollowed = false
+      if followState.unitID and teamLabPositions[teamID] and teamLabPositions[teamID][labName] then
+        for _, entry in ipairs(teamLabPositions[teamID][labName]) do
+          if entry.unitID == followState.unitID then
+            isFollowed = true
+            break
+          end
+        end
+      end
+      if isFollowed then
+        gl.Color(0.3,1,0.3,0.9)
+        local bw = 2
+        gl.Rect(ix, iy, ix+iconSize, iy+bw)
+        gl.Rect(ix, iy+iconSize-bw, ix+iconSize, iy+iconSize)
+        gl.Rect(ix, iy, ix+bw, iy+iconSize)
+        gl.Rect(ix+iconSize-bw, iy, ix+iconSize, iy+iconSize)
+      end
+
+      gl.Color(1,0.2,0.2,1)
+      gl.Text(
+        tostring(iconData.count),
+        ix + iconSize - 2,
+        iy + iconSize - 18,
+        24,
+        "ro"
+      )
+
+      local tierLabel = iconData.tierLabel
+      if tierLabel then
+        local tierSize = badgeFontSizeBySize[iconSize] or (iconSize * 0.225)
+        local padX, padY = 3.6, 2.4
+        local tw = gl.GetTextWidth(tierLabel) * tierSize
+        local th = tierSize * 1.1
+
+        local bx1, by1 = ix, iy
+        local bx2, by2 = ix + tw + padX * 2, iy + th + padY * 2
+
+        gl.Color(0,0,0,0.55)
+        gl.Rect(bx1, by1, bx2, by2)
+
         gl.Color(1,1,1,1)
-
-        local ix = x + padding + nameColW + iconSize * colIndex
-        local iy = rowY - (rowH - iconSize)/2 - iconSize
-
-        gl.Texture("#"..ud.id)
-        gl.TexRect(ix, iy, ix+iconSize, iy+iconSize)
-        gl.Texture(false)
-
-        if iconData.overlayDefNames then
-          local miniSize = iconSize * 0.4
-          local miniGap = 2
-          for i, odn in ipairs(iconData.overlayDefNames) do
-            local oud = UnitDefNames[odn]
-            if oud then
-              local mx1 = ix
-              local mx2 = ix + miniSize
-              local my2 = iy + iconSize - (i - 1) * (miniSize + miniGap)
-              local my1 = my2 - miniSize
-
-              gl.Color(0,0,0,0.9)
-              gl.Rect(mx1 - 1, my1 - 1, mx2 + 1, my2 + 1)
-
-              gl.Color(1,1,1,1)
-              gl.Texture("#"..oud.id)
-              gl.TexRect(mx1, my1, mx2, my2)
-              gl.Texture(false)
-            end
-          end
-        end
-
-        local isFollowed = false
-        if followState.unitID and teamLabPositions[teamID] and teamLabPositions[teamID][labName] then
-          for _, entry in ipairs(teamLabPositions[teamID][labName]) do
-            if entry.unitID == followState.unitID then
-              isFollowed = true
-              break
-            end
-          end
-        end
-        if isFollowed then
-          gl.Color(0.3,1,0.3,0.9)
-          local bw = 2
-          gl.Rect(ix, iy, ix+iconSize, iy+bw)
-          gl.Rect(ix, iy+iconSize-bw, ix+iconSize, iy+iconSize)
-          gl.Rect(ix, iy, ix+bw, iy+iconSize)
-          gl.Rect(ix+iconSize-bw, iy, ix+iconSize, iy+iconSize)
-        end
-
-        gl.Color(1,0.2,0.2,1)
         gl.Text(
-          tostring(iconData.count),
-          ix + iconSize - 2,
-          iy + iconSize - 18,
-          24,
-          "ro"
+          tierLabel,
+          bx1 + padX,
+          by1 + padY,
+          tierSize,
+          ""
         )
+      end
 
-        local tierLabel = iconData.tierLabel
-        if tierLabel then
-          local tierSize = badgeFontSizeBySize[iconSize] or (iconSize * 0.225)
-          local padX, padY = 3.6, 2.4
-          local tw = gl.GetTextWidth(tierLabel) * tierSize
-          local th = tierSize * 1.1
-
-          local bx1, by1 = ix, iy
-          local bx2, by2 = ix + tw + padX * 2, iy + th + padY * 2
-
-          gl.Color(0,0,0,0.55)
-          gl.Rect(bx1, by1, bx2, by2)
-
-          gl.Color(1,1,1,1)
-          gl.Text(
-            tierLabel,
-            bx1 + padX,
-            by1 + padY,
-            tierSize,
-            ""
-          )
-        end
-
+      -- Skip the click hitbox for icons scrolled out of the visible
+      -- column -- otherwise a scrolled-left icon sitting (invisibly)
+      -- under the name column could steal clicks meant for the row
+      -- itself. Frozen icons (hitboxClipX1 == nil) are always clickable.
+      local hitboxVisible = (not hitboxClipX1)
+        or (ix + iconSize > hitboxClipX1 and ix < hitboxClipX2)
+      if hitboxVisible then
         iconRects[#iconRects+1] = {
           x1=ix, y1=iy, x2=ix+iconSize, y2=iy+iconSize,
           defName=defName,
@@ -2676,9 +2912,107 @@ function widget:DrawScreen()
           labName=labName,
           displayLabel=iconData.displayLabel,
         }
-
-        colIndex = colIndex + 1
       end
+    end
+
+    -- Commander is always icons[1] when present (both Base and Unit
+    -- Tracker sort it first), so it's frozen in place like Excel's
+    -- frozen first column: drawn at a fixed slot, never shifted by the
+    -- scroll offset and never scrolled off-screen, while every other
+    -- icon in the row scrolls in the space to its right.
+    local hasCommander = item.icons[1] and item.icons[1].labName == "Commander"
+    local frozenW = hasCommander and iconSize or 0
+    local iy = rowY - (rowH - iconSize)/2 - iconSize
+
+    if hasCommander then
+      local cix = x + padding + nameColW
+      drawOneIcon(item.icons[1], cix, iy, nil, nil)
+    end
+
+    local scrollStartIdx = hasCommander and 2 or 1
+    local scrollableCount = #item.icons - scrollStartIdx + 1
+
+    local scrollAreaX1 = x + padding + nameColW + frozenW
+    local scrollAreaWidth = math.max(0, totalWidth - nameColW - padding * 2 - frozenW)
+    local rowContentWidth = math.max(0, scrollableCount) * iconSize
+    local rowMaxOffset = math.max(0, rowContentWidth - scrollAreaWidth)
+    local rowActive = hScrollState.enabled and (rowMaxOffset > 0.5)
+
+    local rowOffset = hScrollState.offsetByTeam[teamID] or 0
+    rowOffset = rowActive and math.max(0, math.min(rowOffset, rowMaxOffset)) or 0
+    hScrollState.offsetByTeam[teamID] = rowOffset
+    hScrollState.maxOffsetByTeam[teamID] = rowMaxOffset
+
+    local iconClipActive = false
+    local clipX1, clipX2 = scrollAreaX1, scrollAreaX1 + scrollAreaWidth
+    if rowActive then
+      local clipY1, clipY2 = rowY - rowH, rowY
+      if leaderboardState.scrollActive then
+        clipY1 = math.max(clipY1, y - drawHeight + padding)
+        clipY2 = math.min(clipY2, y - drawHeight + padding + viewportHeight)
+      end
+      if clipY2 > clipY1 then
+        gl.Scissor(true)
+        gl.Scissor(clipX1, clipY1, clipX2 - clipX1, clipY2 - clipY1)
+        iconClipActive = true
+      end
+    end
+
+    for i = scrollStartIdx, #item.icons do
+      local iconData = item.icons[i]
+      local scrollIdx = i - scrollStartIdx
+      local ix = scrollAreaX1 + iconSize * scrollIdx - rowOffset
+      drawOneIcon(iconData, ix, iy, rowActive and clipX1 or nil, rowActive and clipX2 or nil)
+    end
+
+    if iconClipActive then
+      if leaderboardState.scrollActive then
+        gl.Scissor(x, y - drawHeight + padding, totalWidth, viewportHeight)
+      else
+        gl.Scissor(false)
+      end
+    end
+
+    -- Small per-row scroll arrows, only for a row that's actually
+    -- overflowing right now -- shows which direction(s) still have
+    -- more icons hidden.
+    if rowActive then
+      local rArrowW, rArrowH = 14, 9
+      local rShadow = 1
+      local rCy = rowY - rowH / 2
+
+      if rowOffset > 0 then
+        local lx = clipX1 + 3
+        gl.Color(0,0,0,0.6)
+        gl.BeginEnd(GL.TRIANGLES, function()
+          gl.Vertex(lx + rArrowH + rShadow, rCy - rArrowW/2 + rShadow)
+          gl.Vertex(lx + rArrowH + rShadow, rCy + rArrowW/2 + rShadow)
+          gl.Vertex(lx + rShadow, rCy + rShadow)
+        end)
+        gl.Color(1,1,1,1)
+        gl.BeginEnd(GL.TRIANGLES, function()
+          gl.Vertex(lx + rArrowH, rCy - rArrowW/2)
+          gl.Vertex(lx + rArrowH, rCy + rArrowW/2)
+          gl.Vertex(lx, rCy)
+        end)
+      end
+
+      if rowOffset < rowMaxOffset then
+        local rx = clipX2 - 3
+        gl.Color(0,0,0,0.6)
+        gl.BeginEnd(GL.TRIANGLES, function()
+          gl.Vertex(rx - rArrowH + rShadow, rCy - rArrowW/2 + rShadow)
+          gl.Vertex(rx - rArrowH + rShadow, rCy + rArrowW/2 + rShadow)
+          gl.Vertex(rx + rShadow, rCy + rShadow)
+        end)
+        gl.Color(1,1,1,1)
+        gl.BeginEnd(GL.TRIANGLES, function()
+          gl.Vertex(rx - rArrowH, rCy - rArrowW/2)
+          gl.Vertex(rx - rArrowH, rCy + rArrowW/2)
+          gl.Vertex(rx, rCy)
+        end)
+      end
+      gl.Color(1,1,1,1)
     end
 
     rowY = rowY - rowH
@@ -2734,6 +3068,10 @@ function widget:DrawScreen()
     end
   end
 
+  -- (Horizontal scroll indicators are now drawn per-row, right where
+  -- each team's icons are, since scrolling is per-row -- see
+  -- drawOneIcon/rowActive above in the team-row branch of the loop.)
+
   gl.Color(1,1,1,1)
 
   if hoverState.icon then
@@ -2748,7 +3086,7 @@ function widget:DrawScreen()
       local tw = gl.GetTextWidth(tooltipText) * tooltipFontSize
       local th = tooltipFontSize * 1.2
 
-      local tx = mouseX + 16
+      local tx = mouseX + 32
       local ty = mouseY - (th + padY * 2) - 10
 
       gl.Color(0,0,0,0.85)
@@ -2756,6 +3094,35 @@ function widget:DrawScreen()
 
       gl.Color(1,1,1,1)
       gl.Text(tooltipText, tx + padX, ty + padY, tooltipFontSize, "")
+    end
+
+  elseif hoverState.resizeHandle then
+    local lines = {
+      "Right-click: toggle resize (red = disabled, white = enabled)",
+      "Left-drag while enabled: resize panel width",
+      "Mousewheel: scroll overflowing icons (hovered row; Ctrl = all rows)",
+    }
+    local tooltipFontSize = 14
+    local padX, padY = 6, 4
+    local lineGap = 3
+
+    local tw = 0
+    for _, line in ipairs(lines) do
+      tw = math.max(tw, gl.GetTextWidth(line) * tooltipFontSize)
+    end
+    local lineH = tooltipFontSize * 1.2
+    local th = lineH * #lines + lineGap * (#lines - 1)
+
+    local tx = mouseX + 32
+    local ty = mouseY - (th + padY * 2) - 10
+
+    gl.Color(0,0,0,0.85)
+    gl.Rect(tx, ty, tx + tw + padX * 2, ty + th + padY * 2)
+
+    gl.Color(1,1,1,1)
+    for i, line in ipairs(lines) do
+      local lineY = ty + padY + (#lines - i) * (lineH + lineGap)
+      gl.Text(line, tx + padX, lineY, tooltipFontSize, "")
     end
   end
 
