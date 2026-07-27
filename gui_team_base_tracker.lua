@@ -1530,13 +1530,24 @@ function rebuildLayout()
       for _, iconData in ipairs(sortableIcons) do icons[#icons+1] = iconData end
     end
 
-    local badgeReserve = 0
-    if t.teamID == cachedTopTeamID then badgeReserve = badgeReserve + 44 end
+    -- Both badges together (trophy + pin, same player) shrink when
+    -- drawn (see BOTH_BADGES_SCALE in the badge-drawing block below --
+    -- keep this in sync with that constant), so their combined width
+    -- is scaled the same way here. isPinned() isn't in scope yet this
+    -- early in the file (defined after rebuildLayout), so check
+    -- pinnedTeamIDs directly instead of calling it.
+    local teamIsPinned = false
     for _, pid in ipairs(pinnedTeamIDs) do
-      if pid == t.teamID then
-        badgeReserve = badgeReserve + 44
-        break
-      end
+      if pid == t.teamID then teamIsPinned = true; break end
+    end
+    local isTopTeam = (t.teamID == cachedTopTeamID)
+    local badgeReserve
+    if isTopTeam and teamIsPinned then
+      badgeReserve = 44 * 2 * 0.7 -- BOTH_BADGES_SCALE
+    elseif isTopTeam or teamIsPinned then
+      badgeReserve = 44
+    else
+      badgeReserve = 0
     end
 
     rawItems[#rawItems+1] = {
@@ -2834,23 +2845,38 @@ function widget:DrawScreen()
     gl.Text("Base Center", x + padding, nameY - subFontSize * 1.6, subFontSize, "o")
 
     do
-      local badgeFontSize = 28
-      local badgeY = rowY - 26
+      -- Trophy + pin together on the same player gets crowded, so
+      -- both shrink whenever that player has both badges at once --
+      -- full size otherwise. Forced via an explicit gl.Scale transform
+      -- rather than just passing a smaller size to gl.Text -- these
+      -- are color emoji glyphs, which some font backends render from
+      -- fixed-size bitmap strikes that don't reliably respect the
+      -- requested text size, unlike plain ASCII text elsewhere in this
+      -- widget. The matrix scale guarantees a real visual shrink no
+      -- matter how the glyph itself is sourced.
+      local isTop = (teamID == cachedTopTeamID)
+      local isPin = isPinned(teamID)
+      local bothBadges = isTop and isPin
+      local baseFontSize = 28
+      local BOTH_BADGES_SCALE = 0.7 -- tweak this to resize just the crowded case
+      local scale = bothBadges and BOTH_BADGES_SCALE or 1
+      local badgeY = rowY - (26 - (1 - scale) * 12)
+      local badgeGap = 6 - (1 - scale) * 6
       local badgeRightEdge = x + padding + nameColW - 4
       gl.Color(1, 0.85, 0.2, 1)
 
-      if teamID == cachedTopTeamID then
-        local label = "🏆"
-        local w = gl.GetTextWidth(label) * badgeFontSize
-        gl.Text(label, badgeRightEdge - w, badgeY, badgeFontSize, "o")
-        badgeRightEdge = badgeRightEdge - w - 6
+      local function drawBadge(label)
+        local w = gl.GetTextWidth(label) * baseFontSize * scale
+        gl.PushMatrix()
+        gl.Translate(badgeRightEdge - w, badgeY, 0)
+        gl.Scale(scale, scale, 1)
+        gl.Text(label, 0, 0, baseFontSize, "o")
+        gl.PopMatrix()
+        badgeRightEdge = badgeRightEdge - w - badgeGap
       end
 
-      if isPinned(teamID) then
-        local label = "📌"
-        local w = gl.GetTextWidth(label) * badgeFontSize
-        gl.Text(label, badgeRightEdge - w, badgeY, badgeFontSize, "o")
-      end
+      if isTop then drawBadge("🏆") end
+      if isPin then drawBadge("📌") end
     end
 
     -- Draws one icon at a fixed screen position, plus its overlay
