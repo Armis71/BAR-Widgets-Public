@@ -2119,14 +2119,20 @@ function widget:MouseWheel(up, value)
 
   -- Icon overflow (resize handle enabled + at least one row shrunk
   -- narrower than its icons need) takes priority over the vertical
-  -- Leaderboard scroll when both happen to be active at once.
+  -- Leaderboard scroll when both happen to be active at once -- but
+  -- only while the cursor is actually over an icon. Hovering the name
+  -- column / "Base Center" label on the left of a row is deliberately
+  -- excluded (hoverState.icon is nil there) so the wheel falls through
+  -- to the vertical Leaderboard scroll below instead -- name-column
+  -- click-to-jump-to-base-center is untouched, this only changes what
+  -- the wheel does.
   -- Free-spin: step scales with the wheel's own delta instead of a
   -- flat notch, so a fast spin covers a lot more ground than a slow
   -- nudge. Guarded with math.max(1, ...) rather than "value or 1" --
   -- in Lua, 0 is truthy, so if this engine ever reports value=0 for a
   -- normal notch scroll, "value or 1" would silently evaluate to 0
   -- and the step would be zero every time ("the wheel does nothing").
-  if hScrollState.enabled then
+  if hScrollState.enabled and hoverState.icon then
     local magnitude = math.max(1, math.abs(value or 1))
     local step = 40 * magnitude
     local delta = up and -step or step
@@ -2146,8 +2152,8 @@ function widget:MouseWheel(up, value)
       end
       if movedAny then return true end
     else
-      -- Default: only the row currently under the mouse scrolls.
-      local hoverTeamID = hoverState.teamID
+      -- Default: only the row whose icon is under the mouse scrolls.
+      local hoverTeamID = hoverState.icon.teamID
       local maxOff = hoverTeamID and hScrollState.maxOffsetByTeam[hoverTeamID]
       if hoverTeamID and maxOff and maxOff > 0.5 then
         local cur = hScrollState.offsetByTeam[hoverTeamID] or 0
@@ -3086,8 +3092,9 @@ function widget:DrawScreen()
     end
 
   elseif hoverState.resizeHandle then
-    -- Same two-column layout as the "?" help tooltip: fixed x-offset
-    -- columns (not space-padded) since the font is proportional.
+    -- Same two-column layout as the "?" help tooltip, now with a
+    -- matching title line above the rows.
+    local titleLine = "Resize Handle:"
     local rows = {
       {"Right-click:",            "toggle resize (red = disabled, white = enabled)"},
       {"Left-drag while enabled:", "resize panel width"},
@@ -3095,8 +3102,10 @@ function widget:DrawScreen()
     }
 
     local tooltipFontSize = 14
+    local titleFontSize = 15
     local padX, padY = 8, 6
     local lineGap = 4
+    local titleGap = 8
     local colGap = 20
 
     local labelColW, descColW = 0, 0
@@ -3104,10 +3113,13 @@ function widget:DrawScreen()
       labelColW = math.max(labelColW, gl.GetTextWidth(row[1]) * tooltipFontSize)
       descColW  = math.max(descColW,  gl.GetTextWidth(row[2]) * tooltipFontSize)
     end
-    local tw = labelColW + colGap + descColW
+    local bodyWidth  = labelColW + colGap + descColW
+    local titleWidth = gl.GetTextWidth(titleLine) * titleFontSize
+    local tw = math.max(bodyWidth, titleWidth)
 
-    local lineH = tooltipFontSize * 1.2
-    local th = lineH * #rows + lineGap * (#rows - 1)
+    local titleLineH = titleFontSize * 1.2
+    local rowLineH   = tooltipFontSize * 1.2
+    local th = titleLineH + titleGap + rowLineH * #rows + lineGap * (#rows - 1)
 
     local tx = mouseX + 32
     local ty = mouseY - (th + padY * 2) - 10
@@ -3115,12 +3127,18 @@ function widget:DrawScreen()
     gl.Color(0,0,0,0.85)
     gl.Rect(tx, ty, tx + tw + padX * 2, ty + th + padY * 2)
 
+    local cursorY = ty + padY + th - titleLineH
+
+    gl.Color(1, 0.85, 0.2, 1)
+    gl.Text(titleLine, tx + padX, cursorY, titleFontSize, "")
+    cursorY = cursorY - titleGap
+
     gl.Color(1,1,1,1)
-    local cursorY = ty + padY + th - lineH
     for _, row in ipairs(rows) do
+      cursorY = cursorY - rowLineH
       gl.Text(row[1], tx + padX, cursorY, tooltipFontSize, "")
       gl.Text(row[2], tx + padX + labelColW + colGap, cursorY, tooltipFontSize, "")
-      cursorY = cursorY - lineH - lineGap
+      cursorY = cursorY - lineGap
     end
 
   elseif hoverState.helpToggle then
