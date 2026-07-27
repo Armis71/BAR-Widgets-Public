@@ -2009,53 +2009,7 @@ function widget:MouseRelease(mx, my, button)
   end
 end
 
--- Filter cycle order for each tracker mode's view-mode row, shared by
--- the Tab-to-cycle KeyPress handler below and (via index lookup) the
--- config persistence it needs to match the click handlers' numbering.
-local viewModeCycleOrder = {"minimal", "eco", "defense", "offense", "all"}
-local unitViewModeCycleOrder = {"tech1", "tech2", "tech3", "all"}
-
 function widget:KeyPress(key, mods, isRepeat)
-  -- Tab cycles the active filter row (Minimal/Eco/Defense/Offense/All,
-  -- or Tech1/Tech2/Tech3/All in Unit Tracker) whenever the mouse is
-  -- hovering the panel -- mirroring how MouseWheel below takes over
-  -- scrolling only while hovering, and hands control back the instant
-  -- it isn't. Lua widgets get first crack at keyboard input, before
-  -- any of the engine's own built-in hotkeys (e.g. Tab's default
-  -- spectator "jump to next player" binding), so returning true here
-  -- fully suppresses that default while hovering; Tab still behaves
-  -- normally the moment the mouse isn't over the panel. Only advances
-  -- the filter on the initial press -- held-down auto-repeat would
-  -- otherwise spam through every filter in under a second.
-  if key == 9 and not minimized then
-    local mx, my = Spring.GetMouseState()
-    local overPanel = mx >= leaderboardState.panelRect.x1 and mx <= leaderboardState.panelRect.x2
-                  and my >= leaderboardState.panelRect.y1 and my <= leaderboardState.panelRect.y2
-    if overPanel then
-      if not isRepeat then
-        if trackerMode == "unit" then
-          local idx = 1
-          for i, k in ipairs(unitViewModeCycleOrder) do
-            if k == activeUnitViewMode then idx = i; break end
-          end
-          idx = (idx % #unitViewModeCycleOrder) + 1
-          activeUnitViewMode = unitViewModeCycleOrder[idx]
-          Spring.SetConfigInt("LabTracker_UnitViewMode", idx)
-        else
-          local idx = 1
-          for i, k in ipairs(viewModeCycleOrder) do
-            if k == activeViewMode then idx = i; break end
-          end
-          idx = (idx % #viewModeCycleOrder) + 1
-          activeViewMode = viewModeCycleOrder[idx]
-          Spring.SetConfigInt("LabTracker_ViewMode", idx)
-        end
-        rebuildLayout()
-      end
-      return true
-    end
-  end
-
   if isRepeat then return false end
   if key == string.byte(" ") then
     if hoverState.icon then
@@ -3170,10 +3124,6 @@ function widget:DrawScreen()
     end
 
   elseif hoverState.helpToggle then
-    local filterCycleText = (trackerMode == "unit")
-      and "Tech 1 > Tech 2 > Tech 3 > All"
-      or  "Minimal > Eco > Defense > Offense > All"
-
     -- Two-column layout: left column is the action, right column is
     -- what it does. Columns are two separate gl.Text calls at fixed
     -- x-offsets (not padded with spaces) since the font is
@@ -3183,7 +3133,6 @@ function widget:DrawScreen()
       {"Click or Spacebar on an icon:",        "cycle & zoom/follow that unit"},
       {"Click or Spacebar on a player row:",   "jump to their base center"},
       {"Double right-click a player row:",     "pin/unpin (up to 3)"},
-      {"Tab (while hovering the panel):",      "cycle filters -- " .. filterCycleText},
       {"Click a stat column (M/s, E/s, ...):", "sort teams by that stat"},
       {"Click the title:",                     "switch Base Tracker / Unit Tracker"},
       {"<> enabled + mousewheel:",              "scroll overflowing icon rows (Ctrl = all rows)"},
