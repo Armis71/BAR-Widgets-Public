@@ -460,6 +460,17 @@ local function isCategoryVisibleInView(category, viewMode)
   return false
 end
 
+-- Same "Commander + core Labs (+ Experimental Aircraft Plant)" set as
+-- above, reused to decide which icons stay pinned on the left of a
+-- row, unsorted, instead of being ordered by metal cost (see the
+-- icon-reordering pass in rebuildLayout).
+local function isPinnedLeftCategory(category)
+  local tier = techTierOrder[category]
+  if tier and tier <= 4 then return true end
+  if category == "Experimental Aircraft Plant" then return true end
+  return false
+end
+
 -- Unit Tracker's equivalent filter: tier comes directly from the
 -- unit's own techlevel (1/2/3+), no curated category list needed.
 local function isUnitVisibleInView(tier, unitViewMode)
@@ -1481,6 +1492,42 @@ function rebuildLayout()
           end
         end
       end
+    end
+
+    -- Commander + core Labs (Experimental Aircraft Plant included)
+    -- stay pinned on the left in the tier order they were just built
+    -- in; everything else -- other structures in Base Tracker, every
+    -- mobile unit in Unit Tracker -- gets reordered by that item's own
+    -- per-unit metal cost, most expensive first. This is per-unit
+    -- cost, not (cost * count) -- a stack of 5 cheap Grunts never
+    -- outranks a single pricier Aggravator. Ties fall back to name for
+    -- a stable, predictable order.
+    do
+      local pinnedIcons, sortableIcons = {}, {}
+      for _, iconData in ipairs(icons) do
+        if isPinnedLeftCategory(iconData.labName) then
+          pinnedIcons[#pinnedIcons+1] = iconData
+        else
+          -- UnitDefNames[name] returns the UnitDef table directly, not
+          -- a numeric ID -- indexing UnitDefs with it again (like the
+          -- rest of the file's `UnitDefs[UnitDefNames[x]]` pattern
+          -- does for isBuilder elsewhere) silently returns nil, which
+          -- is why every cost came back 0 during testing.
+          local ud = UnitDefNames[iconData.defName]
+          iconData.metalCost = (ud and ud.metalCost) or 0
+          sortableIcons[#sortableIcons+1] = iconData
+        end
+      end
+      table.sort(sortableIcons, function(a, b2)
+        if a.metalCost ~= b2.metalCost then
+          return a.metalCost > b2.metalCost
+        end
+        return (a.displayLabel or a.labName) < (b2.displayLabel or b2.labName)
+      end)
+
+      icons = {}
+      for _, iconData in ipairs(pinnedIcons) do icons[#icons+1] = iconData end
+      for _, iconData in ipairs(sortableIcons) do icons[#icons+1] = iconData end
     end
 
     local badgeReserve = 0
