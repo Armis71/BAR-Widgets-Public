@@ -692,6 +692,7 @@ local uiRects = {
   swapToggle = {x1=0,y1=0,x2=0,y2=0},
   title = {x1=0,y1=0,x2=0,y2=0},
   resizeHandle = {x1=0,y1=0,x2=0,y2=0},
+  helpToggle = {x1=0,y1=0,x2=0,y2=0},
 }
 local cachedLayout = { items = {}, maxIcons = 0, totalWidth = 0, autoWidth = 0, minWidth = 0, iconContentWidth = 0, headerFontSize = 0, statLeaders = {} }
 
@@ -1571,8 +1572,9 @@ function rebuildLayout()
   local toggleButtonWidth = gl.GetTextWidth("Icon") * toggleFontSize + togglePad * 2
   local lbButtonWidth = gl.GetTextWidth("Leaderboard") * 13 + 6 * 2 + 10
   local szButtonWidth = gl.GetTextWidth("Size") * 13 + 6 * 2 + 10
+  local qButtonWidth = gl.GetTextWidth("?") * 13 + 6 * 2 + 10
   local headerTextWidth = gl.GetTextWidth(trackerTitle()) * cachedLayout.headerFontSize + padding * 2
-                         + toggleButtonWidth + lbButtonWidth + szButtonWidth + padding * 2
+                         + toggleButtonWidth + lbButtonWidth + szButtonWidth + qButtonWidth + padding * 2
 
   -- "auto" is the natural width: wide enough for the name column plus
   -- every icon in the widest row (or the header/buttons if that's
@@ -2015,10 +2017,15 @@ local unitViewModeCycleOrder = {"tech1", "tech2", "tech3", "all"}
 
 function widget:KeyPress(key, mods, isRepeat)
   -- Tab cycles the active filter row (Minimal/Eco/Defense/Offense/All,
-  -- or Tech1/Tech2/Tech3/All in Unit Tracker) while the mouse is
-  -- anywhere over the panel. Consumes Tab whenever hovering so the
-  -- game's own Tab binding doesn't also fire, but only advances the
-  -- filter on the initial press -- held-down auto-repeat would
+  -- or Tech1/Tech2/Tech3/All in Unit Tracker) whenever the mouse is
+  -- hovering the panel -- mirroring how MouseWheel below takes over
+  -- scrolling only while hovering, and hands control back the instant
+  -- it isn't. Lua widgets get first crack at keyboard input, before
+  -- any of the engine's own built-in hotkeys (e.g. Tab's default
+  -- spectator "jump to next player" binding), so returning true here
+  -- fully suppresses that default while hovering; Tab still behaves
+  -- normally the moment the mouse isn't over the panel. Only advances
+  -- the filter on the initial press -- held-down auto-repeat would
   -- otherwise spam through every filter in under a second.
   if key == 9 and not minimized then
     local mx, my = Spring.GetMouseState()
@@ -2312,6 +2319,7 @@ function widget:DrawScreen()
     hoverState.swapToggle = ptIn(uiRects.swapToggle)
     hoverState.titleToggle = ptIn(uiRects.title)
     hoverState.resizeHandle = ptIn(uiRects.resizeHandle)
+    hoverState.helpToggle = ptIn(uiRects.helpToggle)
     hoverState.sizeOption = nil
     if sizeMenu.open then
       for _, r in ipairs(sizeMenu.optionRects) do
@@ -2530,6 +2538,33 @@ function widget:DrawScreen()
         end
         gl.Text(szLabel, (szx1 + szx2) / 2, szcy - szFontSize * 0.3, szFontSize, "oc")
         gl.Color(1, 1, 1, 1)
+
+        -- Help ("?") pill -- same pill styling as Size/Leaderboard/Icon
+        -- (plain hover-only tooltip, no click/toggle behavior of its
+        -- own), sitting directly to their left.
+        do
+          local qLabel = "?"
+          local qFontSize = 13
+          local qPad = 6
+          local qTW = gl.GetTextWidth(qLabel) * qFontSize
+          local qPillW = qTW + qPad * 2
+          local qPillH = szPillH
+
+          local qGap = 10
+          local qx2 = szx1 - qGap
+          local qx1 = qx2 - qPillW
+          local qcy = szcy
+          local qy1 = qcy - qPillH / 2
+          local qy2 = qcy + qPillH / 2
+
+          uiRects.helpToggle.x1, uiRects.helpToggle.y1, uiRects.helpToggle.x2, uiRects.helpToggle.y2 = qx1, qy1, qx2, qy2
+
+          gl.Color(1, 1, 1, 0.15)
+          gl.Rect(qx1, qy1, qx2, qy2)
+          gl.Color(1, 1, 1, 0.9)
+          gl.Text(qLabel, (qx1 + qx2) / 2, qcy - qFontSize * 0.3, qFontSize, "oc")
+          gl.Color(1, 1, 1, 1)
+        end
       end
     end
 
@@ -3123,6 +3158,69 @@ function widget:DrawScreen()
     for i, line in ipairs(lines) do
       local lineY = ty + padY + (#lines - i) * (lineH + lineGap)
       gl.Text(line, tx + padX, lineY, tooltipFontSize, "")
+    end
+
+  elseif hoverState.helpToggle then
+    local filterCycleText = (trackerMode == "unit")
+      and "Tech 1 > Tech 2 > Tech 3 > All"
+      or  "Minimal > Eco > Defense > Offense > All"
+
+    -- Two-column layout: left column is the action, right column is
+    -- what it does. Columns are two separate gl.Text calls at fixed
+    -- x-offsets (not padded with spaces) since the font is
+    -- proportional -- padding with spaces wouldn't actually line up.
+    local titleLine = trackerTitle() .. " Controls:"
+    local rows = {
+      {"Click or Spacebar on an icon:",        "cycle & zoom/follow that unit"},
+      {"Click or Spacebar on a player row:",   "jump to their base center"},
+      {"Double right-click a player row:",     "pin/unpin (up to 3)"},
+      {"Tab (while hovering the panel):",      "cycle filters -- " .. filterCycleText},
+      {"Click a stat column (M/s, E/s, ...):", "sort teams by that stat"},
+      {"Click the title:",                     "switch Base Tracker / Unit Tracker"},
+      {"<> enabled + mousewheel:",              "scroll overflowing icon rows (Ctrl = all rows)"},
+    }
+
+    local tooltipFontSize = 14
+    local titleFontSize = 15
+    local padX, padY = 8, 6
+    local lineGap = 4
+    local titleGap = 8
+    local colGap = 20
+
+    local labelColW, descColW = 0, 0
+    for _, row in ipairs(rows) do
+      labelColW = math.max(labelColW, gl.GetTextWidth(row[1]) * tooltipFontSize)
+      descColW  = math.max(descColW,  gl.GetTextWidth(row[2]) * tooltipFontSize)
+    end
+    local bodyWidth  = labelColW + colGap + descColW
+    local titleWidth = gl.GetTextWidth(titleLine) * titleFontSize
+    local tw = math.max(bodyWidth, titleWidth)
+
+    local titleLineH = titleFontSize * 1.2
+    local rowLineH   = tooltipFontSize * 1.2
+    local th = titleLineH + titleGap + rowLineH * #rows + lineGap * (#rows - 1)
+
+    local tx = mouseX + 32
+    local ty = mouseY - (th + padY * 2) - 10
+
+    gl.Color(0,0,0,0.85)
+    gl.Rect(tx, ty, tx + tw + padX * 2, ty + th + padY * 2)
+
+    -- Walk top-down: cursorY tracks each line's text baseline, starting
+    -- just under the box's top inner edge and stepping downward by
+    -- each line's own height as it's drawn.
+    local cursorY = ty + padY + th - titleLineH
+
+    gl.Color(1, 0.85, 0.2, 1)
+    gl.Text(titleLine, tx + padX, cursorY, titleFontSize, "")
+    cursorY = cursorY - titleGap
+
+    gl.Color(1,1,1,1)
+    for _, row in ipairs(rows) do
+      cursorY = cursorY - rowLineH
+      gl.Text(row[1], tx + padX, cursorY, tooltipFontSize, "")
+      gl.Text(row[2], tx + padX + labelColW + colGap, cursorY, tooltipFontSize, "")
+      cursorY = cursorY - lineGap
     end
   end
 
