@@ -3132,21 +3132,28 @@ function widget:DrawScreen()
     end
 
   elseif hoverState.resizeHandle then
-    local lines = {
-      "Right-click: toggle resize (red = disabled, white = enabled)",
-      "Left-drag while enabled: resize panel width",
-      "Mousewheel: scroll overflowing icons (hovered row; Ctrl = all rows)",
+    -- Same two-column layout as the "?" help tooltip: fixed x-offset
+    -- columns (not space-padded) since the font is proportional.
+    local rows = {
+      {"Right-click:",            "toggle resize (red = disabled, white = enabled)"},
+      {"Left-drag while enabled:", "resize panel width"},
+      {"Mousewheel:",              "scroll overflowing icons (hovered row; Ctrl = all rows)"},
     }
-    local tooltipFontSize = 14
-    local padX, padY = 6, 4
-    local lineGap = 3
 
-    local tw = 0
-    for _, line in ipairs(lines) do
-      tw = math.max(tw, gl.GetTextWidth(line) * tooltipFontSize)
+    local tooltipFontSize = 14
+    local padX, padY = 8, 6
+    local lineGap = 4
+    local colGap = 20
+
+    local labelColW, descColW = 0, 0
+    for _, row in ipairs(rows) do
+      labelColW = math.max(labelColW, gl.GetTextWidth(row[1]) * tooltipFontSize)
+      descColW  = math.max(descColW,  gl.GetTextWidth(row[2]) * tooltipFontSize)
     end
+    local tw = labelColW + colGap + descColW
+
     local lineH = tooltipFontSize * 1.2
-    local th = lineH * #lines + lineGap * (#lines - 1)
+    local th = lineH * #rows + lineGap * (#rows - 1)
 
     local tx = mouseX + 32
     local ty = mouseY - (th + padY * 2) - 10
@@ -3155,9 +3162,11 @@ function widget:DrawScreen()
     gl.Rect(tx, ty, tx + tw + padX * 2, ty + th + padY * 2)
 
     gl.Color(1,1,1,1)
-    for i, line in ipairs(lines) do
-      local lineY = ty + padY + (#lines - i) * (lineH + lineGap)
-      gl.Text(line, tx + padX, lineY, tooltipFontSize, "")
+    local cursorY = ty + padY + th - lineH
+    for _, row in ipairs(rows) do
+      gl.Text(row[1], tx + padX, cursorY, tooltipFontSize, "")
+      gl.Text(row[2], tx + padX + labelColW + colGap, cursorY, tooltipFontSize, "")
+      cursorY = cursorY - lineH - lineGap
     end
 
   elseif hoverState.helpToggle then
