@@ -336,7 +336,7 @@ local statDescriptions = {
   eps = "E/s - energy income per sec",
   mp  = "MP - total metal produced",
   ep  = "EP - total energy produced",
-  av  = "AV - Army value in metal + Com",
+  av  = "AV - Army value in metal + Com (default trophy stat when unsorted)",
   dv  = "DV - Defense value in metal",
   dd  = "DD - Damage dealt to enemies",
   up  = "UP - Units produced",
@@ -705,7 +705,7 @@ local uiRects = {
   resizeHandle = {x1=0,y1=0,x2=0,y2=0},
   helpToggle = {x1=0,y1=0,x2=0,y2=0},
 }
-local cachedLayout = { items = {}, maxIcons = 0, totalWidth = 0, autoWidth = 0, minWidth = 0, iconContentWidth = 0, headerFontSize = 0, statLeaders = {} }
+local cachedLayout = { items = {}, maxIcons = 0, totalWidth = 0, autoWidth = 0, minWidth = 0, iconContentWidth = 0, headerFontSize = 0, statLeaders = {}, myOwnedUnitTiers = {} }
 
 -- Manual width resize (the "<>" handle in the header). Disabled (red) by
 -- default: the panel keeps auto-fitting to however many icons a row
@@ -737,6 +737,11 @@ local iconCycleIndex = {}
 local unitKillCount = {}
 local mouseX, mouseY = 0, 0
 local flashMarker = nil
+-- Set to the game frame a commander died on (any team, any cause --
+-- explosion, self-destruct, whatever) so DrawScreen can pulse the
+-- whole panel border for a moment, same effect as Commander Kill
+-- Tracker's widgetFlashFrame.
+local commanderDeathFlashFrame = nil
 
 
 local minimized = false
@@ -1318,6 +1323,32 @@ function rebuildLayout()
     cachedTopTeamID = (bestVal and bestVal > 0) and bestTeamID or nil
   end
 
+  -- Unit Tracker's Tech1/2/3 filter row: for whichever tiers are
+  -- currently hidden by the active filter, flag whether the LOCAL
+  -- player's own team already owns a unit of that tier -- drawn as a
+  -- small yellow "new tier" triangle on that tier's button so it's
+  -- obvious you just unlocked something you can't currently see,
+  -- without having to click through every filter to check. Only
+  -- meaningful in Unit Tracker mode, since that's the only mode
+  -- teamLabPositions gets populated with per-unit tier data (see
+  -- recountLabs) and the only mode this filter row exists in.
+  do
+    cachedLayout.myOwnedUnitTiers = {}
+    if trackerMode == "unit" then
+      local myTeamID = Spring.GetMyTeamID()
+      local myPositions = myTeamID and teamLabPositions[myTeamID]
+      if myPositions then
+        for catName, posList in pairs(myPositions) do
+          if catName ~= "Commander" and posList and posList[1] and posList[1].tier then
+            local tier = posList[1].tier
+            local tierKey = (tier <= 1 and "tech1") or (tier == 2 and "tech2") or "tech3"
+            cachedLayout.myOwnedUnitTiers[tierKey] = true
+          end
+        end
+      end
+    end
+  end
+
   do
     -- Fairness: while actively playing a live game, this widget must
     -- never expose which team/ally is ahead on a stat other than your
@@ -1825,6 +1856,15 @@ end
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerDefID, attackerTeam, weaponDefID)
   if attackerID and attackerID ~= unitID then
     unitKillCount[attackerID] = (unitKillCount[attackerID] or 0) + 1
+  end
+
+  -- Any commander dying, any team, any cause, immediately pulses the
+  -- panel border -- see commanderDeathFlashFrame and its draw block
+  -- in DrawScreen. Fires here (frame-accurate) rather than waiting on
+  -- the ~5s recountLabs poll, exactly how Commander Kill Tracker's own
+  -- widgetFlashFrame is set from its UnitDestroyed callin.
+  if isCommanderDef[unitDefID] then
+    commanderDeathFlashFrame = Spring.GetGameFrame()
   end
 end
 
@@ -2459,6 +2499,24 @@ function widget:DrawScreen()
   gl.Rect(x, y - drawHeight, x + totalWidth, y + padding)
   leaderboardState.panelRect.x1, leaderboardState.panelRect.y1, leaderboardState.panelRect.x2, leaderboardState.panelRect.y2 = x, y - drawHeight, x + totalWidth, y + padding
 
+  -- Commander death flash -- identical effect (same color, same
+  -- 45-frame/7-pulse sine curve) to Commander Kill Tracker's own
+  -- panel-border flash, just triggered by our own UnitDestroyed check
+  -- instead of a recorded kill.
+  if commanderDeathFlashFrame then
+    local age = Spring.GetGameFrame() - commanderDeathFlashFrame
+    if age < 45 then
+      local t = age / 45
+      local pulse = math.abs(math.sin(t * math.pi * 7))
+      local r = leaderboardState.panelRect
+      gl.Color(1, 1, 0.4, pulse * 0.55)
+      gl.Rect(r.x1 - 4, r.y1 - 4, r.x2 + 4, r.y2 + 4)
+      gl.Color(1, 1, 1, 1)
+    else
+      commanderDeathFlashFrame = nil
+    end
+  end
+
   local headerHeight = rowH
   uiRects.header.x1 = x
   uiRects.header.y1 = y - headerHeight
@@ -2725,6 +2783,24 @@ function widget:DrawScreen()
       else
         gl.Color(1, 1, 1, 0.85)
       end
+
+      -- "You already have units in this tier but the filter is
+      -- hiding them" flag -- a small yellow corner triangle, same
+      -- yellow as the active-filter highlight, bottom-left of any
+      -- tier button that isn't the active one.
+      if col.key ~= vmActive and vmActive ~= "all" and cachedLayout.myOwnedUnitTiers[col.key] then
+        local triSize = 10
+        gl.Color(1, 0.85, 0.2, 1)
+        gl.BeginEnd(GL.TRIANGLES, function()
+          gl.Vertex(cx1, vmBottom)
+          gl.Vertex(cx1, vmBottom + triSize)
+          gl.Vertex(cx1 + triSize, vmBottom)
+        end)
+        -- Restore the (always non-active, per the check above) label
+        -- color the following gl.Text call expects.
+        gl.Color(1, 1, 1, 0.85)
+      end
+
       gl.Text(col.label, ccx, vmCy - vmFontSize * 0.3, vmFontSize, "oc")
     end
 
