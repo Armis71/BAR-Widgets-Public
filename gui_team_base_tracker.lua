@@ -2499,17 +2499,20 @@ function widget:DrawScreen()
   gl.Rect(x, y - drawHeight, x + totalWidth, y + padding)
   leaderboardState.panelRect.x1, leaderboardState.panelRect.y1, leaderboardState.panelRect.x2, leaderboardState.panelRect.y2 = x, y - drawHeight, x + totalWidth, y + padding
 
-  -- Commander death flash -- identical effect (same color, same
-  -- 45-frame/7-pulse sine curve) to Commander Kill Tracker's own
-  -- panel-border flash, just triggered by our own UnitDestroyed check
-  -- instead of a recorded kill.
+  -- Commander death flash -- same effect/timing (45-frame, 7-pulse
+  -- sine curve) as Commander Kill Tracker's own panel-border flash,
+  -- just triggered by our own UnitDestroyed check instead of a
+  -- recorded kill, and recolored to a fiery flame instead of pale
+  -- yellow: red stays pegged, green/blue ride the pulse so it flickers
+  -- between a dark ember red (pulse near 0) and a hot orange (pulse
+  -- near 1) instead of just fading a single flat color in and out.
   if commanderDeathFlashFrame then
     local age = Spring.GetGameFrame() - commanderDeathFlashFrame
     if age < 45 then
       local t = age / 45
       local pulse = math.abs(math.sin(t * math.pi * 7))
       local r = leaderboardState.panelRect
-      gl.Color(1, 1, 0.4, pulse * 0.55)
+      gl.Color(1, 0.15 + pulse * 0.45, pulse * 0.12, pulse * 0.6)
       gl.Rect(r.x1 - 4, r.y1 - 4, r.x2 + 4, r.y2 + 4)
       gl.Color(1, 1, 1, 1)
     else
