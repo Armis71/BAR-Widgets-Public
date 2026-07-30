@@ -28,6 +28,16 @@ local nameFontSize       = 16
 local badgeFontSizeBySize = { [96] = 21.6, [88] = 19.8, [80] = 18.0, [72] = 16.2, [64] = 14.4, [56] = 12.6, [48] = 10.8, [40] = 9.0 }
 local backgroundOpacity  = 0.8    -- panel background opacity: 0 = fully transparent, 1 = fully opaque
 
+-- The header packs two stacked pill rows on the right (Icon/Leaderboard
+-- /Size/? on top, F7/<> below) plus the title on the left. Their
+-- combined height doesn't shrink with iconSize the way rowH does, so
+-- below iconSize 56 the header (= rowH) became too short to fit both
+-- rows without them overlapping -- this floor keeps them clear of each
+-- other and of the Size dropdown (which opens just under the header)
+-- no matter how small iconSize gets. 66 matches iconSize 56's own rowH
+-- (66), the smallest size that was already fitting fine on its own.
+local minHeaderHeight = 66
+
 ------------------------------------------------------------
 -- HUMAN‑READABLE LAB NAMES
 ------------------------------------------------------------
@@ -442,15 +452,22 @@ local techTierOrder = {
   ["Rampart"]                           = 54,
 }
 
--- Commander + core Labs (tiers 0-4) are always shown regardless of
--- view mode; Eco/Defense/Offense each add their own extra categories
--- on top of that core set. "All" removes the filter entirely.
+-- Commander always shows, in every mode. Labs (tiers 1-4, plus
+-- Experimental Aircraft Plant) are shown in Minimal and All, but are
+-- intentionally excluded from Eco/Defense/Offense per request - those
+-- modes only show their own curated extra categories.
 local function isCategoryVisibleInView(category, viewMode)
   if viewMode == "all" then return true end
+
   local tier = techTierOrder[category]
-  if tier and tier <= 4 then return true end
-  if category == "Experimental Aircraft Plant" then return true end
-  if viewMode == "minimal" then return false end
+  if tier == 0 then return true end   -- Commander
+
+  if viewMode == "minimal" then
+    if tier and tier <= 4 then return true end
+    if category == "Experimental Aircraft Plant" then return true end
+    return false
+  end
+
   local extras = viewModeExtraCategories[viewMode]
   if extras then
     for _, c in ipairs(extras) do
@@ -704,18 +721,26 @@ local uiRects = {
   title = {x1=0,y1=0,x2=0,y2=0},
   resizeHandle = {x1=0,y1=0,x2=0,y2=0},
   helpToggle = {x1=0,y1=0,x2=0,y2=0},
+  hideUiToggle = {x1=0,y1=0,x2=0,y2=0},
 }
 local cachedLayout = { items = {}, maxIcons = 0, totalWidth = 0, autoWidth = 0, minWidth = 0, iconContentWidth = 0, headerFontSize = 0, statLeaders = {}, myOwnedUnitTiers = {} }
 
 -- Manual width resize (the "<>" handle in the header). Disabled (red) by
 -- default: the panel keeps auto-fitting to however many icons a row
--- needs, exactly like before this feature existed. Right-clicking the
--- handle enables it (white); only then can it be left-click dragged to
--- expand/compress the panel. If that makes a row's icons wider than the
--- panel, the icon columns clip and become horizontally scrollable via
--- the mouse wheel instead of spilling out or overlapping.
+-- needs, exactly like before this feature existed. A plain left click
+-- on the handle enables it (white); once enabled, left-click DRAGGING
+-- it expands/compresses the panel instead of toggling it back off
+-- (see the click-vs-drag distance check in MousePress/MouseRelease).
+-- If that makes a row's icons wider than the panel, the icon columns
+-- clip and become horizontally scrollable via the mouse wheel instead
+-- of spilling out or overlapping.
 local resizeHandleState = { enabled = false }
 local resizeDragState = { active = false, startX = 0, startWidth = 0 }
+-- Set on MousePress while over "<>", cleared on MouseRelease. Lets
+-- MouseRelease tell a plain click (toggle red/white) apart from an
+-- actual drag (resize) using the same distance-moved check the
+-- minimized-icon click/drag distinction already uses.
+local resizeHandlePress = nil
 local manualWidth = nil
 local currentTotalWidth = 0
 -- Horizontal icon scroll is per-team (like per-row scrolling in a
@@ -737,12 +762,20 @@ local iconCycleIndex = {}
 local unitKillCount = {}
 local mouseX, mouseY = 0, 0
 local flashMarker = nil
--- Set to the game frame a commander died on (any team, any cause --
--- explosion, self-destruct, whatever) so DrawScreen can pulse the
--- whole panel border for a moment, same effect as Commander Kill
--- Tracker's widgetFlashFrame.
-local commanderDeathFlashFrame = nil
+-- Keyed by teamID -> game frame that team's commander died on (any
+-- cause -- explosion, self-destruct, whatever). DrawScreen uses this to
+-- pulse just that team's row for a moment (same flash math as Commander
+-- Kill Tracker's widgetFlashFrame), then lets a fiery glow dissipate off
+-- that row over several seconds afterward.
+local commanderDeathByTeam = {}
+local COMMANDER_FLASH_FRAMES = 45   -- initial pulse, same timing as before
+local COMMANDER_GLOW_FRAMES = 450   -- ~15s at 30fps dissipating glow after the flash
 
+-- Whether the panel keeps drawing itself (via DrawScreenEffects) while
+-- BAR's Show/Hide UI toggle (F7 / Ctrl+F7) is active. Toggled by the
+-- "F7" pill next to the "<>" resize handle in the header; persisted
+-- like the rest of this widget's settings.
+local stayVisibleWhenUIHidden = true
 
 local minimized = false
 local leaderboardState = {
@@ -1665,6 +1698,18 @@ function rebuildLayout()
   local headerTextWidth = gl.GetTextWidth(trackerTitle()) * cachedLayout.headerFontSize + padding * 2
                          + toggleButtonWidth + lbButtonWidth + szButtonWidth + qButtonWidth + padding * 2
 
+  -- The "F7" / "<>" pills (second header row, right-aligned) and the
+  -- Size dropdown (8 fixed-width options, opens centered under the
+  -- Size button) don't scale down with iconSize the way the rest of
+  -- the panel does -- at small icon sizes the panel could otherwise
+  -- end up narrower than either of these actually need, which is what
+  -- caused them to spill into each other and into the stat row.
+  -- Reserving both here keeps minWidth wide enough regardless of
+  -- iconSize.
+  local hideUiRowWidth = (gl.GetTextWidth("F7") * 15 + 6 * 2) + 6 + (gl.GetTextWidth("<>") * 15 + 6 * 2) + padding * 2
+  local sizeMenuOptW, sizeMenuOptGap = 44, 6
+  local sizeMenuWidth = (sizeMenuOptW + sizeMenuOptGap) * #sizeMenu.options - sizeMenuOptGap + padding * 2
+
   -- "auto" is the natural width: wide enough for the name column plus
   -- every icon in the widest row (or the header/buttons if that's
   -- wider). "min" is the hard floor a manual resize can't go below --
@@ -1672,7 +1717,7 @@ function rebuildLayout()
   -- clipped, even when the resize handle is dragged all the way in.
   cachedLayout.iconContentWidth = cachedLayout.maxIcons * iconSize
   local autoContentWidth = nameColW + cachedLayout.iconContentWidth + padding * 2
-  cachedLayout.minWidth = math.max(nameColW + padding * 2, headerTextWidth)
+  cachedLayout.minWidth = math.max(nameColW + padding * 2, headerTextWidth, hideUiRowWidth, sizeMenuWidth)
   cachedLayout.autoWidth = math.max(autoContentWidth, cachedLayout.minWidth)
   cachedLayout.totalWidth = cachedLayout.autoWidth
 end
@@ -1829,6 +1874,7 @@ function widget:Initialize()
   statSortKey = (savedStatSortIdx > 0 and statColumns[savedStatSortIdx] and statColumns[savedStatSortIdx].key) or nil
   leaderboardState.mode = Spring.GetConfigInt("LabTracker_Leaderboard", 0) == 1
   resizeHandleState.enabled = Spring.GetConfigInt("LabTracker_ResizeEnabled", 0) == 1
+  stayVisibleWhenUIHidden = Spring.GetConfigInt("LabTracker_StayVisibleHiddenUI", 1) == 1
   local savedManualWidth = Spring.GetConfigInt("LabTracker_Width", 0)
   manualWidth = (savedManualWidth > 0) and savedManualWidth or nil
   local savedIconSize = Spring.GetConfigInt("LabTracker_IconSize", iconSize)
@@ -1858,13 +1904,13 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerD
     unitKillCount[attackerID] = (unitKillCount[attackerID] or 0) + 1
   end
 
-  -- Any commander dying, any team, any cause, immediately pulses the
-  -- panel border -- see commanderDeathFlashFrame and its draw block
-  -- in DrawScreen. Fires here (frame-accurate) rather than waiting on
-  -- the ~5s recountLabs poll, exactly how Commander Kill Tracker's own
+  -- A commander dying, any cause, immediately pulses that team's row --
+  -- see commanderDeathByTeam and its draw block in the team-row loop.
+  -- Fires here (frame-accurate) rather than waiting on the ~5s
+  -- recountLabs poll, exactly how Commander Kill Tracker's own
   -- widgetFlashFrame is set from its UnitDestroyed callin.
   if isCommanderDef[unitDefID] then
-    commanderDeathFlashFrame = Spring.GetGameFrame()
+    commanderDeathByTeam[unitTeam] = Spring.GetGameFrame()
   end
 end
 
@@ -1878,18 +1924,6 @@ function widget:MousePress(mx,my,button)
   if button ~= 1 and button ~= 3 then return false end
 
   if button == 3 then
-    local rzr = uiRects.resizeHandle
-    if mx>=rzr.x1 and mx<=rzr.x2 and my>=rzr.y1 and my<=rzr.y2 then
-      resizeHandleState.enabled = not resizeHandleState.enabled
-      Spring.SetConfigInt("LabTracker_ResizeEnabled", resizeHandleState.enabled and 1 or 0)
-      if resizeHandleState.enabled and not manualWidth then
-        -- First time enabling: start from the current auto-fit width
-        -- so the panel doesn't jump size the instant it's turned on.
-        manualWidth = cachedLayout.autoWidth
-      end
-      return true
-    end
-
     local teamID = hitTeamRow(mx, my)
     if not teamID then return false end
 
@@ -1960,6 +1994,13 @@ function widget:MousePress(mx,my,button)
   if mx>=tr.x1 and mx<=tr.x2 and my>=tr.y1 and my<=tr.y2 then
     minimized = true
     Spring.SetConfigInt("LabTracker_Minimized", 1)
+    return true
+  end
+
+  local hur = uiRects.hideUiToggle
+  if mx>=hur.x1 and mx<=hur.x2 and my>=hur.y1 and my<=hur.y2 then
+    stayVisibleWhenUIHidden = not stayVisibleWhenUIHidden
+    Spring.SetConfigInt("LabTracker_StayVisibleHiddenUI", stayVisibleWhenUIHidden and 1 or 0)
     return true
   end
 
@@ -2034,15 +2075,21 @@ function widget:MousePress(mx,my,button)
     return true
   end
 
-  -- Only draggable once right-click has enabled it; while disabled
-  -- (red) a left click here just falls through to hitHeader below,
-  -- i.e. it drags the whole panel like normal.
-  if resizeHandleState.enabled then
+  -- Left click on "<>" does double duty, same click-vs-drag
+  -- distinction as the minimized-icon press below: a plain click
+  -- (released within 5px of where it was pressed) toggles red/white;
+  -- an actual drag (while already white) resizes instead, without
+  -- also toggling it back off on release. See MouseRelease for the
+  -- distance check and where the toggle actually happens.
+  do
     local rzr = uiRects.resizeHandle
     if mx>=rzr.x1 and mx<=rzr.x2 and my>=rzr.y1 and my<=rzr.y2 then
-      resizeDragState.active = true
-      resizeDragState.startX = mx
-      resizeDragState.startWidth = currentTotalWidth
+      resizeHandlePress = { startX = mx, startY = my }
+      if resizeHandleState.enabled then
+        resizeDragState.active = true
+        resizeDragState.startX = mx
+        resizeDragState.startWidth = currentTotalWidth
+      end
       return true
     end
   end
@@ -2100,9 +2147,26 @@ function widget:MouseRelease(mx, my, button)
     return true
   end
 
-  if button == 1 and resizeDragState.active then
-    resizeDragState.active = false
-    Spring.SetConfigInt("LabTracker_Width", math.floor(manualWidth or 0))
+  if button == 1 and resizeHandlePress then
+    local movedDist = math.sqrt((mx-resizeHandlePress.startX)^2 + (my-resizeHandlePress.startY)^2)
+    resizeHandlePress = nil
+
+    if resizeDragState.active then
+      resizeDragState.active = false
+      Spring.SetConfigInt("LabTracker_Width", math.floor(manualWidth or 0))
+    end
+
+    -- Barely moved -- treat it as a click, not a drag, and toggle
+    -- red/white instead.
+    if movedDist < 5 then
+      resizeHandleState.enabled = not resizeHandleState.enabled
+      Spring.SetConfigInt("LabTracker_ResizeEnabled", resizeHandleState.enabled and 1 or 0)
+      if resizeHandleState.enabled and not manualWidth then
+        -- First time enabling: start from the current auto-fit width
+        -- so the panel doesn't jump size the instant it's turned on.
+        manualWidth = cachedLayout.autoWidth
+      end
+    end
     return true
   end
 end
@@ -2345,7 +2409,48 @@ local function getEffectiveTotalWidth(panelX)
   return math.max(minW, math.min(w, maxW))
 end
 
-function widget:DrawScreen()
+-- Draws the commander-death effect for a single team's row, given that
+-- row's rect (rowRects[teamID]) and the game frame its commander died
+-- on. Two phases:
+--   1) Flash (first COMMANDER_FLASH_FRAMES): the original fiery pulse --
+--      same 7-flicker sine curve as Commander Kill Tracker's own
+--      panel-border flash, just scoped to this row's rect instead of
+--      the whole panel.
+--   2) Glow (the following COMMANDER_GLOW_FRAMES, ~15s at 30fps): a
+--      steadier ember glow that eases out to nothing, with a slow
+--      flicker so it doesn't look like a flat fade.
+-- Returns true while still active, false once fully expired so the
+-- caller knows to clear commanderDeathByTeam[teamID].
+local function drawCommanderDeathEffect(r, deathFrame)
+  local age = Spring.GetGameFrame() - deathFrame
+  local totalFrames = COMMANDER_FLASH_FRAMES + COMMANDER_GLOW_FRAMES
+  if age >= totalFrames then
+    return false
+  end
+
+  if age < COMMANDER_FLASH_FRAMES then
+    local t = age / COMMANDER_FLASH_FRAMES
+    local pulse = math.abs(math.sin(t * math.pi * 7))
+    gl.Color(1, 0.15 + pulse * 0.45, pulse * 0.12, pulse * 0.6)
+    gl.Rect(r.x1 - 4, r.y1 - 4, r.x2 + 4, r.y2 + 4)
+  else
+    local glowT = (age - COMMANDER_FLASH_FRAMES) / COMMANDER_GLOW_FRAMES
+    local fade = (1 - glowT)
+    fade = fade * fade -- ease out, dissipates faster near the end
+    local flicker = 0.85 + 0.15 * math.abs(math.sin(age * 0.25))
+    gl.Color(1, 0.2 + fade * 0.25, 0.05, fade * flicker * 0.4)
+    gl.Rect(r.x1 - 3, r.y1 - 3, r.x2 + 3, r.y2 + 3)
+  end
+  gl.Color(1, 1, 1, 1)
+  return true
+end
+
+-- Renamed from `function widget:DrawScreen()` to a plain local so both
+-- the normal DrawScreen callin and the DrawScreenEffects fallback
+-- further below (used to survive BAR's Show/Hide UI toggle) can share
+-- this one body instead of duplicating it. Doesn't reference `self`
+-- anywhere, so dropping the `widget:` method form changes nothing.
+local function doDrawScreen()
   gl.Blending(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA)
 
   local mx, my = Spring.GetMouseState()
@@ -2378,6 +2483,7 @@ function widget:DrawScreen()
     hoverState.titleToggle = ptIn(uiRects.title)
     hoverState.resizeHandle = ptIn(uiRects.resizeHandle)
     hoverState.helpToggle = ptIn(uiRects.helpToggle)
+    hoverState.hideUiToggle = ptIn(uiRects.hideUiToggle)
     hoverState.sizeOption = nil
     if sizeMenu.open then
       for _, r in ipairs(sizeMenu.optionRects) do
@@ -2472,9 +2578,14 @@ function widget:DrawScreen()
     elseif item.itype ~= "team" then h = dividerRowH end
     contentHeight = contentHeight + h
   end
-  local height = rowH + statsRowH + viewModeRowH + contentHeight + padding * 2
+  -- Header's own vertical space is floored at minHeaderHeight (see its
+  -- definition up top), not raw rowH, so this must match whatever
+  -- headerHeight actually draws as further down or the header and the
+  -- first content row would disagree about where the header ends.
+  local headerRowSpace = math.max(rowH, minHeaderHeight)
+  local height = headerRowSpace + statsRowH + viewModeRowH + contentHeight + padding * 2
 
-  local fixedHeaderHeight = rowH + statsRowH + viewModeRowH
+  local fixedHeaderHeight = headerRowSpace + statsRowH + viewModeRowH
   local viewportHeightUnclamped = contentHeight
   -- Same scroll mechanism as before, now triggered by overflow in
   -- ANY mode (Leaderboard or normal grouped/expanded), not just
@@ -2499,28 +2610,7 @@ function widget:DrawScreen()
   gl.Rect(x, y - drawHeight, x + totalWidth, y + padding)
   leaderboardState.panelRect.x1, leaderboardState.panelRect.y1, leaderboardState.panelRect.x2, leaderboardState.panelRect.y2 = x, y - drawHeight, x + totalWidth, y + padding
 
-  -- Commander death flash -- same effect/timing (45-frame, 7-pulse
-  -- sine curve) as Commander Kill Tracker's own panel-border flash,
-  -- just triggered by our own UnitDestroyed check instead of a
-  -- recorded kill, and recolored to a fiery flame instead of pale
-  -- yellow: red stays pegged, green/blue ride the pulse so it flickers
-  -- between a dark ember red (pulse near 0) and a hot orange (pulse
-  -- near 1) instead of just fading a single flat color in and out.
-  if commanderDeathFlashFrame then
-    local age = Spring.GetGameFrame() - commanderDeathFlashFrame
-    if age < 45 then
-      local t = age / 45
-      local pulse = math.abs(math.sin(t * math.pi * 7))
-      local r = leaderboardState.panelRect
-      gl.Color(1, 0.15 + pulse * 0.45, pulse * 0.12, pulse * 0.6)
-      gl.Rect(r.x1 - 4, r.y1 - 4, r.x2 + 4, r.y2 + 4)
-      gl.Color(1, 1, 1, 1)
-    else
-      commanderDeathFlashFrame = nil
-    end
-  end
-
-  local headerHeight = rowH
+  local headerHeight = math.max(rowH, minHeaderHeight)
   uiRects.header.x1 = x
   uiRects.header.y1 = y - headerHeight
   uiRects.header.x2 = x + totalWidth
@@ -2650,13 +2740,25 @@ function widget:DrawScreen()
     gl.Color(1, 1, 1, 0.15)
     gl.Rect(tx1, ty1, tx2, ty2)
 
+    -- Windows-style minimize glyph: a plain horizontal bar, not the
+    -- word "Icon" -- same pill hitbox/size as before (still sized off
+    -- toggleLabel's text width above, so no layout ripple to the
+    -- Leaderboard/Size/? buttons chained off this one), just a
+    -- different thing drawn inside it.
+    local minLineW = togglePillW * 0.4
+    local minLineH = 2
+    local minLineX1 = tx1 + (togglePillW - minLineW) / 2
+    local minLineY = ty1 + togglePillH * 0.32
+
     gl.Color(1, 1, 1, 0.9)
-    gl.Text(toggleLabel, tx1 + togglePad, tcy - toggleFontSize * 0.3, toggleFontSize, "o")
+    gl.Rect(minLineX1, minLineY, minLineX1 + minLineW, minLineY + minLineH)
   end
 
   -- Manual-resize handle. Red = disabled (auto-fit, default behavior);
-  -- right-click flips it to white = enabled, which is what allows the
-  -- left-click drag in MousePress/DrawScreen above to take effect.
+  -- a plain left click flips it to gold/black = enabled (same
+  -- gold-background-black-text theme as the active Leaderboard/filter
+  -- tab/stat-sort highlighting elsewhere in this header), which is
+  -- what allows left-click DRAGGING it to resize the panel instead.
   do
     local rzLabel = "<>"
     local rzFontSize = 15
@@ -2674,28 +2776,71 @@ function widget:DrawScreen()
     uiRects.resizeHandle.x1, uiRects.resizeHandle.y1, uiRects.resizeHandle.x2, uiRects.resizeHandle.y2 =
       rzx1, rzy1, rzx2, rzy2
 
-    local rzR, rzG, rzB = 1, 0.3, 0.3
-    if resizeHandleState.enabled then rzR, rzG, rzB = 1, 1, 1 end
-
-    if resizeDragState.active then
+    if resizeHandleState.enabled then
+      -- Enabled uses the same look whether idle or actively being
+      -- dragged -- no need to distinguish the two anymore now that
+      -- "enabled" itself is gold.
       gl.Color(1, 0.85, 0.2, 0.9)
       gl.Rect(rzx1, rzy1, rzx2, rzy2)
       gl.Color(0, 0, 0, 1)
     elseif hoverState.resizeHandle then
-      gl.Color(rzR, rzG, rzB, 0.3)
+      gl.Color(1, 0.3, 0.3, 0.3)
       gl.Rect(rzx1, rzy1, rzx2, rzy2)
-      gl.Color(rzR, rzG, rzB, 1)
+      gl.Color(1, 0.3, 0.3, 1)
     else
       gl.Color(1, 1, 1, 0.12)
       gl.Rect(rzx1, rzy1, rzx2, rzy2)
-      gl.Color(rzR, rzG, rzB, 0.9)
+      gl.Color(1, 0.3, 0.3, 0.9)
     end
     gl.Text(rzLabel, (rzx1 + rzx2) / 2, rzcy - rzFontSize * 0.35, rzFontSize, "oc")
     gl.Color(1, 1, 1, 1)
   end
 
+  -- "Stay visible while UI is hidden" toggle -- same red/gold pill
+  -- style and meaning as the "<>" resize handle right next to it
+  -- (red = off, gold/black = on). Click flips whether
+  -- DrawScreenEffects keeps redrawing this panel while BAR's Show/Hide
+  -- UI (F7 / Ctrl+F7) is active.
+  do
+    local huLabel = "F7"
+    local huFontSize = 15
+    local huPad = 6
+    local huTW = gl.GetTextWidth(huLabel) * huFontSize
+    local huPillW = huTW + huPad * 2
+    local huPillH = huFontSize + huPad * 2
+
+    local hux2 = uiRects.resizeHandle.x1 - 6
+    local hux1 = hux2 - huPillW
+    local huy1 = uiRects.header.y1 + 4
+    local huy2 = huy1 + huPillH
+    local hucy = (huy1 + huy2) / 2
+
+    uiRects.hideUiToggle.x1, uiRects.hideUiToggle.y1, uiRects.hideUiToggle.x2, uiRects.hideUiToggle.y2 =
+      hux1, huy1, hux2, huy2
+
+    if stayVisibleWhenUIHidden then
+      gl.Color(1, 0.85, 0.2, 0.9)
+      gl.Rect(hux1, huy1, hux2, huy2)
+      gl.Color(0, 0, 0, 1)
+    elseif hoverState.hideUiToggle then
+      gl.Color(1, 0.3, 0.3, 0.3)
+      gl.Rect(hux1, huy1, hux2, huy2)
+      gl.Color(1, 0.3, 0.3, 1)
+    else
+      gl.Color(1, 1, 1, 0.12)
+      gl.Rect(hux1, huy1, hux2, huy2)
+      gl.Color(1, 0.3, 0.3, 0.9)
+    end
+    gl.Text(huLabel, (hux1 + hux2) / 2, hucy - huFontSize * 0.35, huFontSize, "oc")
+    gl.Color(1, 1, 1, 1)
+  end
+
   do
     local vmDescriptions = (trackerMode == "unit") and unitViewModeDescriptions or viewModeDescriptions
+    -- hideUiToggle now gets its own floating cursor tooltip (see the
+    -- hoverState.hideUiToggle branch further down), so it's
+    -- deliberately left out of this description bar to avoid showing
+    -- the same message twice at once.
     local descText = (hoverState.statKey and statDescriptions[hoverState.statKey])
                    or (hoverState.viewModeKey and vmDescriptions[hoverState.viewModeKey])
     if descText then
@@ -2714,7 +2859,12 @@ function widget:DrawScreen()
     end
   end
 
-  local headerY = y - rowH
+  -- Must match uiRects.header.y1 (the header's actual bottom edge,
+  -- floored at minHeaderHeight) -- this used to just be y - rowH,
+  -- which disagreed with the taller header at small iconSize and let
+  -- the stat row / Size dropdown start too early, overlapping the
+  -- header's second pill row.
+  local headerY = uiRects.header.y1
   local rowY = headerY
 
   do
@@ -2912,6 +3062,15 @@ function widget:DrawScreen()
     elseif isHover then
       gl.Color(1,1,1,0.15)
       gl.Rect(x, rowY-rowH, x+totalWidth, rowY)
+    end
+
+    -- Commander death flash/glow -- scoped to just this team's row (see
+    -- drawCommanderDeathEffect and commanderDeathByTeam above).
+    if commanderDeathByTeam[teamID] then
+      local stillActive = drawCommanderDeathEffect(rowRects[teamID], commanderDeathByTeam[teamID])
+      if not stillActive then
+        commanderDeathByTeam[teamID] = nil
+      end
     end
 
     gl.Color(item.colorR, item.colorG, item.colorB, 1)
@@ -3248,7 +3407,7 @@ function widget:DrawScreen()
     -- matching title line above the rows.
     local titleLine = "Resize Handle:"
     local rows = {
-      {"Right-click:",            "toggle resize (red = disabled, white = enabled)"},
+      {"Click:",                   "toggle resize (red = disabled, gold = enabled)"},
       {"Left-drag while enabled:", "resize panel width"},
       {"Mousewheel:",              "scroll overflowing icons (hovered row; Ctrl = all rows)"},
     }
@@ -3292,6 +3451,44 @@ function widget:DrawScreen()
       gl.Text(row[2], tx + padX + labelColW + colGap, cursorY, tooltipFontSize, "")
       cursorY = cursorY - lineGap
     end
+
+  elseif hoverState.hideUiToggle then
+    -- Same titled layout as the "?" help tooltip and "<>" resize
+    -- handle tooltip above -- gold title line, white body below it --
+    -- just with a single status line instead of a row table.
+    local titleLine = "Hide UI Status:"
+    local bodyLine = stayVisibleWhenUIHidden
+      and "Panel remains visible while UI is hidden."
+      or  "Panel is hidden like the rest of the UI."
+
+    local tooltipFontSize = 14
+    local titleFontSize = 15
+    local padX, padY = 8, 6
+    local titleGap = 8
+
+    local titleWidth = gl.GetTextWidth(titleLine) * titleFontSize
+    local bodyWidth = gl.GetTextWidth(bodyLine) * tooltipFontSize
+    local tw = math.max(titleWidth, bodyWidth)
+
+    local titleLineH = titleFontSize * 1.2
+    local bodyLineH = tooltipFontSize * 1.2
+    local th = titleLineH + titleGap + bodyLineH
+
+    local tx = mouseX + 32
+    local ty = mouseY - (th + padY * 2) - 10
+
+    gl.Color(0,0,0,0.85)
+    gl.Rect(tx, ty, tx + tw + padX * 2, ty + th + padY * 2)
+
+    local cursorY = ty + padY + th - titleLineH
+
+    gl.Color(1, 0.85, 0.2, 1)
+    gl.Text(titleLine, tx + padX, cursorY, titleFontSize, "")
+    cursorY = cursorY - titleGap
+
+    gl.Color(1,1,1,1)
+    cursorY = cursorY - bodyLineH
+    gl.Text(bodyLine, tx + padX, cursorY, tooltipFontSize, "")
 
   elseif hoverState.helpToggle then
     -- Two-column layout: left column is the action, right column is
@@ -3398,6 +3595,31 @@ function widget:DrawScreen()
   end
 
   gl.Color(1,1,1,1)
+end
+
+function widget:DrawScreen()
+  doDrawScreen()
+end
+
+-- BAR's widgetHandler:DrawScreen() (luaui/barwidgets.lua) wraps every
+-- widget's DrawScreen callin in `if not Spring.IsGUIHidden() then`,
+-- so pressing Show/Hide UI (F7 / Ctrl+F7) stops DrawScreen from firing
+-- for ALL widgets, this one included -- that's a BAR-wide behavior,
+-- not something any individual widget's own code controls.
+-- DrawScreenEffects(vsx, vsy), however, is NOT gated the same way --
+-- it fires every frame regardless of UI-hidden state. So redraw the
+-- exact same panel from here specifically when the UI is hidden,
+-- keeping Base/Unit Tracker visible during cinematic/screenshot mode.
+-- Guarded so it only fires when DrawScreen itself is being skipped --
+-- otherwise the panel would render twice (double-drawn, doubled
+-- alpha) every frame the UI is visible normally. Also gated behind
+-- the "F7" toggle pill (stayVisibleWhenUIHidden) so this is opt-out:
+-- turn it off to go back to the old behavior of hiding along with
+-- everything else.
+function widget:DrawScreenEffects(vsx, vsy)
+  if stayVisibleWhenUIHidden and Spring.IsGUIHidden() then
+    doDrawScreen()
+  end
 end
 
 -- end of widget
