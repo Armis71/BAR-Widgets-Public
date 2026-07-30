@@ -280,9 +280,17 @@ local labDisplayNames = {
   legdeflector = "Plasma Shield",
 
   -- Faction-unique defense structures
-  armamb  = "Pop-up Plasma Artillery",     -- Armada only
-  armguard = "Area Control Plasma Artillery", -- Armada only
-  armemp  = "EMP Missile Launcher",         -- Armada only
+  armamb  = "Pop-up Plasma Artillery",
+  corpun  = "Pop-up Plasma Artillery",
+  legcluster = "Pop-up Plasma Artillery",
+
+  armguard = "Area Control Plasma Artillery",
+  cortoast = "Area Control Plasma Artillery",
+  legacluster = "Area Control Plasma Artillery",
+
+  armemp  = "EMP Missile Launcher",
+  cortron = "EMP Missile Launcher",         -- Cortex equivalent, "Catalyst"
+
   corerad = "AA Missile Battery",           -- Cortex only
   corhllt = "Anti-Swarm Double Guard",      -- Cortex only
   legrampart = "Rampart",                   -- Legion only, hybrid Anti-Nuke/Jammer/Radar/Drone
@@ -332,13 +340,19 @@ local viewModeExtraCategories = {
     "Sonar Station", "Advanced Sonar Station",
     "Naval Radar / Sonar Tower", "Auscultor",
     "Basic Defense Turret", "Anti-Air Tower", "Naval Anti-Air Turret",
-    "Plasma Shield", "Pop-up Plasma Artillery", "Area Control Plasma Artillery",
-    "EMP Missile Launcher", "AA Missile Battery", "Anti-Swarm Double Guard",
+    "Plasma Shield", "AA Missile Battery", "Anti-Swarm Double Guard",
     "Rampart",
   },
   offense = {
     "Nuke Silo", "Super Weapon", "LRPC", "Napalm Launcher",
     "Pawn Launcher",
+    -- Moved from Defense per request: siege/offensive-purpose structures
+    -- despite being labeled "defense structures" in the codebase. Note:
+    -- all 3 are Armada-exclusive - Cortex/Legion have no equivalents
+    -- (their own faction-unique structures - AA Missile Battery,
+    -- Anti-Swarm Double Guard, Rampart - are genuinely defensive and
+    -- stay under Defense).
+    "Pop-up Plasma Artillery", "Area Control Plasma Artillery", "EMP Missile Launcher",
   },
 }
 local statDescriptions = {
@@ -641,6 +655,9 @@ local iconMap = {
     ["Naval Anti-Air Turret"]             = "corenaa",
     ["AA Missile Battery"]                = "corerad",
     ["Anti-Swarm Double Guard"]           = "corhllt",
+    ["Pop-up Plasma Artillery"]           = "corpun",
+    ["Area Control Plasma Artillery"]     = "cortoast",
+    ["EMP Missile Launcher"]              = "cortron",
   },
   leg = {
     ["T1 Bot Lab"]                     = "leglab",
@@ -697,6 +714,8 @@ local iconMap = {
     ["Naval Anti-Air Turret"]             = "legfrl",
     ["Plasma Shield"]                     = "legdeflector",
     ["Rampart"]                           = "legrampart",
+    ["Pop-up Plasma Artillery"]           = "legcluster",
+    ["Area Control Plasma Artillery"]     = "legacluster",
   },
 }
 
