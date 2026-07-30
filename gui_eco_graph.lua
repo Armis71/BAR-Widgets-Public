@@ -1141,38 +1141,69 @@ end
     -- UTIL
     local nukeUnitDefIDs = {}
 local antiNukeUnitDefIDs = {}
+local junoUnitDefIDs = {}
 local nukeWeaponDefIDs = {}
 local antiNukeWeaponDefIDs = {}
+local spGetUnitWeaponState = Spring.GetUnitWeaponState   -- FIX: was missing, caused CountMyNukeUnits to error out
+local spGetUnitStockpile   = Spring.GetUnitStockpile     -- correct API for reading ready warhead counts
 
 local function BuildNukeLookup()
-    for udid, ud in pairs(UnitDefs) do
-        local name = ud.name and ud.name:lower() or ""
-        if name:find("nuke") then
-            if name:find("anti") then
-                antiNukeUnitDefIDs[udid] = true
-            else
-                nukeUnitDefIDs[udid] = true
-            end
-        end
-    end
-
+    -- FIX: BAR's real unit/weapon def names (armsilo, corsilo, legsilo,
+    -- armamd, corfmd, legabm, etc.) don't contain the substring "nuke",
+    -- so matching on name always came up empty. Classify by the engine's
+    -- actual weapon flags instead: any stockpile weapon is either a nuke
+    -- (not an interceptor) or an anti-nuke (is an interceptor).
     for wdID, wd in pairs(WeaponDefs) do
-        local wname = wd.name and wd.name:lower() or ""
-        if wname:find("nuke") then
-            if wname:find("anti") then
+        if wd.stockpile then
+            if wd.interceptor and wd.interceptor > 0 then
                 antiNukeWeaponDefIDs[wdID] = true
             else
                 nukeWeaponDefIDs[wdID] = true
             end
         end
     end
+
+    -- JUNO: also a stockpile unit (armjuno/corjuno/legjuno - consistent
+    -- naming across all 3 factions, so name matching is reliable here,
+    -- unlike "nuke"). Identify these first so they can be excluded below -
+    -- Juno's weapon is a non-interceptor stockpile weapon too, so it would
+    -- otherwise get miscounted as a nuke silo.
+    for udid, ud in pairs(UnitDefs) do
+        local name = ud.name and ud.name:lower() or ""
+        if name:find("juno") then
+            junoUnitDefIDs[udid] = true
+        end
+    end
+
+    -- Unit-level fallback lookup, derived from the weapon classification
+    -- above (used only if the per-weapon scan in CountMyNukeUnits ever
+    -- misses a weapon index). Skip Juno units so they aren't double-
+    -- classified as nukes.
+    for udid, ud in pairs(UnitDefs) do
+        if not junoUnitDefIDs[udid] and ud.weapons then
+            for _, w in ipairs(ud.weapons) do
+                local wdID = w.weaponDef
+                if wdID then
+                    if nukeWeaponDefIDs[wdID] then
+                        nukeUnitDefIDs[udid] = true
+                    elseif antiNukeWeaponDefIDs[wdID] then
+                        antiNukeUnitDefIDs[udid] = true
+                    end
+                end
+            end
+        end
+    end
 end
 
-local function CountMyNukeUnits()
-    local myTeam = spGetMyTeamID()
+local function CountMyNukeUnits(teamID)
+    -- FIX: accept the currently VIEWED team (spectator/replay-aware) so
+    -- this follows whichever player you're watching, instead of always
+    -- reading your own team. Falls back to your own team if none given.
+    local myTeam = teamID or spGetMyTeamID()
     local units = spGetTeamUnits(myTeam)
     local nukeCount = 0
     local antiNukeCount = 0
+    local junoCount = 0
     if units then
         for _, unitID in ipairs(units) do
             local udid = spGetUnitDefID(unitID)
@@ -1180,41 +1211,32 @@ local function CountMyNukeUnits()
                 break
             end
 
-            local udef = UnitDefs[udid]
-            local hasNukeWeapon = false
-            local hasAntiNukeWeapon = false
+            -- FIX: "numStockpiled" is not a valid Spring.GetUnitWeaponState
+            -- key (that call just silently returned nil, so nothing was
+            -- ever counted). The engine has a dedicated call for this:
+            -- Spring.GetUnitStockpile(unitID) -> numStockpiled(ready), numQueued(still being built)
+            --
+            -- REVERTED "sum ready+queued": that matched the command panel's
+            -- "Stockpile X/20" style TARGET number, not "ready to fire".
+            -- What we actually want is READY ONLY - the same "X" shown on
+            -- the left side of "Stockpile X/20" - since that's what's
+            -- actually available to launch right now. Queued/building
+            -- warheads aren't fireable yet, so they're excluded.
+            if nukeUnitDefIDs[udid] or antiNukeUnitDefIDs[udid] or junoUnitDefIDs[udid] then
+                local ready = spGetUnitStockpile(unitID)
+                local stockpiled = (type(ready) == "number") and ready or 0
 
-            if udef and udef.weapons then
-                for weaponIndex, weapon in ipairs(udef.weapons) do
-                    local wdID = weapon.weaponDef
-                    if wdID then
-                        local isNukeWeapon = nukeWeaponDefIDs[wdID]
-                        local isAntiNukeWeapon = antiNukeWeaponDefIDs[wdID]
-                        if isNukeWeapon or isAntiNukeWeapon then
-                            hasNukeWeapon = hasNukeWeapon or isNukeWeapon
-                            hasAntiNukeWeapon = hasAntiNukeWeapon or isAntiNukeWeapon
-                            local stockpiled = spGetUnitWeaponState(unitID, weaponIndex, "numStockpiled")
-                            if type(stockpiled) == "number" and stockpiled > 0 then
-                                if isNukeWeapon then
-                                    nukeCount = nukeCount + stockpiled
-                                elseif isAntiNukeWeapon then
-                                    antiNukeCount = antiNukeCount + stockpiled
-                                end
-                            end
-                        end
-                    end
+                if nukeUnitDefIDs[udid] then
+                    nukeCount = nukeCount + stockpiled
+                elseif antiNukeUnitDefIDs[udid] then
+                    antiNukeCount = antiNukeCount + stockpiled
+                elseif junoUnitDefIDs[udid] then
+                    junoCount = junoCount + stockpiled
                 end
-            end
-
-            if not hasNukeWeapon and nukeUnitDefIDs[udid] then
-                nukeCount = nukeCount + 1
-            end
-            if not hasAntiNukeWeapon and antiNukeUnitDefIDs[udid] then
-                antiNukeCount = antiNukeCount + 1
             end
         end
     end
-    return nukeCount, antiNukeCount
+    return nukeCount, antiNukeCount, junoCount
 end
 
 local function GetPlayerNameFromTeam(teamID)
@@ -3707,32 +3729,51 @@ do
     local sliderHalfWidth = math.max(1, barH * 0.9 - 1)
     local sliderHeightAdd = barH * 1.2
 
-    shareIndicatorArea[res] = {
-        barX1 + (value * barWidth) - sliderHalfWidth,
-        barY1 - sliderHeightAdd,
-        barX1 + (value * barWidth) + sliderHalfWidth,
-        barY2 + sliderHeightAdd
-    }
+    -- base (normal-size) position of the thumb
+    local baseX1 = barX1 + (value * barWidth) - sliderHalfWidth
+    local baseX2 = barX1 + (value * barWidth) + sliderHalfWidth
+    local baseY1 = barY1 - sliderHeightAdd
+    local baseY2 = barY2 + sliderHeightAdd
 
-    -- compute center
-    local cx = (shareIndicatorArea[res][1] + shareIndicatorArea[res][3]) * 0.5
-    local cy = (shareIndicatorArea[res][2] + shareIndicatorArea[res][4]) * 0.5
+    local cx = (baseX1 + baseX2) * 0.5
+    local cy = (baseY1 + baseY2) * 0.5
     local r  = sliderHalfWidth
+
+    -- HOVER-TO-ENLARGE (grows 50% on hover or while dragging; uses last
+    -- frame's stored hitbox so it doesn't flicker while your mouse is
+    -- moving inside the grown area)
+    local mx, my = spGetMouseState()
+    local prev = shareIndicatorArea[res]
+    local hovering = prev and prev[1] and mx >= prev[1] and mx <= prev[3] and my >= prev[2] and my <= prev[4]
+    local isDragging = (draggingShareIndicator == res)
+    local effR = (hovering or isDragging) and (r * 1.5) or r
+
+    shareIndicatorArea[res] = { cx - effR, cy - effR, cx + effR, cy + effR }
 
     ------------------------------------------------------------
     -- SHADOW (added, nothing else changed)
     ------------------------------------------------------------
     glColor(0, 0, 0, 0.10)
-    glRect(cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2)
+    glRect(cx - effR - 2, cy - effR - 2, cx + effR + 2, cy + effR + 2)
 
     glColor(0, 0, 0, 0.18)
-    glRect(cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1)
+    glRect(cx - effR - 1, cy - effR - 1, cx + effR + 1, cy + effR + 1)
 
     ------------------------------------------------------------
-    -- ORIGINAL THUMB (unchanged)
+    -- ORIGINAL THUMB (grows 50% on hover/drag, otherwise unchanged)
     ------------------------------------------------------------
     glColor(1, 0.2, 0.2, 1)
-    glRect(cx - r, cy - r, cx + r, cy + r)
+    glRect(cx - effR, cy - effR, cx + effR, cy + effR)
+
+    -- GRIP NOTCHES (3 thin vertical lines = "drag me" cue)
+    glColor(0, 0, 0, 0.45)
+    local notchW   = math.max(1, effR * 0.16)
+    local notchGap = effR * 0.42
+    local notchH   = effR * 1.1
+    for i = -1, 1 do
+        local nx = cx + i * notchGap
+        glRect(nx - notchW * 0.5, cy - notchH * 0.5, nx + notchW * 0.5, cy + notchH * 0.5)
+    end
 end
 
 -- Storage total (aligned with PP: No)
@@ -3793,25 +3834,41 @@ do
 
         local convX = barX1 + (mm * barWidth)
 
-        conversionIndicatorArea = {
-            convX - sliderHalfWidth,
-            barY1 - sliderHeightAdd,
-            convX + sliderHalfWidth,
-            barY2 + sliderHeightAdd
-        }
+        local baseX1 = convX - sliderHalfWidth
+        local baseX2 = convX + sliderHalfWidth
+        local baseY1 = barY1 - sliderHeightAdd
+        local baseY2 = barY2 + sliderHeightAdd
 
-        local cx = (conversionIndicatorArea[1] + conversionIndicatorArea[3]) * 0.5
-        local cy = (conversionIndicatorArea[2] + conversionIndicatorArea[4]) * 0.5
+        local cx = (baseX1 + baseX2) * 0.5
+        local cy = (baseY1 + baseY2) * 0.5
         local r  = sliderHalfWidth
 
+        -- HOVER-TO-ENLARGE (grows 50% on hover or while dragging)
+        local mx, my = spGetMouseState()
+        local prev = conversionIndicatorArea
+        local hovering = prev and prev[1] and mx >= prev[1] and mx <= prev[3] and my >= prev[2] and my <= prev[4]
+        local effR = (hovering or draggingConversionIndicator) and (r * 1.5) or r
+
+        conversionIndicatorArea = { cx - effR, cy - effR, cx + effR, cy + effR }
+
         glColor(0, 0, 0, 0.10)
-        glRect(cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2)
+        glRect(cx - effR - 2, cy - effR - 2, cx + effR + 2, cy + effR + 2)
 
         glColor(0, 0, 0, 0.18)
-        glRect(cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1)
+        glRect(cx - effR - 1, cy - effR - 1, cx + effR + 1, cy + effR + 1)
 
         glColor(0.95, 0.95, 0.7, 1)
-        glRect(cx - r, cy - r, cx + r, cy + r)
+        glRect(cx - effR, cy - effR, cx + effR, cy + effR)
+
+        -- GRIP NOTCHES (3 thin vertical lines = "drag me" cue)
+        glColor(0, 0, 0, 0.45)
+        local notchW   = math.max(1, effR * 0.16)
+        local notchGap = effR * 0.42
+        local notchH   = effR * 1.1
+        for i = -1, 1 do
+            local nx = cx + i * notchGap
+            glRect(nx - notchW * 0.5, cy - notchH * 0.5, nx + notchW * 0.5, cy + notchH * 0.5)
+        end
     end
 
     ------------------------------------------------------------
@@ -3833,25 +3890,42 @@ do
         local sliderHalfWidth = math.max(1, barH * 0.9 - 1)
         local sliderHeightAdd = barH * 1.2
 
-        shareIndicatorArea[res] = {
-            barX1 + (value * barWidth) - sliderHalfWidth,
-            barY1 - sliderHeightAdd,
-            barX1 + (value * barWidth) + sliderHalfWidth,
-            barY2 + sliderHeightAdd
-        }
+        local baseX1 = barX1 + (value * barWidth) - sliderHalfWidth
+        local baseX2 = barX1 + (value * barWidth) + sliderHalfWidth
+        local baseY1 = barY1 - sliderHeightAdd
+        local baseY2 = barY2 + sliderHeightAdd
 
-        local cx = (shareIndicatorArea[res][1] + shareIndicatorArea[res][3]) * 0.5
-        local cy = (shareIndicatorArea[res][2] + shareIndicatorArea[res][4]) * 0.5
+        local cx = (baseX1 + baseX2) * 0.5
+        local cy = (baseY1 + baseY2) * 0.5
         local r  = sliderHalfWidth
 
+        -- HOVER-TO-ENLARGE (grows 50% on hover or while dragging)
+        local mx, my = spGetMouseState()
+        local prev = shareIndicatorArea[res]
+        local hovering = prev and prev[1] and mx >= prev[1] and mx <= prev[3] and my >= prev[2] and my <= prev[4]
+        local isDragging = (draggingShareIndicator == res)
+        local effR = (hovering or isDragging) and (r * 1.5) or r
+
+        shareIndicatorArea[res] = { cx - effR, cy - effR, cx + effR, cy + effR }
+
         glColor(0, 0, 0, 0.10)
-        glRect(cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2)
+        glRect(cx - effR - 2, cy - effR - 2, cx + effR + 2, cy + effR + 2)
 
         glColor(0, 0, 0, 0.18)
-        glRect(cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1)
+        glRect(cx - effR - 1, cy - effR - 1, cx + effR + 1, cy + effR + 1)
 
         glColor(1, 0.2, 0.2, 1)
-        glRect(cx - r, cy - r, cx + r, cy + r)
+        glRect(cx - effR, cy - effR, cx + effR, cy + effR)
+
+        -- GRIP NOTCHES (3 thin vertical lines = "drag me" cue)
+        glColor(0, 0, 0, 0.45)
+        local notchW   = math.max(1, effR * 0.16)
+        local notchGap = effR * 0.42
+        local notchH   = effR * 1.1
+        for i = -1, 1 do
+            local nx = cx + i * notchGap
+            glRect(nx - notchW * 0.5, cy - notchH * 0.5, nx + notchW * 0.5, cy + notchH * 0.5)
+        end
     end
 
     -- STORAGE TOTAL TEXT
@@ -4196,13 +4270,17 @@ do
         local label3 = "Build Power:"
         local label4 = "Nuke Missiles:"
         local label5 = "Anti-Nuke:"
+        local label6 = "Juno:"
+
+        local viewedTeamID = GetViewedTeamID()   -- FIX: follow whoever you're spectating/replaying, not just yourself
 
         local speedVal = string.format("%.1f", Spring.GetGameSpeed() or 1)
         local ppVal = has and tostring(count) or "None"
-        local bpVal = string.format("%.2f", GetTotalBuildPower(Spring.GetMyTeamID()))
-        local nukeCount, antiNukeCount = CountMyNukeUnits()
+        local bpVal = string.format("%.2f", GetTotalBuildPower(viewedTeamID))
+        local nukeCount, antiNukeCount, junoCount = CountMyNukeUnits(viewedTeamID)
         local nukeVal = tostring(nukeCount)
         local antiNukeVal = tostring(antiNukeCount)
+        local junoVal = tostring(junoCount)
 
         local pad = 6
 
@@ -4212,7 +4290,8 @@ do
             glGetTextWidth(label2),
             glGetTextWidth(label3),
             glGetTextWidth(label4),
-            glGetTextWidth(label5)
+            glGetTextWidth(label5),
+            glGetTextWidth(label6)
         ) * fontSize
 
         local descW = math.max(
@@ -4220,14 +4299,15 @@ do
             glGetTextWidth(ppVal),
             glGetTextWidth(bpVal),
             glGetTextWidth(nukeVal),
-            glGetTextWidth(antiNukeVal)
+            glGetTextWidth(antiNukeVal),
+            glGetTextWidth(junoVal)
         ) * fontSize
 
         -- Total width
         local tw = labelW + descW + pad * 3
 
-        -- Height for 5 rows
-        local th = fontSize * 5 + pad * 6
+        -- Height for 6 rows
+        local th = fontSize * 6 + pad * 7
 
         -- LOWER-RIGHT of mouse
         local tipX = mx + 18
@@ -4267,8 +4347,12 @@ do
         glText(nukeVal, tipX + pad + labelW + pad, tipY + th - fontSize*4 - pad*4, fontSize, "lo")
 
         -- Row 5
-        glText(label5, tipX + pad, tipY + pad, fontSize, "lo")
-        glText(antiNukeVal, tipX + pad + labelW + pad, tipY + pad, fontSize, "lo")
+        glText(label5, tipX + pad, tipY + th - fontSize*5 - pad*5, fontSize, "lo")
+        glText(antiNukeVal, tipX + pad + labelW + pad, tipY + th - fontSize*5 - pad*5, fontSize, "lo")
+
+        -- Row 6
+        glText(label6, tipX + pad, tipY + pad, fontSize, "lo")
+        glText(junoVal, tipX + pad + labelW + pad, tipY + pad, fontSize, "lo")
     end
 end
 
@@ -4908,13 +4992,17 @@ do
         local label3 = "Build Power:"
         local label4 = "Nuke Missiles:"
         local label5 = "Anti-Nuke:"
+        local label6 = "Juno:"
+
+        local viewedTeamID = GetViewedTeamID()   -- FIX: follow whoever you're spectating/replaying, not just yourself
 
         local speedVal = string.format("%.1f", Spring.GetGameSpeed() or 1)
         local ppVal = has and tostring(count) or "None"
-        local bpVal = string.format("%.2f", GetTotalBuildPower(Spring.GetMyTeamID()))
-        local nukeCount, antiNukeCount = CountMyNukeUnits()
+        local bpVal = string.format("%.2f", GetTotalBuildPower(viewedTeamID))
+        local nukeCount, antiNukeCount, junoCount = CountMyNukeUnits(viewedTeamID)
         local nukeVal = tostring(nukeCount)
         local antiNukeVal = tostring(antiNukeCount)
+        local junoVal = tostring(junoCount)
 
         local pad = 6
 
@@ -4924,7 +5012,8 @@ do
             glGetTextWidth(label2),
             glGetTextWidth(label3),
             glGetTextWidth(label4),
-            glGetTextWidth(label5)
+            glGetTextWidth(label5),
+            glGetTextWidth(label6)
         ) * fontSize
 
         local descW = math.max(
@@ -4932,14 +5021,15 @@ do
             glGetTextWidth(ppVal),
             glGetTextWidth(bpVal),
             glGetTextWidth(nukeVal),
-            glGetTextWidth(antiNukeVal)
+            glGetTextWidth(antiNukeVal),
+            glGetTextWidth(junoVal)
         ) * fontSize
 
         -- Total width
         local tw = labelW + descW + pad * 3
 
-        -- Height for 5 rows
-        local th = fontSize * 5 + pad * 6
+        -- Height for 6 rows
+        local th = fontSize * 6 + pad * 7
 
         -- LOWER-RIGHT of mouse cursor (matches income tooltips)
         local tipX = mx + 18
@@ -4979,8 +5069,12 @@ do
         glText(nukeVal, tipX + pad + labelW + pad, tipY + th - fontSize*4 - pad*4, fontSize, "lo")
 
         -- Row 5
-        glText(label5, tipX + pad, tipY + pad, fontSize, "lo")
-        glText(antiNukeVal, tipX + pad + labelW + pad, tipY + pad, fontSize, "lo")
+        glText(label5, tipX + pad, tipY + th - fontSize*5 - pad*5, fontSize, "lo")
+        glText(antiNukeVal, tipX + pad + labelW + pad, tipY + th - fontSize*5 - pad*5, fontSize, "lo")
+
+        -- Row 6
+        glText(label6, tipX + pad, tipY + pad, fontSize, "lo")
+        glText(junoVal, tipX + pad + labelW + pad, tipY + pad, fontSize, "lo")
     end
 end
 
