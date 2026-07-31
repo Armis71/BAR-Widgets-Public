@@ -11,6 +11,20 @@ function widget:GetInfo()
     }
 end
 
+--------------------------------------------------------------------------------
+-- SAFETY SWITCH -- "Disable Top Bar" toggle button lock
+--------------------------------------------------------------------------------
+-- 1 / ON  = LOCKED (DEFAULT). The "Top Bar" ON/OFF button below is grayed
+--           out and does nothing when clicked, so nobody can accidentally
+--           (or without knowing the consequences) turn Top Bar off from here
+--           and end up stuck with it disabled if this widget ever goes away.
+-- 0 / OFF = UNLOCKED. The "Top Bar" button works normally again.
+--
+-- This is a plain global (not "local") on purpose -- this file is already at
+-- Lua's 200-local-variable ceiling, and globals don't count against it.
+--------------------------------------------------------------------------------
+DISABLE_TOPBAR_TOGGLE = 1   -- 1 = ON (locked, default) | 0 = OFF (unlocked)
+
 
 -- GLOBAL FONT SCALE (shrink everything proportionally)
 local FONT_SCALE = 0.99  -- This will affect most of the text size in the widget. Try 0.95, 0.97, 0.995 or 0.999 for different levels of shrinking.
@@ -568,6 +582,11 @@ do
     end
 
     local function ToggleWidget(name)
+        -- Locked by default: see DISABLE_TOPBAR_TOGGLE switch at top of file
+        if name == WIDGET_TOPBAR and DISABLE_TOPBAR_TOGGLE == 1 then
+            return
+        end
+
         if WidgetEnabled(name) then
             Spring.SendCommands("luaui disablewidget " .. name)
             Spring.SetConfigInt("widget_" .. name, 0)
@@ -587,7 +606,7 @@ do
     ------------------------------------------------------------------------
     -- DRAW BUTTON
     ------------------------------------------------------------------------
-    local function DrawButton(x1, y1, label, enabled)
+    local function DrawButton(x1, y1, label, enabled, locked)
         local x2 = x1 + BUTTON_W
         local y2 = y1 + BUTTON_H
 
@@ -600,6 +619,14 @@ do
 
         local cx = (x1 + x2) * 0.5
         local cy = (y1 + y2) * 0.5
+
+        if locked then
+            glColor(0.5, 0.5, 0.5, 0.85)
+            glText(label, cx, cy + 10, 20, "oc")
+            glColor(0.4, 0.4, 0.4, 1)
+            glText("LOCKED", cx, cy - 20, 20, "oc")
+            return
+        end
 
         glColor(1, 1, 1, 1)
         glText(label, cx, cy + 10, 20, "oc")
@@ -631,7 +658,8 @@ do
             x1,
             y1 + BUTTON_H + BUTTON_SPACING,
             "Top Bar",
-            WidgetEnabled(WIDGET_TOPBAR)
+            WidgetEnabled(WIDGET_TOPBAR),
+            DISABLE_TOPBAR_TOGGLE == 1
         )
 
         -- ECO GRAPH BUTTON
@@ -7007,6 +7035,31 @@ function widget:IsAbove(mx, my)
     return false
 end
 
+
+--------------------------------------------------------------------------------
+-- TOGGLE-MENU SAFETY NET — SHUTDOWN
+--------------------------------------------------------------------------------
+-- The embedded EcoToggleMenu module above is the only in-game control that
+-- can disable "Top Bar" (via ToggleWidget -> luaui disablewidget "Top Bar").
+-- If Eco Graph itself is ever disabled or its file removed while Top Bar is
+-- off, a new/casual player has no way to turn Top Bar back on short of the
+-- advanced F11 widget list. So auto-restore Top Bar here before this widget
+-- goes away, same as every other Shutdown hook in this file, chained onto
+-- whatever Shutdown handler already exists.
+--------------------------------------------------------------------------------
+-- NOTE: stored on the widget table itself (not as a new `local`) because
+-- this file's main chunk is already at Lua's 200-local-variable ceiling;
+-- one more top-level local here fails to load the whole widget.
+widget._old_Shutdown_ToggleMenu = widget.Shutdown
+function widget:Shutdown()
+    if Spring.GetConfigInt("widget_Top Bar", 1) == 0 then
+        Spring.SendCommands("luaui enablewidget Top Bar")
+        Spring.SetConfigInt("widget_Top Bar", 1)
+    end
+    if widget._old_Shutdown_ToggleMenu then
+        widget._old_Shutdown_ToggleMenu(self)
+    end
+end
 
 --------------------------------------------------------------------------------
 -- End of Widget
