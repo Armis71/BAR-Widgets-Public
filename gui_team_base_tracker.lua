@@ -531,6 +531,60 @@ for unitDefID, ud in pairs(UnitDefs) do
   end
 end
 
+------------------------------------------------------------
+-- COMMANDER TOMBSTONES
+-- When a team has no live commander left, its Commander tile stays
+-- on screen as a clickable tombstone (instead of just vanishing)
+-- until the wreck gets reclaimed by either side. Same fairness rule
+-- as everywhere else in this widget: while actively playing, only
+-- an allied/own death is recorded; spectating or replay already has
+-- full vision, so any team's death is fair game.
+------------------------------------------------------------
+
+local deadCommanderTombstone = {}   -- [teamID] = {x,y,z,defName,wreckFeatureID,wreckGone,expectedWreckDefName}
+local pendingCommanderWrecks = {}   -- correlates a death with the wreck feature it spawns
+local COMMANDER_WRECK_MATCH_RADIUS  = 80
+local COMMANDER_WRECK_MATCH_TIMEOUT = 10
+
+-- Small vector tombstone drawn in place of the commander's portrait
+-- once it's dead -- same shape/style as Commander Kill Tracker's.
+local function drawCommanderTombstoneIcon(x, y, size)
+  -- Drawn well under full slot size, centered within it, so it clears
+  -- the bottom-left tier badge ("COM") instead of sitting under it.
+  local scale = 0.75 * 0.75
+  local dsize = size * scale
+  local off = (size - dsize) * 0.5
+  x, y = x + off, y + off
+  size = dsize
+
+  local baseH = size * 0.62
+  local domeR = size * 0.5
+  local cx = x + size * 0.5
+  local cy = y + baseH
+
+  gl.Texture(false)
+
+  gl.Color(0.72, 0.70, 0.65, 1)
+  gl.Rect(x, y, x+size, y+baseH)
+  gl.BeginEnd(GL.TRIANGLE_FAN, function()
+    gl.Vertex(cx, cy)
+    for i = 0, 12 do
+      local angle = math.pi * (i / 12)
+      gl.Vertex(cx + math.cos(angle) * domeR, cy + math.sin(angle) * domeR)
+    end
+  end)
+
+  -- Cross pushed up near the dome, clear of the bottom tier badge.
+  -- Stem extended further below the crossbar (upper third, not
+  -- centered) so it reads as a cross instead of a plus sign.
+  gl.Color(0.38, 0.36, 0.32, 1)
+  local crossW = size * 0.32
+  gl.Rect(cx - size*0.045, y + baseH*0.30, cx + size*0.045, y + baseH*1.30)
+  gl.Rect(cx - crossW*0.5, y + baseH*1.05, cx + crossW*0.5, y + baseH*1.13)
+
+  gl.Color(1,1,1,1)
+end
+
 local factionFullNames = {
   arm = "Armada",
   cor = "Cortex",
@@ -977,6 +1031,39 @@ local function recountLabs()
     end
   end
 
+  -- Commander tombstones: for any team with no live commander left
+  -- this scan, but a recorded death whose wreck hasn't been reclaimed,
+  -- keep its Commander tile alive as a tombstone instead of letting it
+  -- vanish. A live commander (including a resurrection) always takes
+  -- priority and simply supersedes the tombstone here.
+  for teamID, tombstone in pairs(deadCommanderTombstone) do
+    if tombstone.wreckFeatureID and not tombstone.wreckGone then
+      if not Spring.GetFeatureDefID(tombstone.wreckFeatureID) then
+        tombstone.wreckGone = true
+      end
+    end
+
+    if not tombstone.wreckGone then
+      local hasLiveCommander = teamLabPositions[teamID]
+        and teamLabPositions[teamID]["Commander"]
+        and #teamLabPositions[teamID]["Commander"] > 0
+
+      if not hasLiveCommander then
+        teamLabs[teamID] = teamLabs[teamID] or {}
+        teamLabs[teamID]["Commander"] = teamLabs[teamID]["Commander"] or 1
+
+        teamLabPositions[teamID] = teamLabPositions[teamID] or {}
+        teamLabPositions[teamID]["Commander"] = {
+          {
+            x = tombstone.x, y = tombstone.y, z = tombstone.z,
+            defName = tombstone.defName, unitID = nil,
+            isDeadTombstone = true,
+          },
+        }
+      end
+    end
+  end
+
   teamStats = {}
   for _, teamID in ipairs(Spring.GetTeamList()) do
     if teamID ~= Spring.GetGaiaTeamID() then
@@ -1242,9 +1329,11 @@ end
 local function resolveStructureIcon(t, faction, labName)
   local defName
   local overlayDefNames = nil
+  local isDead = false
   if labName == "Commander" then
     local comList = teamLabPositions[t.teamID] and teamLabPositions[t.teamID]["Commander"]
     defName = comList and comList[1] and comList[1].defName
+    isDead = (comList and comList[1] and comList[1].isDeadTombstone) or false
 
     -- If there's more than one commander (resurrected/given from
     -- another faction, or a duplicate), the team's HOME faction
@@ -1356,7 +1445,7 @@ local function resolveStructureIcon(t, faction, labName)
     if tier == 45 then tierLabel = "T1HT" end
   end
 
-  return defName, overlayDefNames, tierLabel
+  return defName, overlayDefNames, tierLabel, isDead
 end
 
 function rebuildLayout()
@@ -1510,7 +1599,7 @@ function rebuildLayout()
         if techTierOrder[catName] ~= nil then
           -- Commander or a lab category -- always visible, unaffected
           -- by the Tech1/2/3 filter.
-          local defName, overlayDefNames, tierLabel = resolveStructureIcon(t, faction, catName)
+          local defName, overlayDefNames, tierLabel, isDead = resolveStructureIcon(t, faction, catName)
           if defName then
             icons[#icons+1] = {
               defName = defName,
@@ -1518,6 +1607,7 @@ function rebuildLayout()
               labName = catName,
               count = t.labs[catName] or 1,
               tierLabel = tierLabel,
+              isDead = isDead,
             }
           end
         else
@@ -1563,7 +1653,7 @@ function rebuildLayout()
 
       for _, labName in ipairs(ownedLabs) do
         if isCategoryVisibleInView(labName, activeViewMode) then
-          local defName, overlayDefNames, tierLabel = resolveStructureIcon(t, faction, labName)
+          local defName, overlayDefNames, tierLabel, isDead = resolveStructureIcon(t, faction, labName)
           if defName then
             icons[#icons+1] = {
               defName = defName,
@@ -1571,6 +1661,7 @@ function rebuildLayout()
               labName = labName,
               count = t.labs[labName] or 1,
               tierLabel = tierLabel,
+              isDead = isDead,
             }
           end
         end
@@ -1850,7 +1941,7 @@ local function cycleAndJumpToIcon(teamID, labName)
   iconCycleIndex[clickKey] = idx
   local pos = list[idx]
 
-  jumpCameraTo(pos.x, pos.y, pos.z, 2000)
+  jumpCameraTo(pos.x, pos.y, pos.z, 1000)
   flashMarker = {
     x = pos.x, y = pos.y, z = pos.z,
     startTime = os.clock(),
@@ -1913,6 +2004,17 @@ function widget:GameFrame(frame)
   if frame % 150 == 0 then
     recountLabs()
   end
+
+  -- Give up correlating a commander death with its wreck feature if
+  -- it's been pending too long (e.g. it left no wreck at all).
+  if #pendingCommanderWrecks > 0 then
+    for i = #pendingCommanderWrecks, 1, -1 do
+      local pending = pendingCommanderWrecks[i]
+      if frame - pending.spawnFrame > COMMANDER_WRECK_MATCH_TIMEOUT then
+        table.remove(pendingCommanderWrecks, i)
+      end
+    end
+  end
 end
 
 -- Tracks kills per attacking unit locally, since BAR doesn't expose
@@ -1930,6 +2032,68 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerD
   -- widgetFlashFrame is set from its UnitDestroyed callin.
   if isCommanderDef[unitDefID] then
     commanderDeathByTeam[unitTeam] = Spring.GetGameFrame()
+
+    -- Record a tombstone -- same fairness rule as the rest of this
+    -- widget: allied/own death while actively playing, any team's
+    -- death while spectating or watching a replay (full vision then).
+    local spectating = Spring.GetSpectatingState()
+    local myAllyTeam = (not spectating) and Spring.GetMyAllyTeamID() or nil
+    local victimAllyTeam = Spring.GetTeamAllyTeamID(unitTeam)
+    local allowed = spectating or (myAllyTeam and victimAllyTeam == myAllyTeam)
+
+    if allowed then
+      local dx, dy, dz = Spring.GetUnitPosition(unitID)
+      if dx then
+        local deadUd = UnitDefs[unitDefID]
+        local wreckDefName = deadUd and deadUd.wreckName
+        if wreckDefName == "" then wreckDefName = nil end
+
+        local tombstone = {
+          x = dx, y = dy, z = dz,
+          defName = deadUd and deadUd.name,
+          wreckFeatureID = nil,
+          wreckGone = false,
+        }
+        deadCommanderTombstone[unitTeam] = tombstone
+
+        if wreckDefName then
+          pendingCommanderWrecks[#pendingCommanderWrecks+1] = {
+            tombstone            = tombstone,
+            expectedWreckDefName = wreckDefName,
+            spawnFrame           = Spring.GetGameFrame(),
+          }
+        end
+      end
+    end
+  end
+end
+
+------------------------------------------------------------
+-- WRECK TRACKING (for the tombstone "reclaimed" check)
+------------------------------------------------------------
+
+function widget:FeatureCreated(featureID)
+  if #pendingCommanderWrecks == 0 then return end
+
+  local featureDefID = Spring.GetFeatureDefID(featureID)
+  if not featureDefID then return end
+  local fdef = FeatureDefs[featureDefID]
+  if not fdef then return end
+
+  local fx, fy, fz = Spring.GetFeaturePosition(featureID)
+  if not fx then return end
+
+  for i = #pendingCommanderWrecks, 1, -1 do
+    local pending = pendingCommanderWrecks[i]
+    if fdef.name == pending.expectedWreckDefName then
+      local t = pending.tombstone
+      local dx = (t.x or fx) - fx
+      local dz = (t.z or fz) - fz
+      if (dx*dx + dz*dz) <= (COMMANDER_WRECK_MATCH_RADIUS * COMMANDER_WRECK_MATCH_RADIUS) then
+        t.wreckFeatureID = featureID
+        table.remove(pendingCommanderWrecks, i)
+      end
+    end
   end
 end
 
@@ -3147,9 +3311,13 @@ local function doDrawScreen()
       if not ud then return end
 
       gl.Color(1,1,1,1)
-      gl.Texture("#"..ud.id)
-      gl.TexRect(ix, iy, ix+iconSize, iy+iconSize)
-      gl.Texture(false)
+      if iconData.isDead then
+        drawCommanderTombstoneIcon(ix, iy, iconSize)
+      else
+        gl.Texture("#"..ud.id)
+        gl.TexRect(ix, iy, ix+iconSize, iy+iconSize)
+        gl.Texture(false)
+      end
 
       if iconData.overlayDefNames then
         local miniSize = iconSize * 0.4
@@ -3236,6 +3404,7 @@ local function doDrawScreen()
           teamID=teamID,
           labName=labName,
           displayLabel=iconData.displayLabel,
+          isDead=iconData.isDead,
         }
       end
     end
@@ -3406,6 +3575,9 @@ local function doDrawScreen()
 
     if labName and factionName then
       local tooltipText = factionName .. " " .. labName
+      if hoverState.icon.isDead then
+        tooltipText = tooltipText .. " (destroyed -- click to jump to death spot)"
+      end
       local tooltipFontSize = 14
       local padX, padY = 6, 4
       local tw = gl.GetTextWidth(tooltipText) * tooltipFontSize
@@ -3522,6 +3694,7 @@ local function doDrawScreen()
       {"Click a stat column (M/s, E/s, ...):", "sort teams by that stat"},
       {"Click the title:",                     "switch Base Tracker / Unit Tracker"},
       {"<> enabled + mousewheel:",              "scroll overflowing icon rows (Ctrl = all rows)"},
+      {"Tombstone icon:",                      "commander died -- click to jump there; gone once reclaimed"},
     }
 
     local tooltipFontSize = 14
@@ -3638,6 +3811,45 @@ end
 function widget:DrawScreenEffects(vsx, vsy)
   if stayVisibleWhenUIHidden and Spring.IsGUIHidden() then
     doDrawScreen()
+  end
+end
+
+------------------------------------------------------------
+-- SAVE / LOAD (commander tombstones only -- so a /luaui reload
+-- doesn't wipe them, same fix already applied to Commander Kill
+-- Tracker). Game.gameID is frequently nil client-side, so fall back
+-- to the GameID rules param, same as BAR's own gui_chat.lua does.
+------------------------------------------------------------
+
+local function currentGameID()
+  return (Game and Game.gameID) or Spring.GetGameRulesParam("GameID")
+end
+
+function widget:GetConfigData()
+  return {
+    gameID = currentGameID(),
+    deadCommanderTombstone = deadCommanderTombstone,
+  }
+end
+
+function widget:SetConfigData(data)
+  if type(data) ~= "table" then return end
+
+  -- If the game frame is already ticking, this is unambiguously a
+  -- reload of the same running match. Otherwise fall back to
+  -- comparing gameIDs (covers the reload-at-frame-0 edge case).
+  local sameGame = Spring.GetGameFrame() > 0
+    or (data.gameID and data.gameID == currentGameID())
+
+  if sameGame and type(data.deadCommanderTombstone) == "table" then
+    deadCommanderTombstone = data.deadCommanderTombstone
+
+    -- widget:Initialize() already ran recountLabs() once by this point
+    -- (SetConfigData fires after Initialize), and that first pass built
+    -- its layout before this restore happened -- so force an immediate
+    -- rebuild now instead of waiting on the next ~5s poll, otherwise
+    -- the tombstone would silently sit unused until then.
+    recountLabs()
   end
 end
 
