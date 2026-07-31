@@ -43,6 +43,12 @@ local hideGraphs = false
 -- Toggle M:E Ratio Tooltip to be visible at all times
 local meRatioPinned = false
 
+-- Toggle [INTEL] Tooltip to be visible at all times
+local intelPinned = false
+
+-- Toggle [ -Xe +Xm X% ] Energy->Metal conversion stat tooltip
+local convStatPinned = false
+
 -- LOCAL STATE (Option A — single correct alias)
 local spGetLocalAllyTeamID    = Spring.GetLocalAllyTeamID
 local spGetMyTeamID           = Spring.GetMyTeamID
@@ -1142,55 +1148,27 @@ end
     local nukeUnitDefIDs = {}
 local antiNukeUnitDefIDs = {}
 local junoUnitDefIDs = {}
-local nukeWeaponDefIDs = {}
-local antiNukeWeaponDefIDs = {}
 local spGetUnitWeaponState = Spring.GetUnitWeaponState   -- FIX: was missing, caused CountMyNukeUnits to error out
 local spGetUnitStockpile   = Spring.GetUnitStockpile     -- correct API for reading ready warhead counts
 
-local function BuildNukeLookup()
-    -- FIX: BAR's real unit/weapon def names (armsilo, corsilo, legsilo,
-    -- armamd, corfmd, legabm, etc.) don't contain the substring "nuke",
-    -- so matching on name always came up empty. Classify by the engine's
-    -- actual weapon flags instead: any stockpile weapon is either a nuke
-    -- (not an interceptor) or an anti-nuke (is an interceptor).
-    for wdID, wd in pairs(WeaponDefs) do
-        if wd.stockpile then
-            if wd.interceptor and wd.interceptor > 0 then
-                antiNukeWeaponDefIDs[wdID] = true
-            else
-                nukeWeaponDefIDs[wdID] = true
-            end
-        end
-    end
+-- FIX: classifying by "any stockpile weapon, split by interceptor flag"
+-- was too broad - it also matched OTHER stockpile-weapon structures
+-- like Super Weapon (Vulcan/Buzzkill) and EMP Missile Launcher/Catalyst,
+-- silently inflating Nuke/Anti-Nuke counts even with zero silos built.
+-- Switched to exact unit names instead (same real defnames already
+-- confirmed via gui_team_base_tracker.lua's own category mapping).
+local nukeSiloNames = { armsilo = true, corsilo = true, legsilo = true }
+local antiNukeNames = { armamd = true, corfmd = true, legabm = true }
 
-    -- JUNO: also a stockpile unit (armjuno/corjuno/legjuno - consistent
-    -- naming across all 3 factions, so name matching is reliable here,
-    -- unlike "nuke"). Identify these first so they can be excluded below -
-    -- Juno's weapon is a non-interceptor stockpile weapon too, so it would
-    -- otherwise get miscounted as a nuke silo.
+local function BuildNukeLookup()
     for udid, ud in pairs(UnitDefs) do
         local name = ud.name and ud.name:lower() or ""
-        if name:find("juno") then
+        if nukeSiloNames[name] then
+            nukeUnitDefIDs[udid] = true
+        elseif antiNukeNames[name] then
+            antiNukeUnitDefIDs[udid] = true
+        elseif name:find("juno") then
             junoUnitDefIDs[udid] = true
-        end
-    end
-
-    -- Unit-level fallback lookup, derived from the weapon classification
-    -- above (used only if the per-weapon scan in CountMyNukeUnits ever
-    -- misses a weapon index). Skip Juno units so they aren't double-
-    -- classified as nukes.
-    for udid, ud in pairs(UnitDefs) do
-        if not junoUnitDefIDs[udid] and ud.weapons then
-            for _, w in ipairs(ud.weapons) do
-                local wdID = w.weaponDef
-                if wdID then
-                    if nukeWeaponDefIDs[wdID] then
-                        nukeUnitDefIDs[udid] = true
-                    elseif antiNukeWeaponDefIDs[wdID] then
-                        antiNukeUnitDefIDs[udid] = true
-                    end
-                end
-            end
         end
     end
 end
@@ -1443,27 +1421,34 @@ end
 
 
 -- REPLAY-AWARE VIEWED TEAM DETECTOR (SAFE FOR LIVE GAMES)
+-- NOTE: no longer called anywhere in this file (see Spring.GetMyTeamID()
+-- usage in SampleEco/the INTEL tooltips instead) - kept fixed rather than
+-- deleted in case anything is re-added to use it later.
 local function GetViewedTeamID()
     -- Get local player info
     local myPlayerID = Spring.GetMyPlayerID()
     local name, active, spectator, teamID = Spring.GetPlayerInfo(myPlayerID, false)
 
-    
+
     -- CASE A: LIVE GAME (not spectator)
         if not spectator then
         -- Must NOT reveal enemy eco
         return teamID
     end
 
-    
-    -- CASE B: REPLAY POV TEAM
-    -- In replays, the engine sets a POV team for the camera
-    local _, _, _, povTeam = Spring.GetPlayerInfo(Spring.GetMyPlayerID(), false)
-    if povTeam then
+
+    -- CASE B: REPLAY/SPECTATE POV TEAM
+    -- FIX: this used to re-call Spring.GetPlayerInfo with the same args
+    -- as above, which just returns YOUR OWN team again - not the
+    -- camera's followed team - so this branch always fired and silently
+    -- stuck on one fixed team no matter who was being watched. The real
+    -- POV team comes from Spring.GetSpectatingState() instead.
+    local isSpec, fullView, fullSelect, povTeam = spGetSpectatingState()
+    if isSpec and povTeam and povTeam >= 0 then
         return povTeam
     end
 
-    
+
     -- CASE C: SPECTATOR CLICKING UNITS
     local sel = Spring.GetSelectedUnits()
     if sel and #sel > 0 then
@@ -1481,7 +1466,11 @@ end
 local function SampleEco()
     if paused then return end
 
-    local teamID = GetViewedTeamID()
+    -- FIX: GetViewedTeamID() had a broken replay-POV branch that silently
+    -- stuck this on one fixed team regardless of who you were watching.
+    -- Spring.GetMyTeamID() is what the header already uses and correctly
+    -- tracks whoever a spectator is currently following.
+    local teamID = Spring.GetMyTeamID()
     local t      = spDiffTimers(spGetTimer(), startTimer)
 
     
@@ -4073,7 +4062,7 @@ end
 
 
 ----------------------------------------------------------------
--- M:E RATIO TOOLTIP (SMART VERSION, STYLED, DARK BG, NET-AWARE)
+-- M:E RATIO TOOLTIP (SMART VERSION, STYLED, LIGHT BG, NET-AWARE)
 ----------------------------------------------------------------
 do
     local mx, my = Spring.GetMouseState()
@@ -4116,7 +4105,7 @@ do
 
         elseif mInc < 25 then
             metalHint  = "Metal income normal."
-            metalColor = {1, 1, 1, 1}
+            metalColor = {0, 0, 0, 1}
             metalIcon  = "✔️ "
 
         else
@@ -4157,7 +4146,7 @@ do
             "Overbuilt Energy: 1:81 – 1:200",
             "Extreme Surplus: 200+",
             "",
-            "Click on [M:E 1:XX] to pin this tooltip for reference."
+            { text = "Click on [M:E 1:XX] to pin this tooltip for reference.", center = true, small = true, color = {0.35, 0.35, 0.35, 1} }
         }
 
         ------------------------------------------------------------
@@ -4184,6 +4173,13 @@ do
            -- tipX = meRatioRect.x2 + 12
             tipX = meRatioRect.x1 - tw + 20 --This moves the tooltip left or right when pinned. Higher moves right.
             tipY = meRatioRect.y1 - th - 12
+
+            -- If popping downward runs off the bottom of the screen
+            -- (widget sitting near the bottom edge), flip to popping
+            -- above the whole widget box instead.
+            if tipY < 0 then
+                tipY = box.y2 + 12
+            end
         else
             -- Normal hover behavior
             tipX = mx + 18
@@ -4191,12 +4187,12 @@ do
         end
 
         ------------------------------------------------------------
-        -- Tooltip background + border (DARK GRAY)
+        -- Tooltip background + border (matches INTEL / Energy-to-Metal)
         ------------------------------------------------------------
-        glColor(0.18, 0.18, 0.18, 0.92)
+        glColor(1, 1, 1, 0.92)
         glRect(tipX, tipY, tipX + tw, tipY + th)
 
-        glColor(0.7, 0.7, 0.7, 0.35)
+        glColor(0, 0, 0, 0.25)
         glLineWidth(1.0)
         glBeginEnd(GL_LINES, function()
             glVertex(tipX, tipY); glVertex(tipX + tw, tipY)
@@ -4211,11 +4207,12 @@ do
         local y = tipY + th - pad - fontSize
         for _, line in ipairs(lines) do
             if type(line) == "table" then
-                glColor(line.color or {1,1,1,1})
+                glColor(line.color or {0,0,0,1})
 
                 local size =
                     line.bigger and (fontSize + 3) or
                     line.big    and (fontSize + 1) or
+                    line.small  and (fontSize * 0.85) or
                     fontSize
 
                 if line.center then
@@ -4226,7 +4223,7 @@ do
                     glText(line.text, tipX + pad, y, size, "lo")
                 end
             else
-                glColor(1,1,1,1)
+                glColor(0,0,0,1)
                 glText(line, tipX + pad, y, fontSize, "lo")
             end
 
@@ -4258,7 +4255,7 @@ end
 -- TOOLTIP FOR INFO (Compact View)
 do
     local mx, my = Spring.GetMouseState()
-    if ppRect and mx >= ppRect.x1 and mx <= ppRect.x2 and my >= ppRect.y1 and my <= ppRect.y2 then
+    if intelPinned or (ppRect and mx >= ppRect.x1 and mx <= ppRect.x2 and my >= ppRect.y1 and my <= ppRect.y2) then
 
         local currentAlly = GetCurrentViewedAllyTeamID()
         local count = allyPinCount[currentAlly] or 0
@@ -4272,7 +4269,16 @@ do
         local label5 = "Anti-Nuke:"
         local label6 = "Juno:"
 
-        local viewedTeamID = GetViewedTeamID()   -- FIX: follow whoever you're spectating/replaying, not just yourself
+        -- FIX 2: GetViewedTeamID() had a broken replay-POV branch (it
+        -- re-called Spring.GetPlayerInfo, which just returns YOUR OWN
+        -- team again - not the camera's followed team - so it silently
+        -- got stuck on one fixed team no matter who was selected). The
+        -- header above already correctly tracks whoever you're watching
+        -- via Spring.GetMyTeamID(), which is a direct alias for the
+        -- engine's GetLocalTeamID (gu->myTeam) - the actual value Spring
+        -- updates when a spectator follows a different player. Using
+        -- that same call here keeps this in sync with the header.
+        local viewedTeamID = Spring.GetMyTeamID()
 
         local speedVal = string.format("%.1f", Spring.GetGameSpeed() or 1)
         local ppVal = has and tostring(count) or "None"
@@ -4303,15 +4309,33 @@ do
             glGetTextWidth(junoVal)
         ) * fontSize
 
+        -- Reminder line (bottom row, spans full width)
+        local reminderText = "Click on [INTEL] to pin this tooltip for reference."
+        local reminderSize = fontSize * 0.85
+        local reminderW = glGetTextWidth(reminderText) * reminderSize
+
         -- Total width
-        local tw = labelW + descW + pad * 3
+        local tw = math.max(labelW + descW + pad * 3, reminderW + pad * 2)
 
-        -- Height for 6 rows
-        local th = fontSize * 6 + pad * 7
+        -- Height for 6 rows + reminder line
+        local th = fontSize * 6 + pad * 7 + reminderSize + pad
 
-        -- LOWER-RIGHT of mouse
-        local tipX = mx + 18
-        local tipY = my - th - 18
+        -- LOWER-RIGHT of mouse, or anchored to [INTEL] when pinned
+        local tipX, tipY
+        if intelPinned then
+            tipX = ppRect.x1 + 18
+            tipY = ppRect.y1 - th - 18
+
+            -- If popping downward runs off the bottom of the screen
+            -- (widget sitting near the bottom edge), flip to popping
+            -- above the whole widget box instead.
+            if tipY < 0 then
+                tipY = box.y2 + 18
+            end
+        else
+            tipX = mx + 18
+            tipY = my - th - 18
+        end
 
         -- Background
         glColor(1, 1, 1, 0.92)
@@ -4351,8 +4375,13 @@ do
         glText(antiNukeVal, tipX + pad + labelW + pad, tipY + th - fontSize*5 - pad*5, fontSize, "lo")
 
         -- Row 6
-        glText(label6, tipX + pad, tipY + pad, fontSize, "lo")
-        glText(junoVal, tipX + pad + labelW + pad, tipY + pad, fontSize, "lo")
+        glText(label6, tipX + pad, tipY + reminderSize + pad * 2, fontSize, "lo")
+        glText(junoVal, tipX + pad + labelW + pad, tipY + reminderSize + pad * 2, fontSize, "lo")
+
+        -- Reminder (centered, bottom row)
+        glColor(0.35, 0.35, 0.35, 1)
+        local reminderCx = tipX + (tw * 0.5) - (reminderW * 0.5)
+        glText(reminderText, reminderCx, tipY + pad, reminderSize, "lo")
     end
 end
 
@@ -4648,9 +4677,9 @@ end
 do
     local mx, my = Spring.GetMouseState()
 
-    if convStatRect
+    if convStatPinned or (convStatRect
     and mx >= convStatRect.x1 and mx <= convStatRect.x2
-    and my >= convStatRect.y1 and my <= convStatRect.y2 then
+    and my >= convStatRect.y1 and my <= convStatRect.y2) then
 
         local title  = "Energy to Metal Conversion"
         local label1 = "Energy use:"
@@ -4679,11 +4708,49 @@ do
             glGetTextWidth(value3)
         ) * fontSize
 
-        local tw = math.max(titleW, labelW + valueW + pad * 3) + pad * 2
-        local th = titleSize + (fontSize * 3) + pad * 6
+        -- Reminder line (bottom row, just a hint text)
+        local reminderText = "Click to pin this tooltip for reference."
+        local reminderSize = fontSize * 0.85
+        local reminderW = glGetTextWidth(reminderText) * reminderSize
 
-        local tipX = mx + 18
-        local tipY = my - th - 18
+        local tw = math.max(titleW, labelW + valueW + pad * 3, reminderW) + pad * 2
+        local th = titleSize + (fontSize * 3) + pad * 6 + reminderSize + pad
+
+        -- Nudged 20px further down from where it would otherwise pop up,
+        -- so it clears the metal storage bar and draggable thumbs below
+        -- instead of covering them.
+        local NUDGE_DOWN = 10
+        local tipX, tipY
+        if convStatPinned then
+            -- Anchor tooltip to the stat itself instead of the mouse.
+            -- Extends LEFTWARD (like M:E) since this icon sits near the
+            -- widget's right edge next to Pause/X.
+            --
+            -- Vertically: this icon sits at the widget's TOP edge (fixed,
+            -- doesn't move on resize). INTEL/M:E sit at the BOTTOM edge
+            -- and pop their tooltip further down, away from the widget,
+            -- into free space - that's why resizing never makes them
+            -- cover anything. Popping downward from a TOP-anchored icon
+            -- instead pops the tooltip straight into the widget's
+            -- interior (over the energy bar/thumbs), which is the bug.
+            -- Fix: pop UPWARD instead, away from the widget entirely,
+            -- so it can never overlap widget content regardless of size.
+            tipX = convStatRect.x1 - tw + 20
+            tipY = convStatRect.y2 + 18
+
+            -- If popping upward would push it off the top of the screen
+            -- (widget sitting near the top edge), fall back to popping
+            -- downward instead - but below the WHOLE widget box (box.y1),
+            -- not just below the icon, so it lands outside the widget's
+            -- borders instead of over the graph/energy bar/thumbs inside it.
+            local _, vsy = Spring.GetViewGeometry()
+            if tipY + th > vsy then
+                tipY = box.y1 - th - 18
+            end
+        else
+            tipX = mx + 18
+            tipY = my - th - 18 - NUDGE_DOWN
+        end
 
         -- background
         glColor(1, 1, 1, 0.92)
@@ -4713,6 +4780,11 @@ do
 
         glText(label3, tipX + pad,                     tipY + th - titleSize - fontSize*3 - pad*5, fontSize, "lo")
         glText(value3, tipX + tw - pad,                tipY + th - titleSize - fontSize*3 - pad*5, fontSize, "ro")
+
+        -- Reminder (centered, bottom row)
+        glColor(0.35, 0.35, 0.35, 1)
+        local reminderCx = tipX + (tw * 0.5) - (reminderW * 0.5)
+        glText(reminderText, reminderCx, tipY + pad, reminderSize, "lo")
     end
 end
 
@@ -4980,7 +5052,7 @@ end
 -- INFO TOOLTIP (Two-Column)
 do
     local mx, my = Spring.GetMouseState()
-    if ppRect and mx >= ppRect.x1 and mx <= ppRect.x2 and my >= ppRect.y1 and my <= ppRect.y2 then
+    if intelPinned or (ppRect and mx >= ppRect.x1 and mx <= ppRect.x2 and my >= ppRect.y1 and my <= ppRect.y2) then
 
         local currentAlly = GetCurrentViewedAllyTeamID()
         local count = allyPinCount[currentAlly] or 0
@@ -4994,7 +5066,16 @@ do
         local label5 = "Anti-Nuke:"
         local label6 = "Juno:"
 
-        local viewedTeamID = GetViewedTeamID()   -- FIX: follow whoever you're spectating/replaying, not just yourself
+        -- FIX 2: GetViewedTeamID() had a broken replay-POV branch (it
+        -- re-called Spring.GetPlayerInfo, which just returns YOUR OWN
+        -- team again - not the camera's followed team - so it silently
+        -- got stuck on one fixed team no matter who was selected). The
+        -- header above already correctly tracks whoever you're watching
+        -- via Spring.GetMyTeamID(), which is a direct alias for the
+        -- engine's GetLocalTeamID (gu->myTeam) - the actual value Spring
+        -- updates when a spectator follows a different player. Using
+        -- that same call here keeps this in sync with the header.
+        local viewedTeamID = Spring.GetMyTeamID()
 
         local speedVal = string.format("%.1f", Spring.GetGameSpeed() or 1)
         local ppVal = has and tostring(count) or "None"
@@ -5025,15 +5106,33 @@ do
             glGetTextWidth(junoVal)
         ) * fontSize
 
+        -- Reminder line (bottom row, spans full width)
+        local reminderText = "Click on [INTEL] to pin this tooltip for reference."
+        local reminderSize = fontSize * 0.85
+        local reminderW = glGetTextWidth(reminderText) * reminderSize
+
         -- Total width
-        local tw = labelW + descW + pad * 3
+        local tw = math.max(labelW + descW + pad * 3, reminderW + pad * 2)
 
-        -- Height for 6 rows
-        local th = fontSize * 6 + pad * 7
+        -- Height for 6 rows + reminder line
+        local th = fontSize * 6 + pad * 7 + reminderSize + pad
 
-        -- LOWER-RIGHT of mouse cursor (matches income tooltips)
-        local tipX = mx + 18
-        local tipY = my - th - 18
+        -- LOWER-RIGHT of mouse cursor, or anchored to [INTEL] when pinned
+        local tipX, tipY
+        if intelPinned then
+            tipX = ppRect.x1 + 18
+            tipY = ppRect.y1 - th - 18
+
+            -- If popping downward runs off the bottom of the screen
+            -- (widget sitting near the bottom edge), flip to popping
+            -- above the whole widget box instead.
+            if tipY < 0 then
+                tipY = box.y2 + 18
+            end
+        else
+            tipX = mx + 18
+            tipY = my - th - 18
+        end
 
         -- Background
         glColor(1, 1, 1, 0.92)
@@ -5073,8 +5172,13 @@ do
         glText(antiNukeVal, tipX + pad + labelW + pad, tipY + th - fontSize*5 - pad*5, fontSize, "lo")
 
         -- Row 6
-        glText(label6, tipX + pad, tipY + pad, fontSize, "lo")
-        glText(junoVal, tipX + pad + labelW + pad, tipY + pad, fontSize, "lo")
+        glText(label6, tipX + pad, tipY + reminderSize + pad * 2, fontSize, "lo")
+        glText(junoVal, tipX + pad + labelW + pad, tipY + reminderSize + pad * 2, fontSize, "lo")
+
+        -- Reminder (centered, bottom row)
+        glColor(0.35, 0.35, 0.35, 1)
+        local reminderCx = tipX + (tw * 0.5) - (reminderW * 0.5)
+        glText(reminderText, reminderCx, tipY + pad, reminderSize, "lo")
     end
 end
 
@@ -5408,6 +5512,30 @@ function widget:MousePress(mx, my, button)
         and my >= meRatioRect.y1 and my <= meRatioRect.y2 then
             meRatioPinned = not meRatioPinned
             Spring.Echo("M:E pinned:", meRatioPinned)
+            return true
+        end
+    end
+
+    ------------------------------------------------------------
+    -- 0b. [INTEL] PIN TOGGLE (same priority as M:E)
+    ------------------------------------------------------------
+    if button == 1 and ppRect then
+        if mx >= ppRect.x1 and mx <= ppRect.x2
+        and my >= ppRect.y1 and my <= ppRect.y2 then
+            intelPinned = not intelPinned
+            Spring.Echo("INTEL pinned:", intelPinned)
+            return true
+        end
+    end
+
+    ------------------------------------------------------------
+    -- 0c. [ -Xe +Xm X% ] CONVERSION STAT PIN TOGGLE (same priority)
+    ------------------------------------------------------------
+    if button == 1 and convStatRect then
+        if mx >= convStatRect.x1 and mx <= convStatRect.x2
+        and my >= convStatRect.y1 and my <= convStatRect.y2 then
+            convStatPinned = not convStatPinned
+            Spring.Echo("Conversion stat pinned:", convStatPinned)
             return true
         end
     end
@@ -6126,9 +6254,10 @@ local function Detached_DrawMetalGraph()
     local x1, y1, x2, y2 = detached.x1, detached.y1, detached.x2, detached.y2
     local centerX = x1 + (x2 - x1) * 0.5
 
-    -- Horizontal: 3% outer margin, 1% center gap (left half)
+    -- Horizontal: 3% outer margin, center gap (left half)
+    -- Center gap reduced by 1/3 twice (0.07 -> 0.0467 -> 0.0311 per side)
     local gx1 = x1 + (x2 - x1) * 0.03
-    local gx2 = centerX - (x2 - x1) * 0.07
+    local gx2 = centerX - (x2 - x1) * 0.0311
 
     -- Vertical: from bottom + small pad to below stats row
     local bottomPad = 10
@@ -6209,8 +6338,9 @@ local function Detached_DrawEnergyGraph()
     local x1, y1, x2, y2 = detached.x1, detached.y1, detached.x2, detached.y2
     local centerX = x1 + (x2 - x1) * 0.5
 
-    -- Horizontal: 1% gap from center, 3% margin from right (right half)
-    local gx1 = centerX + (x2 - x1) * 0.07
+    -- Horizontal: center gap, 3% margin from right (right half)
+    -- Center gap reduced by 1/3 twice (0.07 -> 0.0467 -> 0.0311 per side)
+    local gx1 = centerX + (x2 - x1) * 0.0311
     local gx2 = x2 - (x2 - x1) * 0.03
 
     -- Vertical: from bottom + small pad to below stats row
