@@ -541,7 +541,14 @@ end
 -- full vision, so any team's death is fair game.
 ------------------------------------------------------------
 
-local deadCommanderTombstone = {}   -- [teamID] = {x,y,z,defName,wreckFeatureID,wreckGone,expectedWreckDefName}
+-- [teamID] = { {x,y,z,defName,wreckFeatureID,wreckGone,expectedWreckDefName}, ... }
+-- A LIST per team (not a single entry) so a team that loses more than
+-- one commander (multi-commander games, resurrected-then-died-again,
+-- etc.) keeps a tombstone for each one instead of the newest death
+-- silently overwriting the last. Resurrection is detected and each
+-- matching entry removed immediately in widget:UnitCreated below;
+-- recountLabs() only prunes entries whose wreck got reclaimed instead.
+local deadCommanderTombstone = {}
 local pendingCommanderWrecks = {}   -- correlates a death with the wreck feature it spawns
 local COMMANDER_WRECK_MATCH_RADIUS  = 80
 local COMMANDER_WRECK_MATCH_TIMEOUT = 10
@@ -829,6 +836,15 @@ local lastRightClickTeamID = nil
 local lastRightClickTime = 0
 local cachedTopTeamID = nil
 local iconCycleIndex = {}
+-- Camera state saved right before jumping to a LONE instance (exactly
+-- one entry for that team+category -- e.g. a single commander
+-- tombstone), keyed by the same "teamID|labName" as iconCycleIndex.
+-- Clicking/spacebar-ing that same lone instance again restores this
+-- instead of just re-jumping to the same spot. Only used when there's
+-- exactly one instance; with multiple instances, click/spacebar keeps
+-- cycling through them as it always has.
+local savedCameraBeforeJump = nil
+local savedCameraForKey = nil
 -- Per-unit kill counts, built locally from UnitDestroyed callins since
 -- BAR doesn't expose this as a queryable stat. Used to order Unit
 -- Tracker's cycle-through-instances by performance.
@@ -843,6 +859,13 @@ local flashMarker = nil
 local commanderDeathByTeam = {}
 local COMMANDER_FLASH_FRAMES = 45   -- initial pulse, same timing as before
 local COMMANDER_GLOW_FRAMES = 450   -- ~15s at 30fps dissipating glow after the flash
+
+-- Keyed by teamID -> game frame that team's commander came BACK via
+-- resurrection (detected in recountLabs: a live commander reappears for
+-- a team that still had an un-reclaimed tombstone on record). Same
+-- flash/glow timing as commanderDeathByTeam, just drawn in white instead
+-- of fiery orange -- see drawCommanderResurrectEffect below.
+local commanderResurrectByTeam = {}
 
 -- Whether the panel keeps drawing itself (via DrawScreenEffects) while
 -- BAR's Show/Hide UI toggle (F7 / Ctrl+F7) is active. Toggled by the
@@ -1031,36 +1054,42 @@ local function recountLabs()
     end
   end
 
-  -- Commander tombstones: for any team with no live commander left
-  -- this scan, but a recorded death whose wreck hasn't been reclaimed,
-  -- keep its Commander tile alive as a tombstone instead of letting it
-  -- vanish. A live commander (including a resurrection) always takes
-  -- priority and simply supersedes the tombstone here.
-  for teamID, tombstone in pairs(deadCommanderTombstone) do
-    if tombstone.wreckFeatureID and not tombstone.wreckGone then
-      if not Spring.GetFeatureDefID(tombstone.wreckFeatureID) then
-        tombstone.wreckGone = true
+  -- Commander tombstones: append one Commander-category entry for every
+  -- still-pending tombstone a team has, alongside whatever live
+  -- commanders the scan above already found -- so a team can show any
+  -- mix of live + dead commanders at once (see resolveStructureIcon /
+  -- drawOneIcon for how a mixed list is rendered). Resurrection is
+  -- handled eagerly in widget:UnitCreated (removes the matching
+  -- tombstone the instant a new commander appears), so all that's left
+  -- to check here is whether the wreck itself got reclaimed for scrap.
+  for teamID, tombstoneList in pairs(deadCommanderTombstone) do
+    for i = #tombstoneList, 1, -1 do
+      local tombstone = tombstoneList[i]
+      if tombstone.wreckFeatureID and not tombstone.wreckGone then
+        if not Spring.GetFeatureDefID(tombstone.wreckFeatureID) then
+          tombstone.wreckGone = true
+        end
+      end
+
+      if tombstone.wreckGone then
+        -- Case 1: reclaimed for scrap, not resurrected -- gone for good.
+        table.remove(tombstoneList, i)
+      else
+        teamLabs[teamID] = teamLabs[teamID] or {}
+        teamLabs[teamID]["Commander"] = (teamLabs[teamID]["Commander"] or 0) + 1
+
+        teamLabPositions[teamID] = teamLabPositions[teamID] or {}
+        teamLabPositions[teamID]["Commander"] = teamLabPositions[teamID]["Commander"] or {}
+        table.insert(teamLabPositions[teamID]["Commander"], {
+          x = tombstone.x, y = tombstone.y, z = tombstone.z,
+          defName = tombstone.defName, unitID = nil,
+          isDeadTombstone = true,
+        })
       end
     end
 
-    if not tombstone.wreckGone then
-      local hasLiveCommander = teamLabPositions[teamID]
-        and teamLabPositions[teamID]["Commander"]
-        and #teamLabPositions[teamID]["Commander"] > 0
-
-      if not hasLiveCommander then
-        teamLabs[teamID] = teamLabs[teamID] or {}
-        teamLabs[teamID]["Commander"] = teamLabs[teamID]["Commander"] or 1
-
-        teamLabPositions[teamID] = teamLabPositions[teamID] or {}
-        teamLabPositions[teamID]["Commander"] = {
-          {
-            x = tombstone.x, y = tombstone.y, z = tombstone.z,
-            defName = tombstone.defName, unitID = nil,
-            isDeadTombstone = true,
-          },
-        }
-      end
+    if #tombstoneList == 0 then
+      deadCommanderTombstone[teamID] = nil
     end
   end
 
@@ -1321,6 +1350,42 @@ local function getSortedTeams()
   return teams
 end
 
+-- Returns teamLabPositions[teamID][labName] reordered the same way
+-- everywhere iconCycleIndex is used to pick "the currently selected
+-- instance" -- if any entry carries a unitID (individual units,
+-- including live commanders), sorted by kill count (most kills first),
+-- with unitID-less entries (dead commander tombstones) always sorted
+-- after all live ones. Otherwise returns the raw list unchanged.
+-- Centralized here so resolveStructureIcon (which decides what icon to
+-- draw), cycleAndJumpToIcon (which decides what to jump the camera to),
+-- and the right-click wreck-jump handler all agree on what a given
+-- cycle index actually points to -- they used to each read the list
+-- differently, which meant the icon shown and the spot you'd jump to
+-- could silently be two different commanders.
+local function getOrderedInstanceList(teamID, labName)
+  local rawList = teamLabPositions[teamID] and teamLabPositions[teamID][labName]
+  if not rawList or #rawList == 0 then return rawList end
+
+  local hasUnitIDs = false
+  for _, entry in ipairs(rawList) do
+    if entry.unitID then hasUnitIDs = true break end
+  end
+  if not hasUnitIDs then return rawList end
+
+  local list = {}
+  for i, entry in ipairs(rawList) do list[i] = entry end
+  table.sort(list, function(a, b)
+    local ka = a.unitID and (unitKillCount[a.unitID] or 0) or -1
+    local kb = b.unitID and (unitKillCount[b.unitID] or 0) or -1
+    if ka ~= kb then return ka > kb end
+    if a.unitID and b.unitID then return a.unitID < b.unitID end
+    if a.unitID then return true end
+    if b.unitID then return false end
+    return (a.defName or "") < (b.defName or "")
+  end)
+  return list
+end
+
 -- Resolves a structure or Commander category to its icon defName, any
 -- Commander overlay defNames, and its badge text. Shared by Base
 -- Tracker's structure list and Unit Tracker's always-visible
@@ -1330,31 +1395,40 @@ local function resolveStructureIcon(t, faction, labName)
   local defName
   local overlayDefNames = nil
   local isDead = false
+  local deadOverlay = false
+  local isMulti = false
   if labName == "Commander" then
-    local comList = teamLabPositions[t.teamID] and teamLabPositions[t.teamID]["Commander"]
-    defName = comList and comList[1] and comList[1].defName
-    isDead = (comList and comList[1] and comList[1].isDeadTombstone) or false
+    local comList = getOrderedInstanceList(t.teamID, "Commander")
+    isMulti = (comList and #comList > 1) or false
 
-    -- If there's more than one commander (resurrected/given from
-    -- another faction, or a duplicate), the team's HOME faction
-    -- commander (if still alive) stays the main full-size icon --
-    -- everything else becomes a small overlay icon stacked from
-    -- the top-left corner. If the home-faction commander has died,
-    -- whichever one is first in the list simply becomes the new
-    -- main icon (matching "if the original dies, the resurrected
-    -- one becomes the new full icon").
     if comList and #comList > 1 then
-      local primaryIdx = nil
-      for i, com in ipairs(comList) do
-        local prefix = com.defName and com.defName:sub(1,3)
-        if prefix == faction then
-          primaryIdx = i
-          break
+      -- More than one commander (multi-commander games, resurrected
+      -- while a duplicate/given commander already existed, etc.):
+      -- whichever instance click/spacebar is currently cycled to (see
+      -- cycleAndJumpToIcon/iconCycleIndex) is shown as the main icon --
+      -- cycling changes what's displayed here. Before anything's been
+      -- clicked yet, default to the team's home-faction commander (or
+      -- just the first one).
+      local clickKey = t.teamID .. "|Commander"
+      local cycleIdx = iconCycleIndex[clickKey]
+      local primaryIdx = (cycleIdx and comList[cycleIdx]) and cycleIdx or nil
+      if not primaryIdx then
+        for i, com in ipairs(comList) do
+          local prefix = com.defName and com.defName:sub(1,3)
+          if prefix == faction then
+            primaryIdx = i
+            break
+          end
         end
+        if not primaryIdx then primaryIdx = 1 end
       end
-      if not primaryIdx then primaryIdx = 1 end
 
       defName = comList[primaryIdx].defName
+      -- With multiple commanders, never fully swap to the tombstone
+      -- icon -- keep the normal portrait (so you can still tell which
+      -- faction/unit it is) and mark it with a small overlay badge
+      -- instead. isDead stays false; deadOverlay carries this instead.
+      deadOverlay = comList[primaryIdx].isDeadTombstone or false
 
       local extras = {}
       for i, com in ipairs(comList) do
@@ -1365,6 +1439,11 @@ local function resolveStructureIcon(t, faction, labName)
       if #extras > 0 then
         overlayDefNames = extras
       end
+    elseif comList and comList[1] then
+      -- Exactly one commander on record: unchanged from before -- a
+      -- dead one fully swaps to the tombstone icon.
+      defName = comList[1].defName
+      isDead = comList[1].isDeadTombstone or false
     end
   else
     local factionMap = iconMap[faction]
@@ -1445,7 +1524,7 @@ local function resolveStructureIcon(t, faction, labName)
     if tier == 45 then tierLabel = "T1HT" end
   end
 
-  return defName, overlayDefNames, tierLabel, isDead
+  return defName, overlayDefNames, tierLabel, isDead, deadOverlay, isMulti
 end
 
 function rebuildLayout()
@@ -1599,7 +1678,7 @@ function rebuildLayout()
         if techTierOrder[catName] ~= nil then
           -- Commander or a lab category -- always visible, unaffected
           -- by the Tech1/2/3 filter.
-          local defName, overlayDefNames, tierLabel, isDead = resolveStructureIcon(t, faction, catName)
+          local defName, overlayDefNames, tierLabel, isDead, deadOverlay, isMulti = resolveStructureIcon(t, faction, catName)
           if defName then
             icons[#icons+1] = {
               defName = defName,
@@ -1608,6 +1687,8 @@ function rebuildLayout()
               count = t.labs[catName] or 1,
               tierLabel = tierLabel,
               isDead = isDead,
+              deadOverlay = deadOverlay,
+              isMulti = isMulti,
             }
           end
         else
@@ -1653,7 +1734,7 @@ function rebuildLayout()
 
       for _, labName in ipairs(ownedLabs) do
         if isCategoryVisibleInView(labName, activeViewMode) then
-          local defName, overlayDefNames, tierLabel, isDead = resolveStructureIcon(t, faction, labName)
+          local defName, overlayDefNames, tierLabel, isDead, deadOverlay, isMulti = resolveStructureIcon(t, faction, labName)
           if defName then
             icons[#icons+1] = {
               defName = defName,
@@ -1662,6 +1743,8 @@ function rebuildLayout()
               count = t.labs[labName] or 1,
               tierLabel = tierLabel,
               isDead = isDead,
+              deadOverlay = deadOverlay,
+              isMulti = isMulti,
             }
           end
         end
@@ -1925,21 +2008,38 @@ local function cycleAndJumpToIcon(teamID, labName)
   local rawList = teamLabPositions[teamID] and teamLabPositions[teamID][labName]
   if not rawList or #rawList == 0 then return end
 
-  local list = rawList
-  if rawList[1] and rawList[1].unitID then
-    list = {}
-    for i, entry in ipairs(rawList) do list[i] = entry end
-    table.sort(list, function(a, b)
-      local ka = unitKillCount[a.unitID] or 0
-      local kb = unitKillCount[b.unitID] or 0
-      if ka ~= kb then return ka > kb end
-      return a.unitID < b.unitID
-    end)
+  -- Exactly one instance and it's the same one we jumped to last time --
+  -- treat this press as "go back" instead of "jump to the same spot".
+  if #rawList == 1 and savedCameraForKey == clickKey and savedCameraBeforeJump then
+    Spring.SetCameraState(savedCameraBeforeJump, 1.2)
+    savedCameraBeforeJump = nil
+    savedCameraForKey = nil
+    return
+  end
+
+  -- Same ordering resolveStructureIcon and the right-click "return"
+  -- handler use, so a given cycle index always means the same instance
+  -- everywhere (see getOrderedInstanceList above).
+  local list = getOrderedInstanceList(teamID, labName)
+
+  -- Commander with multiple instances: remember the camera from BEFORE
+  -- this cycle sequence started (first press on this tile only -- don't
+  -- overwrite it on every subsequent cycle step), so a right-click can
+  -- return to it no matter how many times we've cycled forward since.
+  -- See the right-click handler in widget:MousePress.
+  if labName == "Commander" and #list > 1 and savedCameraForKey ~= clickKey then
+    savedCameraBeforeJump = Spring.GetCameraState()
+    savedCameraForKey = clickKey
   end
 
   local idx = (iconCycleIndex[clickKey] or 0) % #list + 1
   iconCycleIndex[clickKey] = idx
   local pos = list[idx]
+
+  if #list == 1 then
+    savedCameraBeforeJump = Spring.GetCameraState()
+    savedCameraForKey = clickKey
+  end
 
   jumpCameraTo(pos.x, pos.y, pos.z, 1000)
   flashMarker = {
@@ -1951,6 +2051,17 @@ local function cycleAndJumpToIcon(teamID, labName)
     followState.unitID = pos.unitID
     followState.camPos = nil
   end
+
+  -- Which Commander instance is shown as the main icon (and whether it
+  -- gets the tombstone overlay) depends on this same cycle index -- see
+  -- resolveStructureIcon. Force an immediate layout refresh so that
+  -- updates right away instead of waiting on the next periodic
+  -- recountLabs() poll (up to ~5s later, which is what made the
+  -- overlay look like it was lagging behind the click).
+  if labName == "Commander" then
+    rebuildLayout()
+  end
+
   selectedTeamID = teamID
 end
 
@@ -2054,7 +2165,11 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerD
           wreckFeatureID = nil,
           wreckGone = false,
         }
-        deadCommanderTombstone[unitTeam] = tombstone
+        -- Append, don't overwrite -- a team can have more than one
+        -- tombstone pending at once (multi-commander games, or a second
+        -- commander dying before the first tombstone resolves).
+        deadCommanderTombstone[unitTeam] = deadCommanderTombstone[unitTeam] or {}
+        table.insert(deadCommanderTombstone[unitTeam], tombstone)
 
         if wreckDefName then
           pendingCommanderWrecks[#pendingCommanderWrecks+1] = {
@@ -2097,6 +2212,39 @@ function widget:FeatureCreated(featureID)
   end
 end
 
+-- Resurrection detection. Reclaiming a wreck for scrap never brings a
+-- unit back, so a new commander appearing near a still-pending
+-- tombstone can only mean a resurrection completed. Checked here
+-- (frame-accurate, same UnitCreated timing BAR itself uses to spawn
+-- the resurrected unit) rather than waiting on the ~5s recountLabs
+-- poll -- matches commanderDeathByTeam's own frame-accurate firing in
+-- UnitDestroyed above. Fairness is inherited for free: a tombstone
+-- only ever exists here if UnitDestroyed's allowed-check let it
+-- through in the first place.
+function widget:UnitCreated(unitID, unitDefID, unitTeam)
+  if not isCommanderDef[unitDefID] then return end
+  local list = deadCommanderTombstone[unitTeam]
+  if not list or #list == 0 then return end
+
+  local ux, uy, uz = Spring.GetUnitPosition(unitID)
+  if not ux then return end
+
+  for i = #list, 1, -1 do
+    local tombstone = list[i]
+    local dx = (tombstone.x or ux) - ux
+    local dz = (tombstone.z or uz) - uz
+    if (dx*dx + dz*dz) <= (COMMANDER_WRECK_MATCH_RADIUS * COMMANDER_WRECK_MATCH_RADIUS) then
+      commanderResurrectByTeam[unitTeam] = Spring.GetGameFrame()
+      table.remove(list, i)
+      break  -- one new commander resolves at most one tombstone
+    end
+  end
+
+  if #list == 0 then
+    deadCommanderTombstone[unitTeam] = nil
+  end
+end
+
 ------------------------------------------------------------
 -- MOUSE (position is polled each frame in DrawScreen instead
 -- of relying on the widget:MouseMove callin, which was found
@@ -2107,6 +2255,23 @@ function widget:MousePress(mx,my,button)
   if button ~= 1 and button ~= 3 then return false end
 
   if button == 3 then
+    -- Multi-commander teams: right-click the Commander icon to return to
+    -- the camera view from before you started cycling through them with
+    -- click/spacebar, no matter how many instances (alive or dead)
+    -- you've cycled through since (see the save in cycleAndJumpToIcon).
+    -- Single-commander teams don't need this -- click/spacebar itself
+    -- already toggles back on a second press there.
+    local iconRect = hitIcon(mx, my)
+    if iconRect and iconRect.labName == "Commander" and iconRect.isMulti then
+      local clickKey = iconRect.teamID .. "|Commander"
+      if savedCameraForKey == clickKey and savedCameraBeforeJump then
+        Spring.SetCameraState(savedCameraBeforeJump, 1.2)
+        savedCameraBeforeJump = nil
+        savedCameraForKey = nil
+        return true
+      end
+    end
+
     local teamID = hitTeamRow(mx, my)
     if not teamID then return false end
 
@@ -2622,6 +2787,35 @@ local function drawCommanderDeathEffect(r, deathFrame)
     fade = fade * fade -- ease out, dissipates faster near the end
     local flicker = 0.85 + 0.15 * math.abs(math.sin(age * 0.25))
     gl.Color(1, 0.2 + fade * 0.25, 0.05, fade * flicker * 0.4)
+    gl.Rect(r.x1 - 3, r.y1 - 3, r.x2 + 3, r.y2 + 3)
+  end
+  gl.Color(1, 1, 1, 1)
+  return true
+end
+
+-- Same shape as drawCommanderDeathEffect (identical frame timing: a
+-- COMMANDER_FLASH_FRAMES pulse, then a COMMANDER_GLOW_FRAMES ~15s
+-- dissipating glow), but white/heavenly instead of fiery orange -- this
+-- is what plays on a team's row when their commander comes back from a
+-- resurrection instead of staying dead.
+local function drawCommanderResurrectEffect(r, resurrectFrame)
+  local age = Spring.GetGameFrame() - resurrectFrame
+  local totalFrames = COMMANDER_FLASH_FRAMES + COMMANDER_GLOW_FRAMES
+  if age >= totalFrames then
+    return false
+  end
+
+  if age < COMMANDER_FLASH_FRAMES then
+    local t = age / COMMANDER_FLASH_FRAMES
+    local pulse = math.abs(math.sin(t * math.pi * 7))
+    gl.Color(1, 1, 1, pulse * 0.6)
+    gl.Rect(r.x1 - 4, r.y1 - 4, r.x2 + 4, r.y2 + 4)
+  else
+    local glowT = (age - COMMANDER_FLASH_FRAMES) / COMMANDER_GLOW_FRAMES
+    local fade = (1 - glowT)
+    fade = fade * fade -- ease out, dissipates faster near the end
+    local flicker = 0.85 + 0.15 * math.abs(math.sin(age * 0.25))
+    gl.Color(1, 1, 1, fade * flicker * 0.4)
     gl.Rect(r.x1 - 3, r.y1 - 3, r.x2 + 3, r.y2 + 3)
   end
   gl.Color(1, 1, 1, 1)
@@ -3256,6 +3450,16 @@ local function doDrawScreen()
       end
     end
 
+    -- Commander resurrection flash/glow -- same row, white instead of
+    -- fiery orange (see drawCommanderResurrectEffect and
+    -- commanderResurrectByTeam above).
+    if commanderResurrectByTeam[teamID] then
+      local stillActive = drawCommanderResurrectEffect(rowRects[teamID], commanderResurrectByTeam[teamID])
+      if not stillActive then
+        commanderResurrectByTeam[teamID] = nil
+      end
+    end
+
     gl.Color(item.colorR, item.colorG, item.colorB, 1)
 
     local nameY = rowY - (rowH * 0.5) + (nameFontSize * 0.25)
@@ -3317,6 +3521,25 @@ local function doDrawScreen()
         gl.Texture("#"..ud.id)
         gl.TexRect(ix, iy, ix+iconSize, iy+iconSize)
         gl.Texture(false)
+      end
+
+      -- Multiple commanders and the one currently cycled to is dead:
+      -- keep the normal portrait above, just badge it with a small
+      -- tombstone in the free bottom-right corner (extras stack along
+      -- the left edge, the tier label sits bottom-left, the count sits
+      -- top-right).
+      if iconData.deadOverlay then
+        local badgeSize = iconSize * 0.42
+        local bx2 = ix + iconSize
+        local by1 = iy
+        local bx1 = bx2 - badgeSize
+        local by2 = by1 + badgeSize
+
+        gl.Color(0,0,0,0.85)
+        gl.Rect(bx1-1, by1-1, bx2+1, by2+1)
+
+        gl.Color(1,1,1,1)
+        drawCommanderTombstoneIcon(bx1, by1, badgeSize)
       end
 
       if iconData.overlayDefNames then
@@ -3405,6 +3628,8 @@ local function doDrawScreen()
           labName=labName,
           displayLabel=iconData.displayLabel,
           isDead=iconData.isDead,
+          deadOverlay=iconData.deadOverlay,
+          isMulti=iconData.isMulti,
         }
       end
     end
@@ -3576,7 +3801,10 @@ local function doDrawScreen()
     if labName and factionName then
       local tooltipText = factionName .. " " .. labName
       if hoverState.icon.isDead then
-        tooltipText = tooltipText .. " (destroyed -- click to jump to death spot)"
+        tooltipText = tooltipText .. " (destroyed -- click to jump to death spot, click again to return)"
+      elseif hoverState.icon.isMulti then
+        local destroyedNote = hoverState.icon.deadOverlay and "destroyed -- " or ""
+        tooltipText = tooltipText .. " (" .. destroyedNote .. "click/spacebar cycles commanders, right-click to return to your original view)"
       end
       local tooltipFontSize = 14
       local padX, padY = 6, 4
@@ -3694,7 +3922,9 @@ local function doDrawScreen()
       {"Click a stat column (M/s, E/s, ...):", "sort teams by that stat"},
       {"Click the title:",                     "switch Base Tracker / Unit Tracker"},
       {"<> enabled + mousewheel:",              "scroll overflowing icon rows (Ctrl = all rows)"},
-      {"Tombstone icon:",                      "commander died -- click to jump there; gone once reclaimed"},
+      {"Tombstone icon:",                      "commander died -- click to jump, click again to return; gone once reclaimed"},
+      {"Multiple commanders:",                 "click/spacebar cycles them (dead ones show a small tombstone badge); right-click returns to your view from before you started cycling"},
+      {"White row flash:",                     "a commander was resurrected"},
     }
 
     local tooltipFontSize = 14
