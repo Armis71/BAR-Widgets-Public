@@ -555,41 +555,116 @@ local COMMANDER_WRECK_MATCH_TIMEOUT = 10
 
 -- Small vector tombstone drawn in place of the commander's portrait
 -- once it's dead -- same shape/style as Commander Kill Tracker's.
+-- Classic headstone silhouette (matches a reference sketch the user
+-- provided): a narrow rounded-arch stone standing on a wider base
+-- plinth, viewed at a slight angle so a thin dark "side" edge shows on
+-- the right of both pieces, plus a soft ground shadow. "RIP" is
+-- engraved on the face instead of a cross.
 local function drawCommanderTombstoneIcon(x, y, size)
-  -- Drawn well under full slot size, centered within it, so it clears
-  -- the bottom-left tier badge ("COM") instead of sitting under it.
-  local scale = 0.75 * 0.75
+  -- Centered horizontally, but flush to the BOTTOM of the slot (not
+  -- vertically centered) so the base of the tombstone sits right on
+  -- the slot's floor instead of floating in the middle of it.
+  local scale = 0.92
   local dsize = size * scale
-  local off = (size - dsize) * 0.5
-  x, y = x + off, y + off
+  local offX = (size - dsize) * 0.5
+  x = x + offX
   size = dsize
-
-  local baseH = size * 0.62
-  local domeR = size * 0.5
-  local cx = x + size * 0.5
-  local cy = y + baseH
 
   gl.Texture(false)
 
-  gl.Color(0.72, 0.70, 0.65, 1)
-  gl.Rect(x, y, x+size, y+baseH)
+  local cx = x + size * 0.5
+
+  -- Soft ground shadow (flattened ellipse under the base) so the stone
+  -- reads as sitting ON something instead of floating flat.
+  gl.Color(0, 0, 0, 0.32)
   gl.BeginEnd(GL.TRIANGLE_FAN, function()
-    gl.Vertex(cx, cy)
-    for i = 0, 12 do
-      local angle = math.pi * (i / 12)
-      gl.Vertex(cx + math.cos(angle) * domeR, cy + math.sin(angle) * domeR)
+    local shY  = y - size * 0.03
+    local shRX = size * 0.44
+    local shRY = size * 0.08
+    gl.Vertex(cx, shY)
+    for i = 0, 16 do
+      local angle = (i / 16) * 2 * math.pi
+      gl.Vertex(cx + math.cos(angle) * shRX, shY + math.sin(angle) * shRY)
     end
   end)
 
-  -- Cross pushed up near the dome, clear of the bottom tier badge.
-  -- Stem extended further below the crossbar (upper third, not
-  -- centered) so it reads as a cross instead of a plus sign.
-  gl.Color(0.38, 0.36, 0.32, 1)
-  local crossW = size * 0.32
-  gl.Rect(cx - size*0.045, y + baseH*0.30, cx + size*0.045, y + baseH*1.30)
-  gl.Rect(cx - crossW*0.5, y + baseH*1.05, cx + crossW*0.5, y + baseH*1.13)
+  -- BASE PLINTH: full width, short -- the slab the headstone stands on.
+  local baseH   = size * 0.16
+  local depth   = size * 0.06   -- thickness of the visible right-side edge
+  local bx1, by1 = x, y
+  local bx2, by2 = x + size, y + baseH
 
-  gl.Color(1,1,1,1)
+  -- Dark silhouette pass first (drawn slightly oversized) to fake the
+  -- hand-drawn outline stroke from the reference.
+  gl.Color(0.12, 0.11, 0.10, 1)
+  gl.Rect(bx1 - 1, by1 - 1, bx2 + 1, by2 + 1)
+
+  gl.Color(0.80, 0.78, 0.72, 1)
+  gl.Rect(bx1, by1, bx2 - depth, by2)
+  gl.Color(0.52, 0.50, 0.45, 1)
+  gl.Rect(bx2 - depth, by1, bx2, by2)
+
+  -- HEADSTONE: narrower slab, straight sides, rounded arch top.
+  local slabW  = size * 0.62
+  local sx1    = x + (size - slabW) * 0.5
+  local sx2    = sx1 + slabW
+  local sy1    = by2                     -- sits right on top of the plinth
+  -- Straight sides end here, arch begins. Raised from before (now that
+  -- there's no spike eating into the headroom budget) for a taller
+  -- stone overall, while still leaving a small margin so the dome
+  -- doesn't poke into the row above.
+  local archTopY = y + size * 0.69
+  local archR  = slabW * 0.5
+  -- True center of the slab (not offset for a depth edge like before)
+  -- -- the fill below now widens all the way out to sx1/sx2 to match,
+  -- instead of leaving an inset gap the outline could show through.
+  local archCx = (sx1 + sx2) * 0.5
+
+  -- Dark silhouette pass for the slab + arch (outline stroke look).
+  -- The rectangle stops exactly AT archTopY (not past it) -- its sharp
+  -- square corners used to overshoot past where the round dome outline
+  -- curves in, sticking out as a small pointed nub at the seam.
+  gl.Color(0.12, 0.11, 0.10, 1)
+  gl.Rect(sx1 - 1, sy1 - 1, sx2 + 1, archTopY)
+  gl.BeginEnd(GL.TRIANGLE_FAN, function()
+    gl.Vertex(archCx, archTopY)
+    for i = 0, 16 do
+      local angle = math.pi * (i / 16)
+      local r = archR + 1
+      gl.Vertex(archCx + math.cos(angle) * r, archTopY + math.sin(angle) * r)
+    end
+  end)
+
+  -- Front face: widened all the way to sx1/sx2 (matching the outline
+  -- and the dome exactly) instead of leaving an inset gap on the right
+  -- for a separate depth-edge strip -- that inset was the actual cause
+  -- of the corner artifact, since the outline/dome are both centered
+  -- and sized around the FULL slab width, not the narrower inset one.
+  gl.Color(0.83, 0.81, 0.75, 1)
+  gl.Rect(sx1, sy1, sx2, archTopY)
+
+  -- Rounded arch cap: a true circle, Gouraud-shaded, same center point
+  -- as the dark outline fan above (so it fully covers it, leaving a
+  -- clean 1px outline ring instead of a gap), brightest at the center
+  -- and fading toward the rim for a highlight look.
+  gl.BeginEnd(GL.TRIANGLE_FAN, function()
+    gl.Color(0.92, 0.90, 0.85, 1)
+    gl.Vertex(archCx, archTopY)
+    for i = 0, 16 do
+      local angle = math.pi * (i / 16)
+      local t = i / 16
+      gl.Color(0.87 - 0.10 * t, 0.85 - 0.10 * t, 0.79 - 0.09 * t, 1)
+      gl.Vertex(archCx + math.cos(angle) * archR, archTopY + math.sin(angle) * archR)
+    end
+  end)
+
+  -- "RIP" engraved on the face, centered -- raised further up the slab
+  -- again.
+  local ripFontSize = slabW * 0.34
+  gl.Color(0.42, 0.40, 0.35, 1)
+  gl.Text("RIP", archCx, sy1 + (archTopY - sy1) * 0.82, ripFontSize, "oc")
+
+  gl.Color(1, 1, 1, 1)
 end
 
 local factionFullNames = {
@@ -1396,10 +1471,8 @@ local function resolveStructureIcon(t, faction, labName)
   local overlayDefNames = nil
   local isDead = false
   local deadOverlay = false
-  local isMulti = false
   if labName == "Commander" then
     local comList = getOrderedInstanceList(t.teamID, "Commander")
-    isMulti = (comList and #comList > 1) or false
 
     if comList and #comList > 1 then
       -- More than one commander (multi-commander games, resurrected
@@ -1524,7 +1597,7 @@ local function resolveStructureIcon(t, faction, labName)
     if tier == 45 then tierLabel = "T1HT" end
   end
 
-  return defName, overlayDefNames, tierLabel, isDead, deadOverlay, isMulti
+  return defName, overlayDefNames, tierLabel, isDead, deadOverlay
 end
 
 function rebuildLayout()
@@ -1678,7 +1751,7 @@ function rebuildLayout()
         if techTierOrder[catName] ~= nil then
           -- Commander or a lab category -- always visible, unaffected
           -- by the Tech1/2/3 filter.
-          local defName, overlayDefNames, tierLabel, isDead, deadOverlay, isMulti = resolveStructureIcon(t, faction, catName)
+          local defName, overlayDefNames, tierLabel, isDead, deadOverlay = resolveStructureIcon(t, faction, catName)
           if defName then
             icons[#icons+1] = {
               defName = defName,
@@ -1688,7 +1761,6 @@ function rebuildLayout()
               tierLabel = tierLabel,
               isDead = isDead,
               deadOverlay = deadOverlay,
-              isMulti = isMulti,
             }
           end
         else
@@ -1734,7 +1806,7 @@ function rebuildLayout()
 
       for _, labName in ipairs(ownedLabs) do
         if isCategoryVisibleInView(labName, activeViewMode) then
-          local defName, overlayDefNames, tierLabel, isDead, deadOverlay, isMulti = resolveStructureIcon(t, faction, labName)
+          local defName, overlayDefNames, tierLabel, isDead, deadOverlay = resolveStructureIcon(t, faction, labName)
           if defName then
             icons[#icons+1] = {
               defName = defName,
@@ -1744,7 +1816,6 @@ function rebuildLayout()
               tierLabel = tierLabel,
               isDead = isDead,
               deadOverlay = deadOverlay,
-              isMulti = isMulti,
             }
           end
         end
@@ -2022,12 +2093,14 @@ local function cycleAndJumpToIcon(teamID, labName)
   -- everywhere (see getOrderedInstanceList above).
   local list = getOrderedInstanceList(teamID, labName)
 
-  -- Commander with multiple instances: remember the camera from BEFORE
-  -- this cycle sequence started (first press on this tile only -- don't
-  -- overwrite it on every subsequent cycle step), so a right-click can
-  -- return to it no matter how many times we've cycled forward since.
-  -- See the right-click handler in widget:MousePress.
-  if labName == "Commander" and #list > 1 and savedCameraForKey ~= clickKey then
+  -- Any icon with multiple instances (5 metal extractors, several
+  -- factories, multiple commanders, etc.): remember the camera from
+  -- BEFORE this cycle sequence started (first press on this tile only
+  -- -- don't overwrite it on every subsequent cycle step), so a
+  -- right-click can return to it no matter how many instances we've
+  -- cycled through since. See the right-click handler in
+  -- widget:MousePress.
+  if #list > 1 and savedCameraForKey ~= clickKey then
     savedCameraBeforeJump = Spring.GetCameraState()
     savedCameraForKey = clickKey
   end
@@ -2223,25 +2296,34 @@ end
 -- through in the first place.
 function widget:UnitCreated(unitID, unitDefID, unitTeam)
   if not isCommanderDef[unitDefID] then return end
-  local list = deadCommanderTombstone[unitTeam]
-  if not list or #list == 0 then return end
 
   local ux, uy, uz = Spring.GetUnitPosition(unitID)
   if not ux then return end
 
-  for i = #list, 1, -1 do
-    local tombstone = list[i]
-    local dx = (tombstone.x or ux) - ux
-    local dz = (tombstone.z or uz) - uz
-    if (dx*dx + dz*dz) <= (COMMANDER_WRECK_MATCH_RADIUS * COMMANDER_WRECK_MATCH_RADIUS) then
-      commanderResurrectByTeam[unitTeam] = Spring.GetGameFrame()
-      table.remove(list, i)
-      break  -- one new commander resolves at most one tombstone
+  -- Resurrecting a wreck hands the new unit to whoever performed the
+  -- resurrection, not back to the original owner -- so a teammate's dead
+  -- commander can come back as YOUR commander. That means the matching
+  -- tombstone can be sitting in a different team's list than unitTeam.
+  -- Search every team's pending list by position instead of assuming
+  -- deadCommanderTombstone[unitTeam] is the right one.
+  for teamID, list in pairs(deadCommanderTombstone) do
+    for i = #list, 1, -1 do
+      local tombstone = list[i]
+      local dx = (tombstone.x or ux) - ux
+      local dz = (tombstone.z or uz) - uz
+      if (dx*dx + dz*dz) <= (COMMANDER_WRECK_MATCH_RADIUS * COMMANDER_WRECK_MATCH_RADIUS) then
+        -- Flash on unitTeam's row -- that's where the revived commander
+        -- now actually shows up alive, even if the tombstone had been
+        -- tracked under a different (original owner's) team.
+        commanderResurrectByTeam[unitTeam] = Spring.GetGameFrame()
+        Spring.PlaySoundFile("sounds/ui/commanderspawn.wav", 1.0, "ui")
+        table.remove(list, i)
+        if #list == 0 then
+          deadCommanderTombstone[teamID] = nil
+        end
+        return  -- one new commander resolves at most one tombstone
+      end
     end
-  end
-
-  if #list == 0 then
-    deadCommanderTombstone[unitTeam] = nil
   end
 end
 
@@ -2255,15 +2337,19 @@ function widget:MousePress(mx,my,button)
   if button ~= 1 and button ~= 3 then return false end
 
   if button == 3 then
-    -- Multi-commander teams: right-click the Commander icon to return to
-    -- the camera view from before you started cycling through them with
-    -- click/spacebar, no matter how many instances (alive or dead)
-    -- you've cycled through since (see the save in cycleAndJumpToIcon).
-    -- Single-commander teams don't need this -- click/spacebar itself
-    -- already toggles back on a second press there.
+    -- Any icon with multiple instances (5 metal extractors, several
+    -- factories, multiple commanders, etc.): right-click returns to the
+    -- camera view from before you started cycling through them with
+    -- click/spacebar, no matter how many instances you've cycled
+    -- through since (see the save in cycleAndJumpToIcon). Icons with
+    -- only one instance don't need this -- click/spacebar itself
+    -- already toggles back on a second press there. Only intercepts
+    -- the click when there's actually a pending "return" to make --
+    -- otherwise this falls through to the normal row right-click
+    -- (double-right-click-to-pin) below, same as before.
     local iconRect = hitIcon(mx, my)
-    if iconRect and iconRect.labName == "Commander" and iconRect.isMulti then
-      local clickKey = iconRect.teamID .. "|Commander"
+    if iconRect then
+      local clickKey = iconRect.teamID .. "|" .. iconRect.labName
       if savedCameraForKey == clickKey and savedCameraBeforeJump then
         Spring.SetCameraState(savedCameraBeforeJump, 1.2)
         savedCameraBeforeJump = nil
@@ -2893,8 +2979,11 @@ local function doDrawScreen()
   end
 
   if minimized then
-    rowRects = {}
-    iconRects = {}
+    -- Clear in place (not `= {}`) so this doesn't allocate a fresh
+    -- table every single rendered frame -- rowRects is keyed by
+    -- teamID, iconRects is a plain array.
+    for k in pairs(rowRects) do rowRects[k] = nil end
+    for i = #iconRects, 1, -1 do iconRects[i] = nil end
 
     local buttonW = 160
     local buttonH = 100
@@ -2924,8 +3013,11 @@ local function doDrawScreen()
     return
   end
 
-  rowRects = {}
-  iconRects = {}
+  -- Clear in place (not `= {}`) so this doesn't allocate a fresh table
+  -- every single rendered frame -- rowRects is keyed by teamID,
+  -- iconRects is a plain array.
+  for k in pairs(rowRects) do rowRects[k] = nil end
+  for i = #iconRects, 1, -1 do iconRects[i] = nil end
 
   local layoutItems = cachedLayout.items
   if #layoutItems == 0 then return end
@@ -2946,7 +3038,7 @@ local function doDrawScreen()
   -- resets the per-frame table and flips the master switch MouseWheel
   -- checks before bothering to look at any row.
   hScrollState.enabled = resizeHandleState.enabled
-  hScrollState.maxOffsetByTeam = {}
+  for k in pairs(hScrollState.maxOffsetByTeam) do hScrollState.maxOffsetByTeam[k] = nil end
 
   local contentHeight = 0
   for _, item in ipairs(layoutItems) do
@@ -3629,7 +3721,6 @@ local function doDrawScreen()
           displayLabel=iconData.displayLabel,
           isDead=iconData.isDead,
           deadOverlay=iconData.deadOverlay,
-          isMulti=iconData.isMulti,
         }
       end
     end
@@ -3799,26 +3890,63 @@ local function doDrawScreen()
     local factionName = factionFullNames[prefix]
 
     if labName and factionName then
-      local tooltipText = factionName .. " " .. labName
+      -- Title line (unit name) and an optional short hint line below it
+      -- in dimmer text, instead of cramming everything into one long
+      -- run-on sentence -- keeps the box a sane width even for
+      -- multi-instance icons that need a click/cycle/return explanation.
+      local titleText = factionName .. " " .. labName
+      local hintText = nil
+
       if hoverState.icon.isDead then
-        tooltipText = tooltipText .. " (destroyed -- click to jump to death spot, click again to return)"
-      elseif hoverState.icon.isMulti then
-        local destroyedNote = hoverState.icon.deadOverlay and "destroyed -- " or ""
-        tooltipText = tooltipText .. " (" .. destroyedNote .. "click/spacebar cycles commanders, right-click to return to your original view)"
+        titleText = titleText .. " (destroyed)"
+        hintText = "Click: jump there  -  click again: return"
+      else
+        -- Live-checked (not baked into the icon at layout time) so this
+        -- applies to every multi-instance icon in the widget -- 5 metal
+        -- extractors, several factories, multiple commanders, etc. --
+        -- not just Commander.
+        local rawList = teamLabPositions[hoverState.icon.teamID]
+          and teamLabPositions[hoverState.icon.teamID][hoverState.icon.labName]
+        if rawList and #rawList > 1 then
+          if hoverState.icon.deadOverlay then
+            titleText = titleText .. " (destroyed)"
+          end
+          hintText = "Click/Space: cycle  -  Right-click: return"
+        end
       end
-      local tooltipFontSize = 14
+
+      local titleFontSize = 14
+      local hintFontSize  = 12
       local padX, padY = 6, 4
-      local tw = gl.GetTextWidth(tooltipText) * tooltipFontSize
-      local th = tooltipFontSize * 1.2
+      local lineGap = 3
+
+      local titleW = gl.GetTextWidth(titleText) * titleFontSize
+      local titleH = titleFontSize * 1.2
+
+      local hintW, hintH = 0, 0
+      if hintText then
+        hintW = gl.GetTextWidth(hintText) * hintFontSize
+        hintH = hintFontSize * 1.2
+      end
+
+      local boxW = math.max(titleW, hintW)
+      local boxH = titleH + (hintText and (hintH + lineGap) or 0)
 
       local tx = mouseX + 32
-      local ty = mouseY - (th + padY * 2) - 10
+      local ty = mouseY - (boxH + padY * 2) - 10
 
       gl.Color(0,0,0,0.85)
-      gl.Rect(tx, ty, tx + tw + padX * 2, ty + th + padY * 2)
+      gl.Rect(tx, ty, tx + boxW + padX * 2, ty + boxH + padY * 2)
 
+      local titleY = ty + padY + (hintText and (hintH + lineGap) or 0)
       gl.Color(1,1,1,1)
-      gl.Text(tooltipText, tx + padX, ty + padY, tooltipFontSize, "")
+      gl.Text(titleText, tx + padX, titleY, titleFontSize, "")
+
+      if hintText then
+        gl.Color(0.65, 0.65, 0.65, 1)
+        gl.Text(hintText, tx + padX, ty + padY, hintFontSize, "")
+        gl.Color(1,1,1,1)
+      end
     end
 
   elseif hoverState.resizeHandle then
@@ -3923,7 +4051,8 @@ local function doDrawScreen()
       {"Click the title:",                     "switch Base Tracker / Unit Tracker"},
       {"<> enabled + mousewheel:",              "scroll overflowing icon rows (Ctrl = all rows)"},
       {"Tombstone icon:",                      "commander died -- click to jump, click again to return; gone once reclaimed"},
-      {"Multiple commanders:",                 "click/spacebar cycles them (dead ones show a small tombstone badge); right-click returns to your view from before you started cycling"},
+      {"Icon with multiple instances:",         "click/spacebar cycles through them; right-click returns to your view from before you started cycling"},
+      {"Multiple commanders:",                 "cycling also works here -- dead ones show a small tombstone badge"},
       {"White row flash:",                     "a commander was resurrected"},
     }
 

@@ -280,32 +280,91 @@ end
 -- allied commander death, while you're actively playing (not a
 -- spectator/replay). Clicking it jumps the camera to the death spot.
 local function DrawTombstoneIcon(x, y, size)
-    local baseH = size * 0.62
-    local domeR = size * 0.5
-    local cx = x + size * 0.5
-    local cy = y + baseH
+    -- Same headstone design as Base/Unit Tracker's drawCommanderTombstoneIcon:
+    -- ground shadow, base plinth (light-left/dark-right depth edge), rounded-
+    -- arch headstone slab (dark-outline-then-fill technique), "RIP" text.
+    -- Centered horizontally, flush to the bottom of the slot.
+    local scale = 0.92
+    local dsize = size * scale
+    local offX = (size - dsize) * 0.5
+    x = x + offX
+    size = dsize
 
     glTexture(false)
 
-    glColor(0.72, 0.70, 0.65, 1)
-    glRect(x, y, x+size, y+baseH)
+    local cx = x + size * 0.5
+
+    -- Soft ground shadow (flattened ellipse under the base).
+    glColor(0, 0, 0, 0.32)
     gl.BeginEnd(GL.TRIANGLE_FAN, function()
-        gl.Vertex(cx, cy)
-        for i = 0, 12 do
-            local angle = math.pi * (i / 12)
-            gl.Vertex(cx + math.cos(angle) * domeR, cy + math.sin(angle) * domeR)
+        local shY  = y - size * 0.03
+        local shRX = size * 0.44
+        local shRY = size * 0.08
+        gl.Vertex(cx, shY)
+        for i = 0, 16 do
+            local angle = (i / 16) * 2 * math.pi
+            gl.Vertex(cx + math.cos(angle) * shRX, shY + math.sin(angle) * shRY)
         end
     end)
 
-    glColor(0.38, 0.36, 0.32, 1)
-    -- Stem extended further below the crossbar (upper third, not
-    -- centered) so it reads as a cross instead of a plus sign, then
-    -- the whole cross raised another half its length.
-    local crossW = size * 0.32
-    glRect(cx - size*0.045, y + baseH*0.57, cx + size*0.045, y + baseH*1.57)
-    glRect(cx - crossW*0.5, y + baseH*1.31, cx + crossW*0.5, y + baseH*1.39)
+    -- BASE PLINTH: full width, short -- the slab the headstone stands on.
+    local baseH = size * 0.16
+    local depth = size * 0.06
+    local bx1, by1 = x, y
+    local bx2, by2 = x + size, y + baseH
 
-    glColor(1,1,1,1)
+    glColor(0.12, 0.11, 0.10, 1)
+    glRect(bx1 - 1, by1 - 1, bx2 + 1, by2 + 1)
+
+    glColor(0.80, 0.78, 0.72, 1)
+    glRect(bx1, by1, bx2 - depth, by2)
+    glColor(0.52, 0.50, 0.45, 1)
+    glRect(bx2 - depth, by1, bx2, by2)
+
+    -- HEADSTONE: narrower slab, straight sides, rounded arch top.
+    local slabW = size * 0.62
+    local sx1 = x + (size - slabW) * 0.5
+    local sx2 = sx1 + slabW
+    local sy1 = by2
+    local archTopY = y + size * 0.69
+    local archR = slabW * 0.5
+    local archCx = (sx1 + sx2) * 0.5
+
+    -- Dark silhouette pass for the slab + arch (outline stroke look).
+    glColor(0.12, 0.11, 0.10, 1)
+    glRect(sx1 - 1, sy1 - 1, sx2 + 1, archTopY)
+    gl.BeginEnd(GL.TRIANGLE_FAN, function()
+        gl.Vertex(archCx, archTopY)
+        for i = 0, 16 do
+            local angle = math.pi * (i / 16)
+            local r = archR + 1
+            gl.Vertex(archCx + math.cos(angle) * r, archTopY + math.sin(angle) * r)
+        end
+    end)
+
+    -- Front face: spans the full slab width to exactly match the outline.
+    glColor(0.83, 0.81, 0.75, 1)
+    glRect(sx1, sy1, sx2, archTopY)
+
+    -- Rounded arch cap: true circle, Gouraud-shaded, same center as the
+    -- outline fan so it fully covers it with a clean 1px outline ring.
+    gl.BeginEnd(GL.TRIANGLE_FAN, function()
+        gl.Color(0.92, 0.90, 0.85, 1)
+        gl.Vertex(archCx, archTopY)
+        for i = 0, 16 do
+            local angle = math.pi * (i / 16)
+            local t = i / 16
+            gl.Color(0.87 - 0.10 * t, 0.85 - 0.10 * t, 0.79 - 0.09 * t, 1)
+            gl.Vertex(archCx + math.cos(angle) * archR, archTopY + math.sin(angle) * archR)
+        end
+    end)
+
+    -- "RIP" engraved on the face, centered.
+    local ripFontSize = slabW * 0.34
+    glColor(0.42, 0.40, 0.35, 1)
+    glText("RIP", archCx, sy1 + (archTopY - sy1) * 0.82, ripFontSize, "oc")
+
+    glColor(1, 1, 1, 1)
 end
 
 ------------------------------------------------------------
@@ -893,7 +952,7 @@ glColor(1,1,1,1)
                 if tombstoneAllowed then
                     local tombX1 = nameX + nameWidth + 12 + tsWidth + 10
                     local tombY1 = nameY - 7
-                    local tombSize = 24
+                    local tombSize = 36
                     DrawTombstoneIcon(tombX1, tombY1, tombSize)
 
                     widget.tombstoneHitboxes[#widget.tombstoneHitboxes+1] = {
