@@ -46,7 +46,12 @@ local worldOffsetUp    = 55
 -- the tank doesn't sit exactly on the anchor point. Shifted up by one
 -- full tank-length (barHeight) on top of the world-space anchor.
 local barOffsetY     = barHeight
-local barOffsetX     = 0
+-- Shifted right by three full tank widths. Screen-space (not world-
+-- space) on purpose: the tank itself is drawn at a fixed pixel size
+-- regardless of zoom, so a fixed pixel offset keeps the gap looking
+-- like exactly 3 tanks at every zoom level. A world-space shift would
+-- shrink as you zoom out and the gap would visibly close up.
+local barOffsetX     = barWidth * 1
 -- The world-space offset above shrinks on screen as you zoom out
 -- (that's what keeps it glued to the unit), but the player nametag is
 -- drawn with roughly fixed screen-space clearance above the unit --
