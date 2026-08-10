@@ -141,10 +141,9 @@ local animStartTimer = nil
 
 ------------------------------------------------------------
 -- TEMP DEBUG -- prints to the in-game console / infolog.txt. Flip to
--- false (or delete this block plus the debugLog(...) calls below) once
--- the meter is confirmed showing up correctly.
+-- true if you need to troubleshoot detection again.
 ------------------------------------------------------------
-local DEBUG_DGUN_METER = true
+local DEBUG_DGUN_METER = false
 local function debugLog(fmt, ...)
   if DEBUG_DGUN_METER then
     Spring.Echo(("[DGunMeter] " .. fmt):format(...))
