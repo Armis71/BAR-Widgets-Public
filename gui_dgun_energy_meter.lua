@@ -11,11 +11,27 @@ function widget:GetInfo()
 end
 
 ------------------------------------------------------------
+-- SIZE -- 0 = smallest (the meter's original/default size), 100 =
+-- largest allowed. Anything outside 0-100 just clamps to that range.
+------------------------------------------------------------
+
+local userBarWidthPercent  = 40   -- 0-100
+local userBarHeightPercent = 20   -- 0-100
+
+------------------------------------------------------------
 -- CONFIG
 ------------------------------------------------------------
 
-local barWidth      = 10
-local barHeight      = 44
+local MIN_BAR_WIDTH,  MAX_BAR_WIDTH  = 10 * (4 / 3), 30   -- ~13.3 .. 30
+local MIN_BAR_HEIGHT, MAX_BAR_HEIGHT = 44, 90              -- 44 .. 90
+
+local function percentToSize(percent, minSize, maxSize)
+  percent = math.min(100, math.max(0, percent))
+  return minSize + (maxSize - minSize) * (percent / 100)
+end
+
+local barWidth  = percentToSize(userBarWidthPercent, MIN_BAR_WIDTH, MAX_BAR_WIDTH)
+local barHeight = percentToSize(userBarHeightPercent, MIN_BAR_HEIGHT, MAX_BAR_HEIGHT)
 -- The tank's anchor point is offset from the unit in WORLD space (not
 -- screen pixels) -- added to the unit's position before projecting to
 -- screen. A fixed pixel offset would stay the same size on screen at
