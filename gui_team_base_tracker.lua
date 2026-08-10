@@ -527,8 +527,76 @@ end
 local isCommanderDef = {}
 for unitDefID, ud in pairs(UnitDefs) do
   if ud.customParams and ud.customParams.iscommander then
-    isCommanderDef[unitDefID] = true
+    -- Raptors/Scavengers' respawn system lets a commander build a
+    -- standing "Effigy" -- a one-time save, consumed instead of a real
+    -- death when the commander would otherwise be destroyed (one comes
+    -- free at game start). It sits on the field as its own unit for the
+    -- whole game and apparently also sets customParams.iscommander on
+    -- its own def, which is why it was showing up as a permanent extra
+    -- "commander" from minute zero, not just after some death/evolution
+    -- event. A real, playable commander is always mobile and armed; a
+    -- respawn-pad prop is neither -- require both so this can't be
+    -- fooled by whatever exact defName the game happens to give it.
+    local looksLikeRealCommander = ud.canMove and ud.weapons and #ud.weapons > 0
+    if looksLikeRealCommander then
+      isCommanderDef[unitDefID] = true
+    end
   end
+end
+
+-- Does this team currently have at least one live, real commander?
+-- Used to resolve a pending Commander Evolution (see
+-- pendingCommanderEvolutions below): whatever just replaced the one
+-- that died, wherever on the map it actually spawned, this is what
+-- proves the "death" wasn't final.
+local function teamHasLiveCommander(teamID)
+  for _, unitID in ipairs(Spring.GetTeamUnits(teamID)) do
+    local defID = Spring.GetUnitDefID(unitID)
+    if defID and isCommanderDef[defID] then
+      return true
+    end
+  end
+  return false
+end
+
+------------------------------------------------------------
+-- TEMP DEBUG -- Commander Evolution / Effigy tracing. Prints to the
+-- in-game console (also captured in infolog.txt) so the effigy
+-- exclusion and evolution/death resolution can be verified from an
+-- actual match instead of guessed at from the outside. Safe to flip to
+-- false (or delete this whole block plus the debugLog(...) calls
+-- below) once confirmed working.
+------------------------------------------------------------
+local DEBUG_COMMANDER_EVOLUTION = true
+
+local function debugLog(fmt, ...)
+  if DEBUG_COMMANDER_EVOLUTION then
+    Spring.Echo(("[BaseTracker] " .. fmt):format(...))
+  end
+end
+
+if DEBUG_COMMANDER_EVOLUTION then
+  local includedCount, excludedCount = 0, 0
+  for unitDefID, ud in pairs(UnitDefs) do
+    if ud.customParams and ud.customParams.iscommander then
+      if isCommanderDef[unitDefID] then
+        includedCount = includedCount + 1
+        -- The canMove/weapons check turned out not to catch the Effigy
+        -- (0 excluded last run) -- print every included def's own
+        -- stats too, so the actual Effigy defName can be spotted by
+        -- eye in this list instead of guessed at again.
+        Spring.Echo(("[BaseTracker] included: %s (canMove=%s, weaponCount=%s, builder=%s, speed=%s)")
+          :format(ud.name, tostring(ud.canMove), tostring(ud.weapons and #ud.weapons or 0),
+            tostring(ud.isBuilder), tostring(ud.speed)))
+      else
+        excludedCount = excludedCount + 1
+        Spring.Echo(("[BaseTracker] excluded iscommander-flagged non-commander: %s (canMove=%s, weaponCount=%s)")
+          :format(ud.name, tostring(ud.canMove), tostring(ud.weapons and #ud.weapons or 0)))
+      end
+    end
+  end
+  Spring.Echo(("[BaseTracker] isCommanderDef built: %d real commander def(s), %d excluded (effigy/etc)")
+    :format(includedCount, excludedCount))
 end
 
 ------------------------------------------------------------
@@ -552,6 +620,25 @@ local deadCommanderTombstone = {}
 local pendingCommanderWrecks = {}   -- correlates a death with the wreck feature it spawns
 local COMMANDER_WRECK_MATCH_RADIUS  = 80
 local COMMANDER_WRECK_MATCH_TIMEOUT = 10
+
+-- Commander Evolution (Raptors/Scavengers PvE) and an Effigy-saved PvE
+-- death (see the Effigy note by isCommanderDef above) both destroy the
+-- current commander and, some time later, create a new one to replace
+-- it -- not necessarily instantly, not necessarily anywhere near where
+-- the old one died (the Effigy is the actual respawn point, and it can
+-- be built anywhere). Both are real isCommanderDef units, so without
+-- this the widget used to read that pair as a death followed by a
+-- resurrection -- tombstone flicker, fiery flash, white resurrect flash
+-- and the "commanderspawn" sound, all for something that was never a
+-- final death.
+-- [teamID] = { {evoTarget,x,y,z,frame,defName,wreckDefName,allowed}, ... }
+-- Held here until widget:GameFrame's teamHasLiveCommander check (see
+-- below) confirms the team has a live commander again -- resolved that
+-- way instead of by position/timing since neither can be predicted.
+-- The timeout is only a fallback for when that never happens (a true,
+-- final death).
+local pendingCommanderEvolutions = {}
+local COMMANDER_EVOLUTION_MATCH_TIMEOUT = 150  -- ~5s @ 30fps -- matches recountLabs' own poll cadence; generous so a real but non-instant respawn isn't mistaken for a final death
 
 -- Small vector tombstone drawn in place of the commander's portrait
 -- once it's dead -- same shape/style as Commander Kill Tracker's.
@@ -1133,10 +1220,27 @@ local function recountLabs()
   -- still-pending tombstone a team has, alongside whatever live
   -- commanders the scan above already found -- so a team can show any
   -- mix of live + dead commanders at once (see resolveStructureIcon /
-  -- drawOneIcon for how a mixed list is rendered). Resurrection is
-  -- handled eagerly in widget:UnitCreated (removes the matching
-  -- tombstone the instant a new commander appears), so all that's left
-  -- to check here is whether the wreck itself got reclaimed for scrap.
+  -- drawOneIcon for how a mixed list is rendered). The old
+  -- wreck-proximity resurrection check in widget:UnitCreated assumed a
+  -- resurrected/respawned commander shows up near where the previous
+  -- one died -- true for an ally rezzing a wreck, but not for BAR's
+  -- Effigy-based PvE respawn, which can return the commander anywhere
+  -- the Effigy was built. A tombstone stuck behind that mismatch would
+  -- otherwise sit here forever (surviving even a /luaui reload, since
+  -- this table is persisted -- see widget:GetConfigData below), so
+  -- before anything else: if the team plainly has a live commander
+  -- right now, every tombstone it's still holding is stale -- drop the
+  -- whole list for that team outright rather than trust position
+  -- matching to eventually clear it. (Same known limitation as
+  -- teamHasLiveCommander elsewhere: a multi-commander team won't
+  -- flash/tombstone one commander's real death while another of its
+  -- commanders is still alive.)
+  for teamID, tombstoneList in pairs(deadCommanderTombstone) do
+    if teamHasLiveCommander(teamID) then
+      deadCommanderTombstone[teamID] = nil
+    end
+  end
+
   for teamID, tombstoneList in pairs(deadCommanderTombstone) do
     for i = #tombstoneList, 1, -1 do
       local tombstone = tombstoneList[i]
@@ -2199,6 +2303,62 @@ function widget:GameFrame(frame)
       end
     end
   end
+
+  -- Resolve pending Commander Evolutions: if the team has a live
+  -- commander again, whatever just died wasn't a final death -- clear
+  -- every pending entry for that team without ever showing a flash or
+  -- tombstone for it (checked every frame, not just at the timeout, so
+  -- a quick evolution clears almost immediately). Only once the team
+  -- has gone the full timeout with zero live commanders do we commit
+  -- to the ordinary death handling widget:UnitDestroyed would have
+  -- done immediately, pre-Evolution-awareness.
+  --
+  -- Known limitation: in a multi-commander game, this checks "team has
+  -- ANY live commander", not specifically "did THIS one come back" --
+  -- so one commander permanently dying while a teammate's is still
+  -- alive won't flash/tombstone until neither is left. Single-commander
+  -- games (the normal case) aren't affected.
+  for teamID, pendingList in pairs(pendingCommanderEvolutions) do
+    if teamHasLiveCommander(teamID) then
+      debugLog("resolved: team=%d has a live commander again, pending list (%d) cleared, no tombstone",
+        teamID, #pendingList)
+      pendingCommanderEvolutions[teamID] = nil
+    else
+      for i = #pendingList, 1, -1 do
+        local pending = pendingList[i]
+        if frame - pending.frame > COMMANDER_EVOLUTION_MATCH_TIMEOUT then
+          commanderDeathByTeam[teamID] = frame
+
+          if pending.allowed then
+            local tombstone = {
+              x = pending.x, y = pending.y, z = pending.z,
+              defName = pending.defName,
+              wreckFeatureID = nil,
+              wreckGone = false,
+            }
+            deadCommanderTombstone[teamID] = deadCommanderTombstone[teamID] or {}
+            table.insert(deadCommanderTombstone[teamID], tombstone)
+
+            if pending.wreckDefName then
+              pendingCommanderWrecks[#pendingCommanderWrecks+1] = {
+                tombstone            = tombstone,
+                expectedWreckDefName = pending.wreckDefName,
+                spawnFrame           = frame,
+              }
+            end
+          end
+
+          debugLog("TIMED OUT -> committed as real death: team=%d defName=%s waited=%d frames",
+            teamID, pending.defName, frame - pending.frame)
+
+          table.remove(pendingList, i)
+        end
+      end
+      if #pendingList == 0 then
+        pendingCommanderEvolutions[teamID] = nil
+      end
+    end
+  end
 end
 
 -- Tracks kills per attacking unit locally, since BAR doesn't expose
@@ -2209,48 +2369,77 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerD
     unitKillCount[attackerID] = (unitKillCount[attackerID] or 0) + 1
   end
 
-  -- A commander dying, any cause, immediately pulses that team's row --
-  -- see commanderDeathByTeam and its draw block in the team-row loop.
-  -- Fires here (frame-accurate) rather than waiting on the ~5s
-  -- recountLabs poll, exactly how Commander Kill Tracker's own
-  -- widgetFlashFrame is set from its UnitDestroyed callin.
   if isCommanderDef[unitDefID] then
-    commanderDeathByTeam[unitTeam] = Spring.GetGameFrame()
+    local deadUd = UnitDefs[unitDefID]
+    local evoTarget = deadUd and deadUd.customParams and deadUd.customParams.evolution_target
+    if evoTarget == "" then evoTarget = nil end
+    local dx, dy, dz = Spring.GetUnitPosition(unitID)
 
-    -- Record a tombstone -- same fairness rule as the rest of this
-    -- widget: allied/own death while actively playing, any team's
-    -- death while spectating or watching a replay (full vision then).
+    -- Same fairness rule as the rest of this widget: allied/own death
+    -- while actively playing, any team's death while spectating or
+    -- watching a replay (full vision then).
     local spectating = Spring.GetSpectatingState()
     local myAllyTeam = (not spectating) and Spring.GetMyAllyTeamID() or nil
     local victimAllyTeam = Spring.GetTeamAllyTeamID(unitTeam)
     local allowed = spectating or (myAllyTeam and victimAllyTeam == myAllyTeam)
 
-    if allowed then
-      local dx, dy, dz = Spring.GetUnitPosition(unitID)
-      if dx then
-        local deadUd = UnitDefs[unitDefID]
-        local wreckDefName = deadUd and deadUd.wreckName
-        if wreckDefName == "" then wreckDefName = nil end
+    -- Commander Evolution (Raptors/Scavengers PvE) destroys the current
+    -- level's commander and creates the next level's in its place, same
+    -- frame, same spot -- an upgrade, not a death. Deferring here for
+    -- every commander death (not just ones with a known
+    -- customParams.evolution_target -- the base starting commander has
+    -- no such field even though it's about to evolve INTO one) and
+    -- waiting a few frames to see whether a same-team commander shows
+    -- up right here in widget:UnitCreated below is what actually proves
+    -- it either way. Only commit as a real death (in widget:GameFrame's
+    -- timeout sweep) if that never happens.
+    if dx then
+      local wreckDefName = deadUd.wreckName
+      if wreckDefName == "" then wreckDefName = nil end
 
-        local tombstone = {
-          x = dx, y = dy, z = dz,
-          defName = deadUd and deadUd.name,
-          wreckFeatureID = nil,
-          wreckGone = false,
+      pendingCommanderEvolutions[unitTeam] = pendingCommanderEvolutions[unitTeam] or {}
+      table.insert(pendingCommanderEvolutions[unitTeam], {
+        evoTarget    = evoTarget,
+        x = dx, y = dy, z = dz,
+        frame        = Spring.GetGameFrame(),
+        defName      = deadUd.name,
+        wreckDefName = wreckDefName,
+        allowed      = allowed,
+      })
+      debugLog("death deferred: team=%d defName=%s evoTarget=%s frame=%d",
+        unitTeam, deadUd.name, tostring(evoTarget), Spring.GetGameFrame())
+      return
+    end
+
+    -- A commander dying for good, any cause, immediately pulses that
+    -- team's row -- see commanderDeathByTeam and its draw block in the
+    -- team-row loop. Fires here (frame-accurate) rather than waiting on
+    -- the ~5s recountLabs poll, exactly how Commander Kill Tracker's own
+    -- widgetFlashFrame is set from its UnitDestroyed callin.
+    commanderDeathByTeam[unitTeam] = Spring.GetGameFrame()
+
+    if allowed and dx then
+      local wreckDefName = deadUd and deadUd.wreckName
+      if wreckDefName == "" then wreckDefName = nil end
+
+      local tombstone = {
+        x = dx, y = dy, z = dz,
+        defName = deadUd and deadUd.name,
+        wreckFeatureID = nil,
+        wreckGone = false,
+      }
+      -- Append, don't overwrite -- a team can have more than one
+      -- tombstone pending at once (multi-commander games, or a second
+      -- commander dying before the first tombstone resolves).
+      deadCommanderTombstone[unitTeam] = deadCommanderTombstone[unitTeam] or {}
+      table.insert(deadCommanderTombstone[unitTeam], tombstone)
+
+      if wreckDefName then
+        pendingCommanderWrecks[#pendingCommanderWrecks+1] = {
+          tombstone            = tombstone,
+          expectedWreckDefName = wreckDefName,
+          spawnFrame           = Spring.GetGameFrame(),
         }
-        -- Append, don't overwrite -- a team can have more than one
-        -- tombstone pending at once (multi-commander games, or a second
-        -- commander dying before the first tombstone resolves).
-        deadCommanderTombstone[unitTeam] = deadCommanderTombstone[unitTeam] or {}
-        table.insert(deadCommanderTombstone[unitTeam], tombstone)
-
-        if wreckDefName then
-          pendingCommanderWrecks[#pendingCommanderWrecks+1] = {
-            tombstone            = tombstone,
-            expectedWreckDefName = wreckDefName,
-            spawnFrame           = Spring.GetGameFrame(),
-          }
-        end
       end
     end
   end
@@ -2299,6 +2488,13 @@ function widget:UnitCreated(unitID, unitDefID, unitTeam)
 
   local ux, uy, uz = Spring.GetUnitPosition(unitID)
   if not ux then return end
+
+  -- Note: Commander Evolution and Effigy-saved PvE respawns are no
+  -- longer matched here by position -- see teamHasLiveCommander in
+  -- widget:GameFrame, which resolves pendingCommanderEvolutions by
+  -- whether the team has a live commander again at all, since the
+  -- Effigy respawn point isn't necessarily anywhere near where the
+  -- previous commander died.
 
   -- Resurrecting a wreck hands the new unit to whoever performed the
   -- resurrection, not back to the original owner -- so a teammate's dead
