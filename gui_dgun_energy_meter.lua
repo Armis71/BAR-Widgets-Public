@@ -83,7 +83,7 @@ local aoColor        = {0, 0, 0, 0.28}   -- ambient-occlusion darkening at the b
 --   fadeDuration: every other exit (deselected while still short on
 --     energy, etc.) -- quicker, since there's nothing useful left to
 --     show.
-local fadeDurationReady = 10.0
+local fadeDurationReady = 7.0
 local fadeDuration      = 2.0
 
 -- Tank-body geometry: the two long sides are straight, both ends are
