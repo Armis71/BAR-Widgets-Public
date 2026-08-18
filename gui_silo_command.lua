@@ -144,6 +144,39 @@ local ARM_GLOW_HZ  = 2          -- pulses per second
 -- Anti-nukes stockpile too, and they'd otherwise inflate the count and,
 -- worse, get selected and told to attack ground. The stockpiled weapon
 -- knows which it is: interceptors carry a non-zero `interceptor` field.
+--
+-- The pattern, once enough impostors turned up to see it: a genuine
+-- strategic silo (nuke, EMP) is built to hit ANYWHERE on the map, so its
+-- weapon range is enormous -- the real Apocalypse/Armageddon nuke silo
+-- sits around 72,000. Every impostor found so far is an ordinary
+-- point-defense or direct-fire weapon with a normal combat range in the
+-- hundreds-to-low-thousands: Catalyst-class tactical missiles (~2,250),
+-- Screamer-class AA towers (~2,400), Thor's secondary EMP rounds. That
+-- range gap is the real, faction-independent tell for most impostors --
+-- it covers Armada/Cortex/Legion equivalents alike without hardcoding
+-- unit names one at a time as new ones get discovered.
+--
+-- The interceptor/mobility/ground-attack checks below are kept as
+-- belt-and-suspenders (interceptors in particular could theoretically
+-- also have long range, since they must reach a nuke anywhere overhead).
+-- Juno is the one confirmed exception to the range tell (see below) and
+-- is caught by an explicit name check instead.
+local SILO_MIN_RANGE = 20000   -- comfortably above every known impostor,
+                                -- comfortably below a real silo's ~72,000
+
+-- Juno (armjuno/corjuno/legjuno) is a jammer/radar-disable utility silo,
+-- not a strategic weapon. It stockpiles like a real silo, and its
+-- ability description touts a "massive radius" -- likely why its
+-- WeaponDef `range` reports large enough to clear SILO_MIN_RANGE even
+-- though the unit panel never shows Juno a normal combat range stat.
+-- It also isn't an interceptor, isn't mobile, and can attack ground, so
+-- none of the other checks catch it either. The signal that never lies
+-- is damage: Juno's stockpiled shot deals 0, same reason an anti-nuke
+-- correctly reads DPS 0 -- neither is a real attack. Rather than keep
+-- chasing inferred engine fields, Juno is excluded by name directly,
+-- across every faction's equivalent.
+local JUNO_NAMES = { armjuno = true, corjuno = true, legjuno = true }
+
 local siloWeaponNum = {}       -- [unitDefID] = weapon slot index (1-based)
                                 -- of the stockpile weapon, for cooldown checks
 for unitDefID, ud in pairs(UnitDefs) do
@@ -151,7 +184,11 @@ for unitDefID, ud in pairs(UnitDefs) do
   if ud.canStockpile and wdID then
     local wd = WeaponDefs[wdID]
     local isInterceptor = wd and wd.interceptor and wd.interceptor > 0
-    if not isInterceptor then
+    local isMobile = (ud.speed and ud.speed > 0) or ud.canfly or ud.canMove
+    local aaOnly = wd and wd.canAttackGround == false
+    local longRangeEnough = wd and wd.range and wd.range >= SILO_MIN_RANGE
+    local isJuno = JUNO_NAMES[ud.name]
+    if longRangeEnough and not isInterceptor and not isMobile and not aaOnly and not isJuno then
       isSiloDef[unitDefID] = true
       if ud.weapons then
         for i = 1, #ud.weapons do
