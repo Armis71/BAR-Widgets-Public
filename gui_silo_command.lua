@@ -44,7 +44,7 @@ local UI = {
   -- changes -- the PANEL grows sideways instead -- so a silo always
   -- looks the same whether you own two or thirty.
   CYL_W = 20,
-  CYL_H = 45,
+  CYL_H = 40,
   --  CYL_W = 9,
   --  CYL_H = 12,--
   CYL_GAP = 3,
