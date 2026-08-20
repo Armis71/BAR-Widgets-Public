@@ -1227,6 +1227,11 @@ function widget:DrawScreen()
   -- rather than animating smoothly, since real sparks read as sudden
   -- and electric, not as something easing in and out.
   if spinFlash > 0 and glBeginEnd and glVertex then
+    -- Bolts reach 3x further out (radius + jog) than the original, but
+    -- line thickness stays at the original 1.6 -- a wider stroke was
+    -- read as "thicker," not "bigger," so length/spread is the only
+    -- thing scaled now.
+    local SPARK_SCALE = 1.5
     glLineWidth(1.6)
     local baseAngles = { 20, 100, 160, 230, 290, 340 }
     for i = 1, #baseAngles do
@@ -1235,8 +1240,9 @@ function widget:DrawScreen()
         local perp   = ang + math.pi * 0.5
         local innerR = 9
         local outerR = 14 + math.random() * (7 + spinFlash * 6)
+        outerR = innerR + (outerR - innerR) * SPARK_SCALE
         local midR   = (innerR + outerR) * 0.5
-        local jog    = (math.random() - 0.5) * 7
+        local jog    = (math.random() - 0.5) * 7 * SPARK_SCALE
         local x1p, y1p = cx + math.cos(ang) * innerR, cy + math.sin(ang) * innerR
         local xm,  ym  = cx + math.cos(ang) * midR + math.cos(perp) * jog,
                           cy + math.sin(ang) * midR + math.sin(perp) * jog

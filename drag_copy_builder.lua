@@ -114,6 +114,7 @@ local spGiveOrderToUnit  = Spring.GiveOrderToUnit
 local spPlaySoundFile    = Spring.PlaySoundFile
 local spGetTimer         = Spring.GetTimer
 local spDiffTimers       = Spring.DiffTimers
+local spGetActiveCommand = Spring.GetActiveCommand
 
 local ghostData   = {}
 local dragging    = false
@@ -611,9 +612,49 @@ end
 --------------------------------------------------------------------------------
 -- MousePress: start drag-copy (Shift)
 --------------------------------------------------------------------------------
+-- True whenever the engine/BAR itself wants this shift-drag, so Clone
+-- Builder must NOT claim it. Two distinct cases, both signalled through
+-- Spring.GetActiveCommand():
+--
+-- 1) A normal build order is armed (cmdID < 0, i.e. -unitDefID) - clicking
+--    a buildmenu icon, or cycling a quick-build hotkey (Z/X/C/V) to a
+--    single-building type. Shift-drag in this state is the native
+--    "build line" gesture.
+--
+-- 2) An AREA-type command is armed (cmdType == CMDTYPE.ICON_AREA, or the
+--    UNIT_OR_AREA/UNIT_OR_RECTANGLE variants some native orders use).
+--    This is what Z-cycling to the extractor icon actually arms - BAR's
+--    Area Mex command (cmd_area_mex.lua upstream) is a CUSTOM command
+--    (GameCMD.AREA_MEX) with a POSITIVE id, since it isn't "place one
+--    building" at all, it's "define a circle, auto-place extractors on
+--    every metal spot inside it". The original build-order-only check
+--    (cmdID < 0) completely missed this - a positive custom command ID
+--    sailed right through it. Same command-type family covers Reclaim
+--    Area / Repair Area / Resurrect Area, which are the same drag-a-
+--    circle gesture and should be left alone for the same reason.
+local ICON_AREA               = CMDTYPE and CMDTYPE.ICON_AREA
+local ICON_UNIT_OR_AREA       = CMDTYPE and CMDTYPE.ICON_UNIT_OR_AREA
+local ICON_UNIT_OR_RECTANGLE  = CMDTYPE and CMDTYPE.ICON_UNIT_OR_RECTANGLE
+
+local function IsBuildCommandArmed()
+    local _, cmdID, cmdType = spGetActiveCommand()
+    if cmdID == nil then return false end
+    if cmdID < 0 then return true end
+    return cmdType == ICON_AREA
+        or cmdType == ICON_UNIT_OR_AREA
+        or cmdType == ICON_UNIT_OR_RECTANGLE
+end
+
 function widget:MousePress(x, y, button)
     local ctrl, alt, meta, shift = Spring.GetModKeyState()
     if button == 1 and shift then
+        if IsBuildCommandArmed() then
+            -- Fall through untouched so the engine/BAR's own build-line,
+            -- build-grid, or area-drag command (Area Mex, Reclaim Area,
+            -- etc.) handles this drag instead.
+            return
+        end
+
         local builders, buildings = SplitSelection()
 
         -- Every single building in the selection has to be individually
@@ -714,6 +755,20 @@ end
 --------------------------------------------------------------------------------
 function widget:MouseMove()
     if dragging then
+        -- Safety net: if a build command becomes armed WHILE a clone-drag
+        -- is already in progress (e.g. Z pressed mid-drag), bail out of
+        -- the clone immediately rather than completing it. We can't hand
+        -- this specific press back to the engine's own build-line handler
+        -- (MousePress already claimed it), but stopping here at least
+        -- stops the widget from placing/queuing something the player no
+        -- longer intends, instead of only catching this at drag START.
+        if IsBuildCommandArmed() then
+            Spring.Echo("DCB: build command armed mid-drag - aborting clone drag")
+            dragging = false
+            ghostData = {}
+            dragBuilders = {}
+            return
+        end
         UpdateGhostPositions()
         return true
     end
