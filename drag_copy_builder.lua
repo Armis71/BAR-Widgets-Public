@@ -111,7 +111,6 @@ local spTestBuildOrder   = Spring.TestBuildOrder
 local spGetMouseState    = Spring.GetMouseState
 local spTraceScreenRay   = Spring.TraceScreenRay
 local spGiveOrderToUnit  = Spring.GiveOrderToUnit
-local spPlaySoundFile    = Spring.PlaySoundFile
 local spGetTimer         = Spring.GetTimer
 local spDiffTimers       = Spring.DiffTimers
 local spGetActiveCommand = Spring.GetActiveCommand
@@ -135,9 +134,6 @@ local clonableUnits = {}
 -- Destination centroid of the current ghost formation, kept up to date every
 -- frame during a drag so we can draw the helper-recruit radius ring around it.
 local ghostCenterX, ghostCenterZ = nil, nil
-
-local lastSoundTime = nil
-local soundInterval = 0.30
 
 -- On-screen warning banner (e.g. "no idle con unit within the radius").
 -- Spring.Echo alone goes to a chat log players can easily miss - a plop can
@@ -750,15 +746,6 @@ local function UpdateGhostPositions()
     end
     ghostCenterX = sumX / #ghostData
     ghostCenterZ = sumZ / #ghostData
-
-    if lastSoundTime then
-        local now = spGetTimer()
-        local dt = spDiffTimers(now, lastSoundTime)
-        if dt > soundInterval then
-            spPlaySoundFile("LuaUI/Sounds/land.wav", 1.0)
-            lastSoundTime = now
-        end
-    end
 end
 
 --------------------------------------------------------------------------------
@@ -830,8 +817,6 @@ function widget:MousePress(x, y, button)
             rotation = 0
             dragBuilders = builders
             CreateGhosts(buildings)
-
-            lastSoundTime = spGetTimer()
 
             if excludedCount > 0 then
                 screenWarningText = excludedCount .. " selected unit(s) skipped -- not a building, so not clonable."
@@ -1222,7 +1207,6 @@ end
 function widget:MouseRelease()
     if dragging then
         dragging = false
-        lastSoundTime = nil
 
         -- Use the builder(s) locked in when the drag started, not whatever
         -- happens to be selected right now - the selection can change
