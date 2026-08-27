@@ -158,12 +158,16 @@ end
 --------------------------------------------------------------------------------
 -- Plop queue + cross-tier assist
 --
--- Each shift-drag release is a "plop". Only one plop is ever actively being
--- built at a time - if the player releases another drag while the previous
--- one is still going, it's queued up and doesn't start (doesn't even
--- recruit helpers yet) until the current plop is fully finished. This is
--- what makes "drag 3 clones in a row" behave like a normal build queue
--- instead of everyone getting yanked onto whatever was dropped last.
+-- Each shift-drag release is a "plop". Plops run CONCURRENTLY as long as
+-- they don't share a builder - three independent con bots each cloning
+-- their own separate structures all start immediately and progress at the
+-- same time. A plop only waits in the queue when one of its builders is
+-- already committed to another still-running (or still-queued-ahead) plop;
+-- it starts the moment that shared builder is actually free. This is what
+-- makes "drag 3 clones in a row with 3 different cons" behave like 3
+-- independent build jobs, while "drag 2 clones with the SAME con selected
+-- both times" still correctly finishes the first before starting the
+-- second.
 --
 -- Within a single active plop: a builder that finishes its own share (e.g.
 -- the single T1 con with only one T1 structure to place) should pitch in on
@@ -171,10 +175,12 @@ end
 -- build that type itself. Guarding another builder makes a con assist its
 -- construction regardless of buildOptions, so this is periodically
 -- re-checked (not just once at release) so it reacts as builders finish at
--- different times. Once the whole plop is done, the next queued plop (if
--- any) starts - recruiting helpers fresh, based on who's idle *then*.
+-- different times. Once a given plop is fully done, its builders free up
+-- and any queued plop waiting on one of them can start - recruiting
+-- helpers fresh, based on who's idle *then*.
 --------------------------------------------------------------------------------
-local activeBuild = nil
+local activeBuilds = {} -- list of { builders = {...}, guardTarget = {...}, released = {...} },
+                         -- one entry per currently in-progress plop
 local helperAssistTimer = nil
 local HELPER_ASSIST_INTERVAL = 1.0 -- seconds between idle-helper reassignment checks
 local CMD_GUARD = CMD and CMD.GUARD or 25
@@ -184,44 +190,92 @@ local plopQueue = {}
 local MaybeStartNextPlop -- forward-declared; assigned further down once
                           -- RecruitHelpers/BuilderCanBuildType etc. exist
 
+-- guardTarget[unitID] = the busy builder we last set this unit to Guard.
+-- released[unitID]    = true once we've decided to leave this unit alone
+--                       for the rest of this plop.
+-- Both live on each activeBuilds entry itself (a fresh table every plop,
+-- see StartPlop), so they reset naturally with no explicit cleanup needed.
 local function TickHelperAssist()
-    if not activeBuild then return end
+    if #activeBuilds == 0 then return end
 
-    local builders = activeBuild.builders
-    local busy, idle = {}, {}
+    local stillActive = {}
+    local anyFinished = false
 
-    for _, b in ipairs(builders) do
-        local queue = Spring.GetCommandQueue(b, 1)
-        local cmdID = queue and queue[1] and queue[1].id
-        if cmdID and cmdID < 0 then
-            -- Actively has a BUILD command queued/in progress.
-            table.insert(busy, b)
-        elseif not cmdID then
-            -- Truly empty queue - finished its own share, or never had any.
-            table.insert(idle, b)
-        end
-        -- Anything else (e.g. already CMD_GUARD) is left alone.
-    end
+    for _, build in ipairs(activeBuilds) do
+        local builders = build.builders
+        build.guardTarget = build.guardTarget or {}
+        build.released    = build.released or {}
+        local guardTarget = build.guardTarget
+        local released     = build.released
 
-    if #busy == 0 then
-        -- Nothing left that needs help - release anyone still guarding.
+        local busy, idle = {}, {}
+
         for _, b in ipairs(builders) do
-            local queue = Spring.GetCommandQueue(b, 1)
-            if queue and queue[1] and queue[1].id == CMD_GUARD then
-                spGiveOrderToUnit(b, CMD_STOP, {}, {})
+            if not released[b] then
+                local queue = Spring.GetCommandQueue(b, 1)
+                local cmdID = queue and queue[1] and queue[1].id
+                if cmdID and cmdID < 0 then
+                    -- Actively has a BUILD command queued/in progress - that's
+                    -- real work, not a stale Guard, so it's no longer "guarding"
+                    -- anyone even if it was a moment ago.
+                    table.insert(busy, b)
+                    guardTarget[b] = nil
+                elseif not cmdID then
+                    -- Truly empty queue - finished its own share, never had
+                    -- any, or was just Stopped by the player.
+                    table.insert(idle, b)
+                end
+                -- Anything else (e.g. already CMD_GUARD) is left alone.
             end
         end
-        activeBuild = nil
-        if MaybeStartNextPlop then MaybeStartNextPlop() end
-        return
+
+        if #busy == 0 then
+            -- Nothing left that needs help on THIS plop - release anyone
+            -- still guarding and drop it from the active list. Other,
+            -- unrelated plops in activeBuilds are untouched.
+            for _, b in ipairs(builders) do
+                if not released[b] then
+                    local queue = Spring.GetCommandQueue(b, 1)
+                    if queue and queue[1] and queue[1].id == CMD_GUARD then
+                        spGiveOrderToUnit(b, CMD_STOP, {}, {})
+                    end
+                end
+            end
+            anyFinished = true
+        else
+            table.insert(stillActive, build)
+
+            if #idle > 0 then
+                local helper = busy[1]
+                for _, b in ipairs(idle) do
+                    if guardTarget[b] == helper then
+                        -- We already set this exact unit to guard this exact
+                        -- still-busy builder, and it's idle again anyway. A Guard
+                        -- order doesn't clear itself while its target is still
+                        -- working - the only way that happens is the player
+                        -- pressed Stop. Respect it: let this unit go for the rest
+                        -- of the plop instead of re-issuing Guard right back,
+                        -- which is what made Stop feel like it did nothing (the
+                        -- next 1-second tick would just reassign it again).
+                        released[b] = true
+                        Spring.Echo("DCB: helper #" .. b .. " was stopped by the player - releasing it from this plop")
+                    else
+                        spGiveOrderToUnit(b, CMD_GUARD, { helper }, {})
+                        guardTarget[b] = helper
+                        Spring.Echo("DCB: assist - helper #" .. b .. " now guarding #" .. helper)
+                    end
+                end
+            end
+        end
     end
 
-    if #idle > 0 then
-        local helper = busy[1]
-        for _, b in ipairs(idle) do
-            spGiveOrderToUnit(b, CMD_GUARD, { helper }, {})
-        end
-        Spring.Echo("DCB: assist - " .. #idle .. " finished helper(s) now guarding #" .. helper)
+    activeBuilds = stillActive
+
+    -- Freeing up a finished plop's builders may unblock something waiting
+    -- in the queue behind them - check right away rather than waiting for
+    -- the next Update() poll.
+    if anyFinished and MaybeStartNextPlop then
+        MaybeStartNextPlop()
     end
 end
 
@@ -369,25 +423,46 @@ local function GetUnitTechLevel(udid)
 end
 
 --------------------------------------------------------------------------------
+-- "Lacks buildOptions" is NOT the same thing as "is a building" - a stray
+-- combat bot swept into a shift-select (e.g. an imprecise box over a
+-- cluster of turbines) also has no buildOptions, but it's a mobile unit,
+-- not a placeable structure. Treating it as a "building" fed it straight
+-- into CreateGhosts/ClosestBuildPos/TestBuildOrder as if it were something
+-- a con could nanolathe into existence - which broke the WHOLE plop (the
+-- centroid/orientation math got skewed by a unit that isn't part of the
+-- actual formation, and RecruitHelpers went looking for "a constructor
+-- that can build this," found a factory that can PRODUCE that unit type
+-- from its own queue, and reported that as "you need a T-whatever con"
+-- even when the player already had exactly the right con selected).
+-- speed == 0 is the standard immobile/structure check - Dragon's Teeth,
+-- turbines, mexes, nanotowers etc. are all speed 0; any mobile unit
+-- (combat bot, scout, mobile con) is not, regardless of buildOptions.
 local function SplitSelection()
     local builders = {}
     local buildings = {}
+    local excludedCount = 0
 
     local selected = spGetSelectedUnits()
     for _, id in ipairs(selected) do
         local udid = spGetUnitDefID(id)
         local ud = UnitDefs[udid]
 
-        -- TRUE builders have buildOptions
         if ud and ud.buildOptions and #ud.buildOptions > 0 then
+            -- TRUE builders have buildOptions
             table.insert(builders, id)
-        else
-            -- Everything else (including Dragon's Teeth) is a building
+        elseif ud and (ud.speed or 0) == 0 then
+            -- A genuinely immobile structure (Dragon's Teeth included)
             table.insert(buildings, id)
+        else
+            -- Mobile and not a builder - e.g. a stray combat bot. Not
+            -- clonable as a "building," and not usable as a con either;
+            -- leave it out of the plop entirely instead of quietly
+            -- corrupting it.
+            excludedCount = excludedCount + 1
         end
     end
 
-    return builders, buildings
+    return builders, buildings, excludedCount
 end
 
 
@@ -457,26 +532,52 @@ local HELPER_RECRUIT_RADIUS = 1125 -- elmos; how far to look for idle helpers to
 local function RecruitHelpers(builders, neededTypes, cx, cz)
     local startCount = #builders
 
+    -- Only sweep for extra helpers if the manually-selected/auto-assigned
+    -- builders can't already cover every needed type on their own. A
+    -- commander (or any single all-around T1 con) can usually build
+    -- everything in a plop alone - unconditionally recruiting every idle
+    -- constructor within HELPER_RECRUIT_RADIUS "just in case" was pulling
+    -- in units the player wanted for something else entirely, since
+    -- getting swept in here means being handed to TickHelperAssist's
+    -- guard-assist loop for as long as this plop is still running, however
+    -- long its build queue actually takes.
+    local coveredAlready = true
+    for udid in pairs(neededTypes) do
+        local covered = false
+        for _, b in ipairs(builders) do
+            if BuilderCanBuildType(b, udid) then
+                covered = true
+                break
+            end
+        end
+        if not covered then
+            coveredAlready = false
+            break
+        end
+    end
+
     local alreadyIn = {}
     for _, b in ipairs(builders) do
         alreadyIn[b] = true
     end
 
-    local teamUnits = spGetTeamUnits(spGetMyTeamID())
-    if teamUnits then
-        for _, unitID in ipairs(teamUnits) do
-            if not alreadyIn[unitID] and (Spring.GetUnitCommandCount(unitID) or 0) == 0 then
-                local budid = spGetUnitDefID(unitID)
-                local bud = UnitDefs[budid]
-                local isConstructor = bud and bud.buildOptions and #bud.buildOptions > 0
+    if not coveredAlready then
+        local teamUnits = spGetTeamUnits(spGetMyTeamID())
+        if teamUnits then
+            for _, unitID in ipairs(teamUnits) do
+                if not alreadyIn[unitID] and (Spring.GetUnitCommandCount(unitID) or 0) == 0 then
+                    local budid = spGetUnitDefID(unitID)
+                    local bud = UnitDefs[budid]
+                    local isConstructor = bud and bud.buildOptions and #bud.buildOptions > 0
 
-                if isConstructor then
-                    local x, y, z = spGetUnitPosition(unitID)
-                    if x then
-                        local dx, dz = x - cx, z - cz
-                        if math.sqrt(dx * dx + dz * dz) <= HELPER_RECRUIT_RADIUS then
-                            table.insert(builders, unitID)
-                            alreadyIn[unitID] = true
+                    if isConstructor then
+                        local x, y, z = spGetUnitPosition(unitID)
+                        if x then
+                            local dx, dz = x - cx, z - cz
+                            if math.sqrt(dx * dx + dz * dz) <= HELPER_RECRUIT_RADIUS then
+                                table.insert(builders, unitID)
+                                alreadyIn[unitID] = true
+                            end
                         end
                     end
                 end
@@ -655,7 +756,7 @@ function widget:MousePress(x, y, button)
             return
         end
 
-        local builders, buildings = SplitSelection()
+        local builders, buildings, excludedCount = SplitSelection()
 
         -- Every single building in the selection has to be individually
         -- clonable (i.e. added while shift was held - see clonableUnits /
@@ -681,6 +782,11 @@ function widget:MousePress(x, y, button)
             CreateGhosts(buildings)
 
             lastSoundTime = spGetTimer()
+
+            if excludedCount > 0 then
+                screenWarningText = excludedCount .. " selected unit(s) skipped -- not a building, so not clonable."
+                screenWarningTimer = spGetTimer()
+            end
 
             return true
         end
@@ -776,6 +882,27 @@ end
 
 
 function widget:KeyPress(key)
+    -- ESCAPE: manual full reset of every piece of drag/plop state this
+    -- widget tracks. Exists as a safety valve independent of whatever
+    -- specific edge case might leave a plop unable to resolve itself
+    -- (an odd selection, a ghost that can never validate, etc.) - the
+    -- player shouldn't ever need a full widget reload (F11) just to get
+    -- back to a clean slate.
+    if key == 27 then
+        if dragging or #activeBuilds > 0 or #plopQueue > 0 then
+            dragging = false
+            ghostData = {}
+            dragBuilders = {}
+            activeBuilds = {}
+            plopQueue = {}
+            screenWarningText = nil
+            screenWarningTimer = nil
+            Spring.Echo("DCB: Escape pressed - cleared all drag/plop state")
+            return true
+        end
+        return
+    end
+
     if not dragging then return end
 
     -- SPACE = rotate
@@ -799,8 +926,9 @@ end
 
 --------------------------------------------------------------------------------
 -- StartPlop: recruit helpers + issue direct build orders for one plop.
--- Only ever called when no other plop is currently active (see
--- MaybeStartNextPlop below) - that's what makes plops finish in order.
+-- Only ever called once MaybeStartNextPlop has confirmed none of this
+-- plop's builders are already committed elsewhere - other, unrelated
+-- plops may well be active at the same time.
 --------------------------------------------------------------------------------
 local function StartPlop(plop)
     local ghosts   = plop.ghostData
@@ -925,7 +1053,8 @@ local function StartPlop(plop)
 
     --------------------------------------------------------------------
     -- Issue a BUILD order to every builder capable of that specific
-    -- type. Since only one plop is ever active at a time, a builder's
+    -- type. MaybeStartNextPlop already guarantees none of this plop's
+    -- builders are committed to another in-progress plop, so a builder's
     -- queue here is always either empty or has a leftover STALE GUARD
     -- from a previous cycle (never a legit in-progress build from
     -- another plop) - clear that specific case before queuing new work.
@@ -980,18 +1109,59 @@ local function StartPlop(plop)
 
     -- Hand off to the periodic assist checker: once any of these
     -- builders finishes its own share, it'll be sent to guard/help
-    -- whichever builder(s) still have work left in THIS plop. Once the
-    -- whole plop is done, this triggers the next queued plop to start.
-    activeBuild = { builders = builders }
+    -- whichever builder(s) still have work left in THIS plop. Once this
+    -- specific plop is done, this frees its builders for anything queued
+    -- behind them - other, unrelated active plops are unaffected.
+    table.insert(activeBuilds, { builders = builders })
     helperAssistTimer = spGetTimer() -- delay first check so fresh orders have time to register
 end
 
+-- Scans the whole queue (not just the front) and starts every plop whose
+-- builders don't conflict with anything already committed - either an
+-- already-active plop, or an earlier plop in the queue that itself got
+-- blocked. That last part matters: if plop #1 is stuck waiting on a
+-- builder that's busy elsewhere, and plop #2 (further back in the queue)
+-- wants that SAME builder, plop #2 must also wait rather than jump the
+-- queue and grab it out from under plop #1 - otherwise plop #1 could end
+-- up starting later and stealing it right back. Plops with no builder
+-- overlap with anything ahead of them start immediately, concurrently
+-- with whatever else is already running.
 MaybeStartNextPlop = function()
-    if not activeBuild and #plopQueue > 0 then
-        local plop = table.remove(plopQueue, 1)
-        Spring.Echo("DCB: starting next plop (" .. #plopQueue .. " still queued)")
-        StartPlop(plop)
+    if #plopQueue == 0 then return end
+
+    local reserved = {}
+    for _, build in ipairs(activeBuilds) do
+        for _, b in ipairs(build.builders) do
+            reserved[b] = true
+        end
     end
+
+    local remaining = {}
+    for _, plop in ipairs(plopQueue) do
+        local conflict = false
+        for _, b in ipairs(plop.builders) do
+            if reserved[b] then
+                conflict = true
+                break
+            end
+        end
+
+        if conflict then
+            table.insert(remaining, plop)
+        else
+            Spring.Echo("DCB: starting plop (no builder overlap with anything in progress)")
+            StartPlop(plop)
+        end
+
+        -- Either way, this plop's builders are now spoken for: if it just
+        -- started, they're genuinely busy; if it's still queued, anything
+        -- behind it needing the same builder(s) has to wait its turn too.
+        for _, b in ipairs(plop.builders) do
+            reserved[b] = true
+        end
+    end
+
+    plopQueue = remaining
 end
 
 --------------------------------------------------------------------------------
@@ -1065,15 +1235,19 @@ function widget:Update()
 
     wasLmbDown = lmb
 
-    if activeBuild then
+    if #activeBuilds > 0 then
         local now = spGetTimer()
         if not helperAssistTimer or spDiffTimers(now, helperAssistTimer) > HELPER_ASSIST_INTERVAL then
             helperAssistTimer = now
             TickHelperAssist()
         end
-    elseif #plopQueue > 0 then
-        -- Nothing active but something's waiting - safety net in case a
-        -- plop ever ends up queued without a start being triggered.
+    end
+    if #plopQueue > 0 then
+        -- Always worth checking, independent of whether anything's
+        -- currently active - a queued plop with no builder overlap should
+        -- start right away even while unrelated plops are still running,
+        -- not wait for them to finish. Also the safety net for a plop
+        -- that ends up queued without a start being triggered elsewhere.
         MaybeStartNextPlop()
     end
 end
