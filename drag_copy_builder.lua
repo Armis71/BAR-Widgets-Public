@@ -120,6 +120,11 @@ local dragging    = false
 local rotation    = 0
 local dragBuilders = {}
 
+-- Timer reference for the cursor icon's throb animation (see
+-- DrawCloneCursorIcon) - reset at the start of each drag so the throb
+-- phase is consistent/predictable rather than tied to overall game uptime.
+local cursorIconPulseStart = nil
+
 -- A unit is only eligible for shift-drag-clone if IT ITSELF was added to
 -- the selection while shift was held (click or box-select). This has to be
 -- tracked per-unit, not as one flag for "the selection" - otherwise a
@@ -816,6 +821,7 @@ function widget:MousePress(x, y, button)
             dragging = true
             rotation = 0
             dragBuilders = builders
+            cursorIconPulseStart = spGetTimer()
             CreateGhosts(buildings)
 
             if excludedCount > 0 then
@@ -1280,6 +1286,112 @@ function widget:Update()
     end
 end
 
+--------------------------------------------------------------------------------
+-- Clone Builder's own cursor icon: two overlapping squares (a common
+-- "duplicate" pictograph), drawn right next to the OS mouse pointer while
+-- ghost mode is active. Colored with the same green/red convention as the
+-- ghost previews themselves (valid vs. invalid placement), so it doubles
+-- as an at-a-glance status readout instead of pure decoration. Deliberately
+-- OFFSET from the cursor's exact pixel rather than drawn on top of it - the
+-- engine's real cursor system (Spring.SetMouseCursor/AssignMouseCursor)
+-- only swaps the cursor image while a specific ENGINE COMMAND is armed,
+-- which ghost mode explicitly is NOT (see IsAnyCommandArmed's comment
+-- above widget:MousePress) - so replacing the actual OS pointer isn't an
+-- option here without arming a fake command just to hang a cursor off of
+-- it. A small always-on-top screen-space icon achieves the same "you're in
+-- Clone Builder mode" signal without that workaround.
+--------------------------------------------------------------------------------
+-- v2 (2026-08-27): the first version (small, translucent, green/red-only)
+-- was reported nearly invisible against BAR's yellow-green grass textures -
+-- both the terrain and the "valid" green landed in the same hue/brightness
+-- range, and the icon was small and mostly see-through. v2 made it roughly
+-- 2x the size, added a solid dark backing plate (so it reads against ANY
+-- terrain color, not just ones that contrast with green/red), and switched
+-- to white outlines for the icon shape itself - the green/red status color
+-- is now carried only by the front square's fill, on top of the dark plate.
+--
+-- v3 (2026-08-27, same day): v2's up-and-right placement put the icon
+-- right in the path of the "Column"/"Spacebar to rotate"/"R to change
+-- pattern" screen-space label text, which is drawn just above/at the
+-- cursor's own row (see the label draws further down in widget:DrawScreen)
+-- - the two overlapped in a screenshot. Moved to below-and-right of the
+-- cursor instead, with more clearance, so it sits clear of that text. Also
+-- added a continuous "throb outward" pulse: the icon's size oscillates
+-- between its resting size and ~25% larger and back, anchored at the
+-- corner nearest the cursor so it visibly grows outward and returns rather
+-- than growing in every direction - meant to catch the eye the way a
+-- static icon doesn't.
+local function DrawCloneCursorIcon(mx, my, allValid)
+    local baseSize  = 20
+    local offsetX   = 30
+    local offsetY   = 30
+    local pad       = 4
+
+    -- Pulse: 0 -> 1 -> 0 on a smooth sine, so size ranges from baseSize up
+    -- to baseSize*1.25 and back - always growing OUT from the resting
+    -- size, never shrinking below it.
+    local now = spGetTimer()
+    local elapsed = cursorIconPulseStart and spDiffTimers(now, cursorIconPulseStart) or 0
+    local pulse = 0.5 + 0.5 * math.sin(elapsed * 3.2)
+    local size = baseSize * (1.0 + 0.25 * pulse)
+
+    -- Back square (outline only), below-and-right of the cursor.
+    local bx0, by0 = mx + offsetX, my - offsetY
+    local bx1, by1 = bx0 + size, by0 - size
+
+    -- Front square (filled with status color), offset further down-right of the back one.
+    local gap = 9 * (1.0 + 0.25 * pulse)
+    local fx0, fy0 = bx0 + gap, by0 - gap
+    local fx1, fy1 = fx0 + size, fy0 - size
+
+    local r, g, b = 0.25, 0.95, 0.35
+    if not allValid then
+        r, g, b = 1.0, 0.25, 0.2
+    end
+
+    -- Solid dark backing plate behind both squares (with padding) so the
+    -- icon is readable against bright/busy terrain regardless of hue -
+    -- this is what the v1 icon was missing.
+    gl.Color(0.03, 0.03, 0.03, 0.8)
+    gl.BeginEnd(GL.QUADS, function()
+        gl.Vertex(bx0 - pad, by0 + pad)
+        gl.Vertex(fx1 + pad, by0 + pad)
+        gl.Vertex(fx1 + pad, fy1 - pad)
+        gl.Vertex(bx0 - pad, fy1 - pad)
+    end)
+
+    -- Back square: plain white outline, no fill, for depth/separation from
+    -- the front square.
+    gl.LineWidth(2.5)
+    gl.Color(1, 1, 1, 0.9)
+    gl.BeginEnd(GL.LINE_LOOP, function()
+        gl.Vertex(bx0, by0)
+        gl.Vertex(bx1, by0)
+        gl.Vertex(bx1, by1)
+        gl.Vertex(bx0, by1)
+    end)
+
+    -- Front square: filled with the valid/invalid status color, solid
+    -- white outline on top so the shape stays crisp against the color fill.
+    gl.Color(r, g, b, 0.85)
+    gl.BeginEnd(GL.QUADS, function()
+        gl.Vertex(fx0, fy0)
+        gl.Vertex(fx1, fy0)
+        gl.Vertex(fx1, fy1)
+        gl.Vertex(fx0, fy1)
+    end)
+    gl.LineWidth(3.0)
+    gl.Color(1, 1, 1, 1)
+    gl.BeginEnd(GL.LINE_LOOP, function()
+        gl.Vertex(fx0, fy0)
+        gl.Vertex(fx1, fy0)
+        gl.Vertex(fx1, fy1)
+        gl.Vertex(fx0, fy1)
+    end)
+
+    gl.LineWidth(1.0)
+end
+
 function widget:DrawScreen()
     -- On-screen warning banner (e.g. "no idle con unit within the
     -- radius") - independent of dragging state, since a queued plop (and
@@ -1315,6 +1427,22 @@ function widget:DrawScreen()
 
     -- Get mouse world position
     local mx, my = Spring.GetMouseState()
+
+    -- Draw Clone Builder's own cursor icon right away, independent of
+    -- whether the ray-trace below resolves - it should track the mouse
+    -- every frame ghost mode is active, not just when the cursor happens
+    -- to be over valid terrain.
+    do
+        local allValid = true
+        for _, g in ipairs(ghostData) do
+            if not g.valid then
+                allValid = false
+                break
+            end
+        end
+        DrawCloneCursorIcon(mx, my, allValid)
+    end
+
     local _, pos = Spring.TraceScreenRay(mx, my, true)
     if not pos then return end
 
