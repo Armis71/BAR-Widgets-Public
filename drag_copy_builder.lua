@@ -441,6 +441,7 @@ local function SplitSelection()
     local builders = {}
     local buildings = {}
     local excludedCount = 0
+    local excludedNames = {} -- diagnostic only, see Spring.Echo below
 
     local selected = spGetSelectedUnits()
     for _, id in ipairs(selected) do
@@ -459,7 +460,17 @@ local function SplitSelection()
             -- leave it out of the plop entirely instead of quietly
             -- corrupting it.
             excludedCount = excludedCount + 1
+            table.insert(excludedNames, GetUnitDefDisplayName(udid) .. "#" .. id)
         end
+    end
+
+    if excludedCount > 0 then
+        -- Diagnostic: exactly which unit(s) got excluded and why, so a
+        -- report of "idle cons didn't help" in the same drag can be
+        -- checked against what was actually fed into builders/buildings,
+        -- rather than guessed at after the fact.
+        Spring.Echo("DCB: SplitSelection excluded " .. excludedCount
+            .. " non-clonable unit(s): " .. table.concat(excludedNames, ", "))
     end
 
     return builders, buildings, excludedCount
@@ -556,10 +567,42 @@ local function RecruitHelpers(builders, neededTypes, cx, cz)
         end
     end
 
+    -- Diagnostic: spell out the coverage decision per needed type, so a
+    -- "helpers should have joined but didn't" report can be checked
+    -- against what this plop's builders actually looked like at the
+    -- moment recruitment ran, instead of guessed at after the fact.
+    do
+        local parts = {}
+        for udid in pairs(neededTypes) do
+            local covered = false
+            for _, b in ipairs(builders) do
+                if BuilderCanBuildType(b, udid) then
+                    covered = true
+                    break
+                end
+            end
+            table.insert(parts, GetUnitDefDisplayName(udid) .. "=" .. (covered and "covered" or "GAP"))
+        end
+        Spring.Echo("DCB: RecruitHelpers coverage check - builders=" .. #builders
+            .. " (" .. table.concat((function()
+                local names = {}
+                for _, b in ipairs(builders) do
+                    table.insert(names, GetUnitDefDisplayName(spGetUnitDefID(b)) .. "#" .. b)
+                end
+                return names
+            end)(), ", ") .. ") - " .. table.concat(parts, ", ")
+            .. " -> " .. (coveredAlready and "SKIPPING helper sweep (already covered)" or "sweeping for helpers"))
+    end
+
     local alreadyIn = {}
     for _, b in ipairs(builders) do
         alreadyIn[b] = true
     end
+
+    -- Diagnostic counters for the "swept but found nobody" case below -
+    -- distinguishes "no idle constructors anywhere nearby" from "found
+    -- some, but they were out of radius" etc.
+    local sawIdleConstructor, sawInRadius = 0, 0
 
     if not coveredAlready then
         local teamUnits = spGetTeamUnits(spGetMyTeamID())
@@ -571,10 +614,12 @@ local function RecruitHelpers(builders, neededTypes, cx, cz)
                     local isConstructor = bud and bud.buildOptions and #bud.buildOptions > 0
 
                     if isConstructor then
+                        sawIdleConstructor = sawIdleConstructor + 1
                         local x, y, z = spGetUnitPosition(unitID)
                         if x then
                             local dx, dz = x - cx, z - cz
                             if math.sqrt(dx * dx + dz * dz) <= HELPER_RECRUIT_RADIUS then
+                                sawInRadius = sawInRadius + 1
                                 table.insert(builders, unitID)
                                 alreadyIn[unitID] = true
                             end
@@ -591,6 +636,12 @@ local function RecruitHelpers(builders, neededTypes, cx, cz)
             table.insert(names, GetUnitDefDisplayName(spGetUnitDefID(builders[i])) .. "#" .. builders[i])
         end
         Spring.Echo("DCB: recruited " .. #names .. " helper(s) near drop site: " .. table.concat(names, ", "))
+    elseif not coveredAlready then
+        -- We swept (there WAS a coverage gap) but came up empty - say why.
+        Spring.Echo(string.format(
+            "DCB: swept for helpers but recruited none - idle constructors seen on team: %d, within radius (%d elmos): %d",
+            sawIdleConstructor, HELPER_RECRUIT_RADIUS, sawInRadius
+        ))
     end
 
     -- No automatic fallback to a busy/far-away builder anymore - if
@@ -713,46 +764,45 @@ end
 --------------------------------------------------------------------------------
 -- MousePress: start drag-copy (Shift)
 --------------------------------------------------------------------------------
--- True whenever the engine/BAR itself wants this shift-drag, so Clone
--- Builder must NOT claim it. Two distinct cases, both signalled through
--- Spring.GetActiveCommand():
+-- True whenever the engine/BAR itself wants this shift-drag for one of its
+-- own commands, so Clone Builder (and its footprint box-select supplement,
+-- see IsAnyCommandArmed's other call sites) must NOT touch it.
 --
--- 1) A normal build order is armed (cmdID < 0, i.e. -unitDefID) - clicking
---    a buildmenu icon, or cycling a quick-build hotkey (Z/X/C/V) to a
---    single-building type. Shift-drag in this state is the native
---    "build line" gesture.
+-- History: this used to check two specific cases by hand - cmdID < 0 for
+-- an armed build order (clicking a buildmenu icon, or Z/X/C/V quick-build),
+-- and a hardcoded list of "area drag" cmdTypes (ICON_AREA / UNIT_OR_AREA /
+-- UNIT_OR_RECTANGLE) to also catch Area Mex, Reclaim Area, Repair Area,
+-- Resurrect Area. That second list was found and extended reactively, one
+-- reported command at a time - and BAR has plenty of OTHER shift-drag-
+-- capable commands (Patrol, Guard, Fight-move, Load, Unload, whatever a
+-- future custom command adds) that don't use any of those specific
+-- cmdTypes and would have sailed straight through un-caught, reopening the
+-- exact same bug under a different hotkey every time.
 --
--- 2) An AREA-type command is armed (cmdType == CMDTYPE.ICON_AREA, or the
---    UNIT_OR_AREA/UNIT_OR_RECTANGLE variants some native orders use).
---    This is what Z-cycling to the extractor icon actually arms - BAR's
---    Area Mex command (cmd_area_mex.lua upstream) is a CUSTOM command
---    (GameCMD.AREA_MEX) with a POSITIVE id, since it isn't "place one
---    building" at all, it's "define a circle, auto-place extractors on
---    every metal spot inside it". The original build-order-only check
---    (cmdID < 0) completely missed this - a positive custom command ID
---    sailed right through it. Same command-type family covers Reclaim
---    Area / Repair Area / Resurrect Area, which are the same drag-a-
---    circle gesture and should be left alone for the same reason.
-local ICON_AREA               = CMDTYPE and CMDTYPE.ICON_AREA
-local ICON_UNIT_OR_AREA       = CMDTYPE and CMDTYPE.ICON_UNIT_OR_AREA
-local ICON_UNIT_OR_RECTANGLE  = CMDTYPE and CMDTYPE.ICON_UNIT_OR_RECTANGLE
-
-local function IsBuildCommandArmed()
-    local _, cmdID, cmdType = spGetActiveCommand()
-    if cmdID == nil then return false end
-    if cmdID < 0 then return true end
-    return cmdType == ICON_AREA
-        or cmdType == ICON_UNIT_OR_AREA
-        or cmdType == ICON_UNIT_OR_RECTANGLE
+-- The actual question this needs to answer is simpler than "which specific
+-- command types drag areas": it's "is ANY command currently armed at all."
+-- Spring.GetActiveCommand()'s cmdID is nil precisely in the normal/default
+-- state (nothing selected from the build menu or a hotkey - a left-click
+-- just does context-sensitive move/attack/select), and non-nil for every
+-- armed command of every kind, build or otherwise. Whenever it's non-nil,
+-- the engine has already claimed shift-drag for that command's own action
+-- (draw an area, draw a build line, whatever it is) - so there's nothing
+-- left for Clone Builder or the footprint supplement to safely do with
+-- that same gesture, regardless of which specific command it turns out to
+-- be. Checking that directly covers every current AND future BAR command
+-- in one go, instead of enumerating them one bug report at a time.
+local function IsAnyCommandArmed()
+    local _, cmdID = spGetActiveCommand()
+    return cmdID ~= nil
 end
 
 function widget:MousePress(x, y, button)
     local ctrl, alt, meta, shift = Spring.GetModKeyState()
     if button == 1 and shift then
-        if IsBuildCommandArmed() then
-            -- Fall through untouched so the engine/BAR's own build-line,
-            -- build-grid, or area-drag command (Area Mex, Reclaim Area,
-            -- etc.) handles this drag instead.
+        if IsAnyCommandArmed() then
+            -- Fall through untouched so the engine/BAR's own armed command
+            -- (build-line, build-grid, area-drag, or anything else) handles
+            -- this drag instead.
             return
         end
 
@@ -861,15 +911,15 @@ end
 --------------------------------------------------------------------------------
 function widget:MouseMove()
     if dragging then
-        -- Safety net: if a build command becomes armed WHILE a clone-drag
-        -- is already in progress (e.g. Z pressed mid-drag), bail out of
-        -- the clone immediately rather than completing it. We can't hand
-        -- this specific press back to the engine's own build-line handler
+        -- Safety net: if ANY command becomes armed WHILE a clone-drag is
+        -- already in progress (e.g. Z pressed mid-drag), bail out of the
+        -- clone immediately rather than completing it. We can't hand this
+        -- specific press back to the engine's own command handler
         -- (MousePress already claimed it), but stopping here at least
         -- stops the widget from placing/queuing something the player no
         -- longer intends, instead of only catching this at drag START.
-        if IsBuildCommandArmed() then
-            Spring.Echo("DCB: build command armed mid-drag - aborting clone drag")
+        if IsAnyCommandArmed() then
+            Spring.Echo("DCB: a command got armed mid-drag - aborting clone drag")
             dragging = false
             ghostData = {}
             dragBuilders = {}
@@ -1216,18 +1266,34 @@ function widget:Update()
     if lmb and not wasLmbDown then
         -- Button just went down this frame.
         local ctrl, alt, meta, shift = Spring.GetModKeyState()
-        if not dragging and shift then
+        if not dragging and shift and not IsAnyCommandArmed() then
+            -- IsAnyCommandArmed() guards this exactly like MousePress does
+            -- below - a shift-drag with ANY command armed (Reclaim Area,
+            -- Area Mex, Repair/Resurrect Area, a build line/grid, Patrol,
+            -- Guard, or anything else the game has) is the engine's own
+            -- gesture, not a footprint-supplemented box-select. Without
+            -- this check, our footprint supplement used to add building
+            -- footprints into the ACTUAL game selection mid-command (e.g.
+            -- structures getting swept in while drawing a Reclaim Area
+            -- circle), which then went on to look like a clonable
+            -- selection to Clone Builder's own MousePress on the very next
+            -- shift-drag once the command auto-disarmed after firing once
+            -- - silently hijacking what the player meant as a second
+            -- reclaim/mex/etc. circle into a clone-drag instead.
             pollDragStartX, pollDragStartY = mx, my
             pollDragTracking = true
         else
-            -- Plain drag (vanilla selection only) or a clone-copy drag
-            -- (or something else) owns this click instead.
+            -- Plain drag (vanilla selection only), a clone-copy drag, or
+            -- an armed command of any kind owns this click instead.
             pollDragTracking = false
         end
 
     elseif not lmb and wasLmbDown then
-        -- Button just went up this frame.
-        if pollDragTracking and not dragging then
+        -- Button just went up this frame. Re-check IsAnyCommandArmed()
+        -- here too (not just at press time) in case a command got armed
+        -- mid-drag (e.g. E pressed after LMB was already down) - same
+        -- mid-drag-abort idea as the clone-drag check in MouseMove.
+        if pollDragTracking and not dragging and not IsAnyCommandArmed() then
             TryFootprintBoxSelect(pollDragStartX, pollDragStartY, mx, my)
         end
         pollDragTracking = false
