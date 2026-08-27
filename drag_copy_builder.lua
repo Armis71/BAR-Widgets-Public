@@ -1120,28 +1120,6 @@ local function StartPlop(plop)
     end
     Spring.Echo("DCB: plop start - issued " .. directOrders .. " direct build order(s)")
 
-    --------------------------------------------------------------------
-    -- Diagnostic: ask the engine itself what's actually sitting in each
-    -- builder's command queue right now, right after we gave the order(s).
-    --------------------------------------------------------------------
-    for _, builder in ipairs(builders) do
-        local queue = Spring.GetCommandQueue(builder, -1)
-        local qlen = queue and #queue or -1
-        local firstDesc = "none"
-        if queue and queue[1] then
-            local c = queue[1]
-            firstDesc = string.format("id=%s params=%s",
-                tostring(c.id), table.concat(c.params or {}, ","))
-        end
-        local vx, vy, vz, speed = Spring.GetUnitVelocity(builder)
-        local bx, by, bz = spGetUnitPosition(builder)
-        Spring.Echo(string.format(
-            "DCB: post-order check - builder #%s pos=(%.0f,%.0f,%.0f) queue_len=%s first_cmd=[%s] speed=%s",
-            tostring(builder), bx or -1, by or -1, bz or -1,
-            tostring(qlen), firstDesc, tostring(speed)
-        ))
-    end
-
     -- Hand off to the periodic assist checker: once any of these
     -- builders finishes its own share, it'll be sent to guard/help
     -- whichever builder(s) still have work left in THIS plop. Once this
