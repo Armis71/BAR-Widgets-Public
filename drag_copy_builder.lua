@@ -1325,7 +1325,6 @@ local function DrawCloneCursorIcon(mx, my, allValid)
     local baseSize  = 20
     local offsetX   = 30
     local offsetY   = 30
-    local pad       = 4
 
     -- Pulse: 0 -> 1 -> 0 on a smooth sine, so size ranges from baseSize up
     -- to baseSize*1.25 and back - always growing OUT from the resting
@@ -1349,16 +1348,44 @@ local function DrawCloneCursorIcon(mx, my, allValid)
         r, g, b = 1.0, 0.25, 0.2
     end
 
-    -- Solid dark backing plate behind both squares (with padding) so the
-    -- icon is readable against bright/busy terrain regardless of hue -
-    -- this is what the v1 icon was missing.
-    gl.Color(0.03, 0.03, 0.03, 0.8)
-    gl.BeginEnd(GL.QUADS, function()
-        gl.Vertex(bx0 - pad, by0 + pad)
-        gl.Vertex(fx1 + pad, by0 + pad)
-        gl.Vertex(fx1 + pad, fy1 - pad)
-        gl.Vertex(bx0 - pad, fy1 - pad)
-    end)
+    -- Soft drop shadow behind both squares (2026-08-28, v4; corrected v4.1
+    -- same day after the user pointed out it "doesn't even follow the
+    -- contours of the icon"). v4's first attempt drew one bounding quad
+    -- around BOTH squares - which, since the two squares only overlap
+    -- diagonally, filled in the concave notch between them and still read
+    -- as one plain black square, just softer-edged. This version instead
+    -- traces each square's OWN silhouette separately (back square and
+    -- front square each get their own grown/offset quad every layer), so
+    -- the union is the actual stepped "two overlapping squares" shape the
+    -- icon has, not its rectangular bounding box. Layers still stack from
+    -- largest/faintest to smallest/darkest for a soft blurred falloff;
+    -- offset down-and-right of the icon (screen space here is Y-up, so
+    -- "down" is -Y).
+    local shadowOffsetX, shadowOffsetY = 4, -4
+    local shadowLayers = {
+        { grow = 8, alpha = 0.06 },
+        { grow = 5, alpha = 0.10 },
+        { grow = 3, alpha = 0.16 },
+        { grow = 1, alpha = 0.24 },
+        { grow = 0, alpha = 0.34 },
+    }
+    for _, layer in ipairs(shadowLayers) do
+        local g = layer.grow
+        gl.Color(0, 0, 0, layer.alpha)
+        gl.BeginEnd(GL.QUADS, function()
+            -- back square's shadow
+            gl.Vertex(bx0 - g + shadowOffsetX, by0 + g + shadowOffsetY)
+            gl.Vertex(bx1 + g + shadowOffsetX, by0 + g + shadowOffsetY)
+            gl.Vertex(bx1 + g + shadowOffsetX, by1 - g + shadowOffsetY)
+            gl.Vertex(bx0 - g + shadowOffsetX, by1 - g + shadowOffsetY)
+
+            -- front square's shadow
+            gl.Vertex(fx0 - g + shadowOffsetX, fy0 + g + shadowOffsetY)
+            gl.Vertex(fx1 + g + shadowOffsetX, fy0 + g + shadowOffsetY)
+            gl.Vertex(fx1 + g + shadowOffsetX, fy1 - g + shadowOffsetY)
+            gl.Vertex(fx0 - g + shadowOffsetX, fy1 - g + shadowOffsetY)
+        end)
+    end
 
     -- Back square: plain white outline, no fill, for depth/separation from
     -- the front square.
