@@ -20,6 +20,14 @@ end
 --           and end up stuck with it disabled if this widget ever goes away.
 -- 0 / OFF = UNLOCKED. The "Top Bar" button works normally again.
 --
+-- Why this defaults to LOCKED: a user disabled Top Bar from this button,
+-- then later deleted the Eco Graph widget entirely -- with no Top Bar and
+-- no Eco Graph, they had no way back to a Top Bar toggle short of finding
+-- it in the advanced F11 widget list, which they didn't know to check.
+-- Locking this button by default means the ONLY way to disable Top Bar
+-- from here is to edit this file and set the switch below to 0 -- which
+-- is deliberate: someone editing Lua by hand already knows F11 exists.
+--
 -- This is a plain global (not "local") on purpose -- this file is already at
 -- Lua's 200-local-variable ceiling, and globals don't count against it.
 --------------------------------------------------------------------------------
@@ -728,6 +736,27 @@ do
 
         return false
     end
+
+    -- Re-centers this panel on the CURRENT screen, using the same formula
+    -- as first-time placement above. Exists for /ecographcenter -- a
+    -- resolution lower than whatever screen this got dragged to last
+    -- (e.g. downloading someone else's saved config, or moving from an
+    -- ultrawide to a smaller monitor) can otherwise leave this panel
+    -- sitting off-screen with no way to find it, since dragging requires
+    -- being able to see it to click it in the first place.
+    function EcoToggleMenu.Center()
+        -- Fetched fresh rather than using this block's own `vsx, vsy` --
+        -- nothing in the file actually calls EcoToggleMenu.ViewResize (it's
+        -- defined but never wired up), so those would be stale from
+        -- whatever the resolution was at widget load, not the CURRENT one.
+        local curVsx, curVsy = Spring.GetViewGeometry()
+        local totalH = BUTTON_H * 2 + BUTTON_SPACING
+        EcoToggleMenu.posX = math.floor((curVsx - BUTTON_W) * 0.5)
+        EcoToggleMenu.posY = math.floor((curVsy - totalH) * 0.5)
+
+        Spring.SetConfigInt("unified_menu_x", EcoToggleMenu.posX)
+        Spring.SetConfigInt("unified_menu_y", EcoToggleMenu.posY)
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -820,8 +849,9 @@ local cfg = {
 	historyOptions = {20, 30, 40, 50, 60},
 
     -- bgColor     = {0, 0, 0, 0.60},
-	bgColor     = {0, 0, 0, 0.95},   -- Background Opacity for the whole widget
-    borderColor = {1, 1, 1, 0.5},    
+	bgColor     = {0, 0, 0, 0.95},   -- Background Opacity for the whole widget ("Default" mode)
+	bgColorTransparent = {0, 0, 0, 0},   -- "Transparent" mode: no background panel at all
+    borderColor = {1, 1, 1, 0.5},
 
     metalIncomeColor = {0.2, 1.0, 1.0, 1.0},
     metalUsageColor  = {1.0, 0.5, 0.5, 1.0},
@@ -1733,6 +1763,7 @@ local graphMarginRight = 0.10  -- pushes Metal graph left
 
     if compactMode then
         if graphList then glDeleteList(graphList) graphList = nil end
+        widget._bgToggleRect = nil   -- no stale hitbox while the button isn't drawn
         return
     end
 
@@ -1775,7 +1806,8 @@ local graphMarginRight = 0.10  -- pushes Metal graph left
     graphList = glCreateList(function()
         
         -- BACKGROUND + BORDER
-        glColor(cfg.bgColor)
+        local bgCol = widget._transparentMode and cfg.bgColorTransparent or cfg.bgColor
+        glColor(bgCol)
         glRect(x1,y1,x2,y2)
 
         glColor(cfg.borderColor)
@@ -1786,6 +1818,50 @@ local graphMarginRight = 0.10  -- pushes Metal graph left
             glVertex(x2,y2); glVertex(x1,y2)
             glVertex(x1,y2); glVertex(x1,y1)
         end)
+
+        ------------------------------------------------------------
+        -- BACKGROUND MODE TOGGLE
+        -- Sits in the empty gap between the Metal graph (ends at
+        -- mid-60) and the Energy graph (starts at mid+120) -- the
+        -- only unused space in this layout, confirmed against a
+        -- screenshot of the live widget. Click toggles between the
+        -- "Default" (opaque) and "Transparent" (bgColorTransparent,
+        -- alpha 0) background set above.
+        ------------------------------------------------------------
+        do
+            local barY = y1 + (h * margin) - 5
+            local barH = 12
+            local gy1  = barY + barH + 5    -- matches graphBottomPadding below
+            local gy2  = y2 - 24            -- matches graphTopPadding below
+
+            local tgCenterX = mid + 30      -- center of the mid-60..mid+120 gap
+            local tgW, tgH  = 96, 22
+            local tgX1 = tgCenterX - tgW * 0.5
+            local tgX2 = tgCenterX + tgW * 0.5
+            local tgCenterY = (gy1 + gy2) * 0.5
+            local tgY1 = tgCenterY - tgH * 0.5
+            local tgY2 = tgCenterY + tgH * 0.5
+
+            -- Stored on `widget` (not a new local) for the same 200-local
+            -- reason as widget._transparentMode above; read back by
+            -- widget:MousePress for hit-testing.
+            widget._bgToggleRect = { x1 = tgX1, y1 = tgY1, x2 = tgX2, y2 = tgY2 }
+
+            glColor(0, 0, 0, widget._transparentMode and 0.35 or 0.55)
+            glRect(tgX1, tgY1, tgX2, tgY2)
+
+            glColor(1, 1, 1, 0.45)
+            glLineWidth(1)
+            glBeginEnd(GL_LINES, function()
+                glVertex(tgX1, tgY1); glVertex(tgX2, tgY1)
+                glVertex(tgX2, tgY1); glVertex(tgX2, tgY2)
+                glVertex(tgX2, tgY2); glVertex(tgX1, tgY2)
+                glVertex(tgX1, tgY2); glVertex(tgX1, tgY1)
+            end)
+
+            glColor(1, 1, 1, 0.9)
+            glText(widget._transparentMode and "BG: Off" or "BG: On", tgCenterX, tgCenterY - 4, 11, "oc")
+        end
 
         -- PANEL LOOP
         for _, panel in ipairs(panels) do
@@ -2436,7 +2512,7 @@ glText(string.format("Status: %s", status),
     centerX + 35, box.y2 - 20, (fontSize + 4 * FONT_SCALE), "oc")
 
 
-    -- CLOSE BUTTON GEOMETRY (needed for Pause midpoint)
+    -- CLOSE BUTTON GEOMETRY (needed for Pause/T midpoint)
     local hideLabel = "[X]"
     local hideSize  = 14 * FONT_SCALE
     local hideWidth = glGetTextWidth(hideLabel) * hideSize
@@ -2444,15 +2520,38 @@ glText(string.format("Status: %s", status),
     local hy1       = box.y2 - 20
 
 ------------------------------------------------------------
--- PAUSE BUTTON (directly left of [X])
+-- PAUSE BUTTON + TRANSPARENCY TOGGLE (T sits between Pause and [X])
+-- The T toggle here is the MAIN window's own transparency flag
+-- (widget._transparentMode) -- independent of the detached dual-line
+-- graph's own toggle/flag.
 ------------------------------------------------------------
 do
+    -- Transparency toggle, directly left of [X]
+    local tLabel = widget._transparentMode and "[T]" or "[D]"
+    local tSize  = 14 * FONT_SCALE
+    -- Reserve width for the wider of the two labels so the button
+    -- doesn't shift position when the label swaps between them.
+    local tWidth = math.max(glGetTextWidth("[D]"), glGetTextWidth("[T]")) * tSize
+
+    local tx = hx1 - tWidth - 8   -- 8px gap between T and [X]
+    local ty = hy1
+
+    mainTransparentToggleRect = {
+        x1 = tx,
+        y1 = ty - tSize,
+        x2 = tx + tWidth,
+        y2 = ty + tSize
+    }
+
+    glColor(cfg.titleColor)
+    glText(tLabel, tx, ty, tSize, "o")
+
     local pauseLabel = "[Pause]"
     local pauseSize  = 14 * FONT_SCALE
     local pauseWidth = glGetTextWidth(pauseLabel) * pauseSize
 
-    -- Position Pause directly left of the close button
-    local px = hx1 - pauseWidth - 8   -- 8px gap between Pause and [X]
+    -- Position Pause directly left of the transparency toggle
+    local px = tx - pauseWidth - 8   -- 8px gap between Pause and [T]/[D]
     local py = hy1                    -- same vertical alignment
 
     -- Save hitbox for click detection
@@ -2468,7 +2567,7 @@ do
     glText(pauseLabel, px, py, pauseSize, "o")
 end
 
-    
+
 -- DRAW CLOSE BUTTON
 glColor(cfg.titleColor)
 glText(hideLabel, hx1, hy1, hideSize, "o")
@@ -3086,7 +3185,8 @@ UpdateConverterStats()
         mStorage, eStorage
     )
 
-    glColor(cfg.bgColor)
+    local compactBgCol = widget._transparentMode and cfg.bgColorTransparent or cfg.bgColor
+    glColor(compactBgCol)
     glRect(box.x1, box.y1, box.x2, box.y2)
 
     glColor(cfg.borderColor)
@@ -3136,7 +3236,7 @@ UpdateConverterStats()
 
 
     -- BACKPLATE FILL
-    glColor(0, 0, 0, cfg.bgColor[4])
+    glColor(0, 0, 0, compactBgCol[4])
     glBeginEnd(GL.TRIANGLE_FAN, function()
         glVertex(bx1 + bevel, by1)
         glVertex(bx2 - bevel, by1)
@@ -3415,7 +3515,10 @@ local innerX2 = barX + barW - innerPadX
 local innerY1 = barY + innerPadY
 local innerY2 = barY + barH - innerPadY
 
-glColor(0, 0, 0, 0.65)
+-- Follows the Default/Transparent toggle, same as the graph panels and
+-- window backdrop -- this was a flat 0.65 regardless of mode, which is
+-- why it stayed dark after everything else went transparent.
+glColor(0, 0, 0, widget._transparentMode and 0 or 0.65)
 glRect(innerX1, innerY1, innerX2, innerY2)
 
 -- fill
@@ -3481,7 +3584,11 @@ end
 
 
     -- BACKGROUND
-    glColor(0, 0, 0, 0.25)
+    -- Follows the main window's own Default/Transparent toggle (0.25
+    -- default, 0 transparent) instead of the fixed value this always
+    -- used to be -- was the one panel left behind as a flat black box
+    -- even with everything else in the window gone transparent.
+    glColor(0, 0, 0, widget._transparentMode and 0 or 0.25)
     glRect(gx1, gy1, gx2, gy2)
 
 
@@ -3558,7 +3665,9 @@ if not hideGraphs then
     local hy2 = hy1 + 20
 
     -- Background
-    glColor(0, 0, 0, 0.25)
+    -- Follows the main window's own Default/Transparent toggle -- see
+    -- the matching comment on the Metal graph's background above.
+    glColor(0, 0, 0, widget._transparentMode and 0 or 0.25)
     glRect(hx1, hy1, hx2, hy2)
 
     -- Options
@@ -3616,7 +3725,9 @@ end
 
 
     -- BACKGROUND
-    glColor(0, 0, 0, 0.25)
+    -- Follows the main window's own Default/Transparent toggle -- see
+    -- the matching comment on the Metal graph's background above.
+    glColor(0, 0, 0, widget._transparentMode and 0 or 0.25)
     glRect(gx1, gy1, gx2, gy2)
 
     -- SCALE VALUES (same as Full View)
@@ -4419,7 +4530,9 @@ end
            box.x2, box.y1 + resizeHandleSize)         
 
 -----------------------------------------------------------
--- PAUSE BUTTON (Compact View, directly left of [X])
+-- PAUSE BUTTON + TRANSPARENCY TOGGLE (Compact View, T sits between
+-- Pause and [X]. Own flag (widget._transparentMode) -- independent of
+-- the detached dual-line graph's own toggle/flag.)
 ------------------------------------------------------------
 do
     local hideLabel = "[X]"
@@ -4430,13 +4543,32 @@ do
     local hx1 = box.x2 - hideWidth - 6
     local hy1 = box.y2 - 20
 
+    -- Transparency toggle, directly left of [X]
+    local tLabel = widget._transparentMode and "[T]" or "[D]"
+    local tSize  = 14 * FONT_SCALE
+    -- Reserve width for the wider of the two labels so the button
+    -- doesn't shift position when the label swaps between them.
+    local tWidth = math.max(glGetTextWidth("[D]"), glGetTextWidth("[T]")) * tSize
+    local tx = hx1 - tWidth - 8
+    local ty = hy1
+
+    mainTransparentToggleRect = {
+        x1 = tx,
+        y1 = ty - tSize,
+        x2 = tx + tWidth,
+        y2 = ty + tSize
+    }
+
+    glColor(cfg.titleColor)
+    glText(tLabel, tx, ty, tSize, "o")
+
     -- Pause button
     local pauseLabel = "[Pause]"
     local pauseSize  = 14 * FONT_SCALE
     local pauseWidth = glGetTextWidth(pauseLabel) * pauseSize
 
-    -- Position Pause directly left of [X]
-    local px = hx1 - pauseWidth - 8
+    -- Position Pause directly left of the transparency toggle
+    local px = tx - pauseWidth - 8
     local py = hy1
 
     -- Save hitbox for click detection
@@ -4911,12 +5043,34 @@ compactMode = true
 local savedHist = Spring.GetConfigInt("eco_graph_history_seconds", cfg.historySeconds)
 cfg.historySeconds = savedHist or cfg.historySeconds
 
+------------------------------------------------------------
+-- LOAD SAVED BACKGROUND MODE ("Default" opaque vs "Transparent")
+-- Stored on the widget table (not a new top-level local) -- this file's
+-- main chunk is already at Lua's 200-local ceiling, same reason the
+-- Top-Bar-safety-net Shutdown hook below stores its state on `widget`.
+--
+-- Two independent flags, two independent config keys: the main/attached
+-- window and the detached dual-line graph each remember their own
+-- transparency choice and can be switched on/off separately.
+------------------------------------------------------------
+widget._transparentMode = Spring.GetConfigInt("eco_graph_transparent_mode", 0) == 1
+widget._detachedTransparentMode = Spring.GetConfigInt("eco_detached_transparent_mode", 0) == 1
+
 -- Load saved hide state for the dual-line/history selector toggle
 local savedHide = Spring.GetConfigInt("eco_graph_hide_graphs", 0)
 hideGraphs = (savedHide == 1)
 
     -- Ensure detached window respects saved position on initialize
     -- `Detached_Load()` is called later after the detached helpers are defined.
+
+--------------------------------------------------------------------------------
+-- LOAD SAVED FONT SCALE
+--------------------------------------------------------------------------------
+-- FONT_SCALE is a plain chunk-level local (see its declaration near the
+-- top), reassigned here rather than re-declared -- this file is already
+-- at Lua's 200-local ceiling, same reason everything else below hangs
+-- off `widget` or an existing table instead of a new local.
+FONT_SCALE = Spring.GetConfigFloat("eco_graph_font_scale", FONT_SCALE)
 
 end
 
@@ -5734,6 +5888,20 @@ function widget:MousePress(mx, my, button)
         return true
     end
 
+    -- Transparency toggle (title-bar [T]/[D] button, between Pause and
+    -- [X] -- present in both compact and full view, since both draw
+    -- blocks set this rect the same way). Own flag/config key for the
+    -- main/attached window -- independent of the detached dual-line
+    -- graph's own transparency toggle.
+    if mainTransparentToggleRect
+    and mx >= mainTransparentToggleRect.x1 and mx <= mainTransparentToggleRect.x2
+    and my >= mainTransparentToggleRect.y1 and my <= mainTransparentToggleRect.y2 then
+        widget._transparentMode = not widget._transparentMode
+        Spring.SetConfigInt("eco_graph_transparent_mode", widget._transparentMode and 1 or 0)
+        if graphList then glDeleteList(graphList) graphList = nil end
+        return true
+    end
+
     -- 6. CLOSE BUTTON
     local hideLabel = "[X]"
     local hideSize  = 14 * FONT_SCALE
@@ -5823,6 +5991,26 @@ function widget:MousePress(mx, my, button)
                     return true
                 end
             end
+        end
+    end
+
+    ------------------------------------------------------------
+    -- BACKGROUND MODE TOGGLE CLICK (Default <-> Transparent)
+    -- Only live outside compactMode -- that's the only view that
+    -- draws it (BuildGraphList clears the rect while compact).
+    ------------------------------------------------------------
+    if not compactMode and button == 1 and widget._bgToggleRect then
+        local r = widget._bgToggleRect
+        if mx >= r.x1 and mx <= r.x2 and my >= r.y1 and my <= r.y2 then
+            widget._transparentMode = not widget._transparentMode
+            Spring.SetConfigInt("eco_graph_transparent_mode", widget._transparentMode and 1 or 0)
+
+            if graphList then
+                glDeleteList(graphList)
+                graphList = nil
+            end
+
+            return true
         end
     end
 
@@ -6155,6 +6343,24 @@ local function Detached_Save()
     Spring.SetConfigFloat("eco_detached_h", h)
 end
 
+-- Re-centers the detached window on the CURRENT screen, keeping its
+-- existing size. Exists for /ecographcenter -- same reasoning as
+-- EcoToggleMenu.Center() above: a saved position from a wider screen can
+-- leave this window off-screen on a smaller one, with nothing to drag
+-- because there's nothing visible to click.
+function detached.Center()
+    local vsx, vsy = Spring.GetViewGeometry()
+    local w = detached.x2 - detached.x1
+    local h = detached.y2 - detached.y1
+
+    detached.x1 = (vsx - w) * 0.5
+    detached.y1 = (vsy - h) * 0.5
+    detached.x2 = detached.x1 + w
+    detached.y2 = detached.y1 + h
+
+    Detached_Save()
+end
+
 -- GEOMETRY HELPERS ------------------------------------------------------------
 local function Detached_PointIn(mx, my)
     return mx >= detached.x1 and mx <= detached.x2
@@ -6297,7 +6503,12 @@ local function Detached_DrawMetalGraph()
     local gh  = gy2 - gy1
 
     -- BACKGROUND
-    glColor(0, 0, 0, 0.25)
+    -- Follows the detached window's OWN Default/Transparent toggle
+    -- (0.25 default, 0 transparent) instead of a fixed value -- a flat
+    -- always-dark box looked worse floating inside an otherwise see-
+    -- through window than just letting it go fully transparent too.
+    -- Independent of the main/attached window's transparency flag.
+    glColor(0, 0, 0, widget._detachedTransparentMode and 0 or 0.25)
     glRect(gx1, gy1, gx2, gy2)
 
     -- SCALE VALUES (same as Compact / Full)
@@ -6381,7 +6592,9 @@ local function Detached_DrawEnergyGraph()
     local gh  = gy2 - gy1
 
     -- BACKGROUND
-    glColor(0, 0, 0, 0.25)
+    -- Follows the detached window's OWN Default/Transparent toggle --
+    -- see the matching comment in Detached_DrawMetalGraph() above.
+    glColor(0, 0, 0, widget._detachedTransparentMode and 0 or 0.25)
     glRect(gx1, gy1, gx2, gy2)
 
     -- SCALE VALUES
@@ -6511,8 +6724,11 @@ local function Detached_Draw()
 
     local x1, y1, x2, y2 = detached.x1, detached.y1, detached.x2, detached.y2
 
-    -- Background
-    glColor(0, 0, 0, 0.80)
+    -- Background (0.80 is this window's own original opacity -- kept as
+    -- the "Default" value; drops to 0 when THIS window's own background-
+    -- mode toggle is set to Transparent -- independent of the main/
+    -- attached window's transparency flag)
+    glColor(0, 0, 0, widget._detachedTransparentMode and 0 or 0.80)
     glRect(x1, y1, x2, y2)
 
     -- Border
@@ -6534,6 +6750,56 @@ local function Detached_Draw()
     Detached_DrawMetalGraph()
     Detached_DrawEnergyGraph()
     Detached_DrawHistorySelector()
+
+    ----------------------------------------------------------------------
+    -- BACKGROUND MODE TOGGLE -- this window's OWN flag
+    -- (widget._detachedTransparentMode), independent of the main/
+    -- attached window's toggle -- each window can be set transparent or
+    -- opaque on its own. Drawn inline rather than as its own local
+    -- function -- this file's main chunk is already at Lua's 200-local
+    -- ceiling. Sits in the narrow strip neither graph draws into (the
+    -- same gap Detached_DrawMetalGraph/EnergyGraph leave empty between
+    -- their gx2/gx1).
+    ----------------------------------------------------------------------
+    do
+        local centerX = x1 + (x2 - x1) * 0.5
+        local bottomPad = 10
+        local topPad    = 40
+        local gy1 = y1 + bottomPad
+        local gy2 = y2 - topPad
+
+        local gapHalf  = (x2 - x1) * 0.0311   -- matches the graphs' own gap math
+        local tgW, tgH = 20, 18
+
+        if gapHalf * 2 < tgW + 4 then
+            -- Window resized too narrow to fit the button without
+            -- overlapping a graph -- skip drawing it rather than crowd things.
+            widget._detachedBgToggleRect = nil
+        else
+            local tgX1 = centerX - tgW * 0.5
+            local tgX2 = centerX + tgW * 0.5
+            local tgCenterY = (gy1 + gy2) * 0.5
+            local tgY1 = tgCenterY - tgH * 0.5
+            local tgY2 = tgCenterY + tgH * 0.5
+
+            widget._detachedBgToggleRect = { x1 = tgX1, y1 = tgY1, x2 = tgX2, y2 = tgY2 }
+
+            glColor(0, 0, 0, widget._detachedTransparentMode and 0.35 or 0.55)
+            glRect(tgX1, tgY1, tgX2, tgY2)
+
+            glColor(1, 1, 1, 0.45)
+            glLineWidth(1)
+            glBeginEnd(GL_LINES, function()
+                glVertex(tgX1, tgY1); glVertex(tgX2, tgY1)
+                glVertex(tgX2, tgY1); glVertex(tgX2, tgY2)
+                glVertex(tgX2, tgY2); glVertex(tgX1, tgY2)
+                glVertex(tgX1, tgY2); glVertex(tgX1, tgY1)
+            end)
+
+            glColor(1, 1, 1, 0.9)
+            glText(widget._detachedTransparentMode and "T" or "D", centerX, tgCenterY - 3, 10, "oc")
+        end
+    end
 
     -- Stats row at top (Metal / Energy, Option B style)
     Detached_DrawStatsRow()
@@ -6776,6 +7042,21 @@ if detached.visible and detached.histX1 then
 end
 
 
+-- BACKGROUND MODE TOGGLE CLICK (checked before drag-start below so it
+-- doesn't get swallowed as "start dragging the window"). Own flag/config
+-- key -- toggling this no longer touches the main/attached window's
+-- transparency or its cached graphList, since the two are independent now.
+if detached.visible and button == 1 and widget._detachedBgToggleRect then
+    local r = widget._detachedBgToggleRect
+    if mx >= r.x1 and mx <= r.x2 and my >= r.y1 and my <= r.y2 then
+        widget._detachedTransparentMode = not widget._detachedTransparentMode
+        Spring.SetConfigInt("eco_detached_transparent_mode", widget._detachedTransparentMode and 1 or 0)
+
+        return true
+    end
+end
+
+
     -- Detached window interactions
     if detached.visible and Detached_PointIn(mx, my) then
         -- Resize
@@ -6910,6 +7191,19 @@ end
 local old_DrawScreen2 = widget.DrawScreen
 
 function widget:DrawScreen()
+    -- FONT_SCALE FIX: `fontSize`/`titleSize` (declared near the top of the
+    -- file) are the two values almost every glText(...) call in this widget
+    -- reads, but they were only ever computed ONCE, at chunk-load time, from
+    -- whatever FONT_SCALE was at that instant -- so /ecographfont+/- (which
+    -- just reassigns the FONT_SCALE upvalue) never reached them, and most of
+    -- the widget's text stayed locked at the load-time size. Re-deriving
+    -- them here, every frame, before anything draws, is a plain assignment
+    -- to the existing upvalues (not a new local), so it's free under the
+    -- 200-local ceiling and now the font commands actually control "most of
+    -- the text size in the widget" as originally intended.
+    fontSize  = 14 * FONT_SCALE
+    titleSize = 12 * FONT_SCALE
+
     if spIsGUIHidden() then
         return
     end
@@ -7058,6 +7352,132 @@ function widget:Shutdown()
     end
     if widget._old_Shutdown_ToggleMenu then
         widget._old_Shutdown_ToggleMenu(self)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- CONSOLE COMMANDS
+--------------------------------------------------------------------------------
+-- Registered from here (end of file, chained onto whatever Initialize
+-- already exists), not from the main widget:Initialize() above -- these
+-- handlers close over `EcoToggleMenu`, `detached` and `hideGraphs`, and
+-- `detached` in particular isn't declared as a local until further down
+-- the file than widget:Initialize() sits. A Lua chunk only sees a local
+-- as an upvalue if the `local` declaration is lexically ABOVE the
+-- function capturing it, so these have to live below that declaration --
+-- same reasoning, and the same chain-onto-the-existing-handler pattern,
+-- as every other Shutdown hook already added onto this file.
+--
+-- Stored on `widget` rather than a new local, same 200-local-ceiling
+-- reason as everywhere else in this file.
+widget._FONT_SCALE_STEP = 0.05
+widget._FONT_SCALE_MIN, widget._FONT_SCALE_MAX = 0.5, 2.5
+
+-- Stored on `widget` rather than a new local -- see the 200-local-ceiling
+-- note above; this file has no headroom left for another top-level local.
+widget._old_Initialize_Commands = widget.Initialize
+function widget:Initialize()
+    if widget._old_Initialize_Commands then
+        widget._old_Initialize_Commands(self)
+    end
+
+    -- /ecographcenter -- re-centers the draggable Top Bar/Eco Graph
+    -- toggle panel (and the detached dual-line window, if it's open) on
+    -- the CURRENT screen. Both remember a dragged pixel position across
+    -- sessions, which is exactly the problem: a position saved on one
+    -- resolution (e.g. this widget built and tested at 3440x1440) can
+    -- land off-screen entirely on someone else's smaller monitor after
+    -- they download the release, with nothing visible left to drag back
+    -- into view.
+    widgetHandler:AddAction("ecographcenter", function()
+        EcoToggleMenu.Center()
+        if detached.visible then
+            detached.Center()
+        end
+        Spring.Echo("[EcoGraph] Toggle menu" ..
+            (detached.visible and " and detached window" or "") .. " re-centered.")
+        return true
+    end, nil, "t")
+
+    -- /ecographdual1 -- toggles the dual-line graph's OWN detached
+    -- window, same as CTRL+Left-Click on the main Eco Graph window.
+    widgetHandler:AddAction("ecographdual1", function()
+        detached.visible = not detached.visible
+        Spring.SetConfigInt("eco_detached_visible", detached.visible and 1 or 0)
+        Spring.Echo("[EcoGraph] Detached dual-line window: " ..
+            (detached.visible and "ON" or "OFF"))
+        return true
+    end, nil, "t")
+
+    -- /ecographdual2 -- toggles the dual-line graph drawn INSIDE the
+    -- main Eco Graph window, same as CTRL+Right-Click on the main window.
+    widgetHandler:AddAction("ecographdual2", function()
+        hideGraphs = not hideGraphs
+        Spring.SetConfigInt("eco_graph_hide_graphs", hideGraphs and 1 or 0)
+        Spring.Echo("[EcoGraph] Dual-line graphs in main window: " ..
+            (hideGraphs and "OFF" or "ON"))
+        return true
+    end, nil, "t")
+
+    -- /ecographfont+ / /ecographfont- -- adjusts FONT_SCALE, which
+    -- drives nearly every text size in the widget (see its declaration
+    -- near the top of the file). Clamped to a range that stays readable
+    -- at either end; the graph display list is invalidated the same way
+    -- the compact/full toggle already does, in case any font-scaled
+    -- geometry got baked into it.
+    widgetHandler:AddAction("ecographfont+", function()
+        FONT_SCALE = math.min(widget._FONT_SCALE_MAX, FONT_SCALE + widget._FONT_SCALE_STEP)
+        Spring.SetConfigFloat("eco_graph_font_scale", FONT_SCALE)
+        if graphList then glDeleteList(graphList) graphList = nil end
+        Spring.Echo(string.format("[EcoGraph] Font scale: %.2f", FONT_SCALE))
+        return true
+    end, nil, "t")
+
+    widgetHandler:AddAction("ecographfont-", function()
+        FONT_SCALE = math.max(widget._FONT_SCALE_MIN, FONT_SCALE - widget._FONT_SCALE_STEP)
+        Spring.SetConfigFloat("eco_graph_font_scale", FONT_SCALE)
+        if graphList then glDeleteList(graphList) graphList = nil end
+        Spring.Echo(string.format("[EcoGraph] Font scale: %.2f", FONT_SCALE))
+        return true
+    end, nil, "t")
+
+    -- /ecographt / /ecographd -- explicitly SET (not toggle) the
+    -- background mode, matching the existing [T]/[D] buttons on both the
+    -- main window and the detached window. Both windows are driven
+    -- together here since there's no way to name "just the detached one"
+    -- from a single command name -- use the two [T]/[D] buttons
+    -- in-game if you want them set differently from each other.
+    widgetHandler:AddAction("ecographt", function()
+        widget._transparentMode = true
+        widget._detachedTransparentMode = true
+        Spring.SetConfigInt("eco_graph_transparent_mode", 1)
+        Spring.SetConfigInt("eco_detached_transparent_mode", 1)
+        Spring.Echo("[EcoGraph] Background: Transparent")
+        return true
+    end, nil, "t")
+
+    widgetHandler:AddAction("ecographd", function()
+        widget._transparentMode = false
+        widget._detachedTransparentMode = false
+        Spring.SetConfigInt("eco_graph_transparent_mode", 0)
+        Spring.SetConfigInt("eco_detached_transparent_mode", 0)
+        Spring.Echo("[EcoGraph] Background: Dark/opaque")
+        return true
+    end, nil, "t")
+end
+
+widget._old_Shutdown_Commands = widget.Shutdown
+function widget:Shutdown()
+    widgetHandler:RemoveAction("ecographcenter")
+    widgetHandler:RemoveAction("ecographdual1")
+    widgetHandler:RemoveAction("ecographdual2")
+    widgetHandler:RemoveAction("ecographfont+")
+    widgetHandler:RemoveAction("ecographfont-")
+    widgetHandler:RemoveAction("ecographt")
+    widgetHandler:RemoveAction("ecographd")
+
+    if widget._old_Shutdown_Commands then
+        widget._old_Shutdown_Commands(self)
     end
 end
 
