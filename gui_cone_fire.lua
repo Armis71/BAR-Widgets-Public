@@ -4,12 +4,12 @@
 -- running the latest fix or a stale copy left over from before a reload --
 -- this removes that ambiguity going forward: every future log's very first
 -- line says exactly which build produced the rest of it.
-local WIDGET_BUILD = "2026-09-03zz6"
+local WIDGET_BUILD = "2026-09-04zz24"
 
 function widget:GetInfo()
     return {
         name    = "Cone-of-Fire",
-        desc    = "T1/T2 static defense structures with a 1000+ range plasma or laser weapon (see ARC_UNIT_NAMES) can be locked to a player-defined cone-of-fire + range cap so Fire-at-Will or Return Fire never targets outside your chosen safe zone -- prevents splash-damage friendly fire into your own base.",
+        desc    = "T1/T2 static defense structures with a 1000+ range plasma or laser weapon (see ARC_UNIT_NAMES) can be locked to a player-defined cone-of-fire (or an alternate circle killzone) + range cap so Fire-at-Will or Return Fire never targets outside your chosen safe zone -- prevents splash-damage friendly fire into your own base.",
         author  = "Armis71 + Claude",
         date    = "2026-09-02",
         license = "GNU GPL, v2 or later",
@@ -33,41 +33,122 @@ end
 --   before pressing Ctrl+C to link them into a SHARED cone/range -- every
 --   unit ends up covering the exact same zone, each angled correctly for
 --   its own position.
--- Right-click during the RANGE step -- back up to the CONE (angle) step to
---   re-adjust it, instead of cancelling. Right-click again from there (or
---   Escape twice, any time) -- cancel setup entirely.
+-- Ctrl+Left-click while choosing the cone's angle -- switch to a CIRCLE
+--   killzone instead: a fixed spot anywhere within the unit's own max
+--   range, rather than a wedge in front of it. Move the mouse to position
+--   it, scroll wheel to resize (clamped so the circle's edge never crosses
+--   the unit's max-range boundary), left-click to set. Ctrl+Left-click
+--   again to switch back to the cone. Requested by C3BO (BAR Discord) for
+--   locking onto one specific spot/base that phases in/out of LOS without
+--   also engaging unrelated traffic that happens to pass through a cone's
+--   path. Multi-unit linking (above) works the same way -- every linked
+--   unit gets the identical shared circle, since it isn't anchored to any
+--   one shooter's position the way a cone is.
+-- Right-click during the RANGE step (or while placing a circle) -- back up
+--   to the CONE (angle) step to re-adjust it, instead of cancelling.
+--   Right-click again from there (or Escape twice, any time) -- cancel
+--   setup entirely.
 -- The small "X" under a deployed unit -- remove its cone-of-fire config
 --   permanently (same as "Remove Permanently" on the command panel).
 -- Ctrl+Click any "X" -- clear EVERY cone-of-fire config currently visible
 --   on screen at once, not just that one unit.
 -- Ctrl+Click directly on an already-configured unit's own model -- toggle
---   just that unit's cone illustration (the wedge/line/degree labels) on
---   or off, without touching its actual enforcement. Ctrl+Click it again
---   to bring the illustration back.
+--   just that unit's cone/circle OUTLINE on or off, permanently (a pin),
+--   without touching its actual enforcement. Ctrl+Click it again to
+--   release the pin. Always wins over /conefirehide's auto-hide AND
+--   low-key mode's hidden-by-default rule (see /conefiredefault below) --
+--   whichever way you leave it stays that way regardless of either.
 -- /conefirehide -- every unit's cone illustration automatically hides
 --   itself the instant that unit starts actively engaging a target, and
 --   reappears the instant it goes idle again -- keeps the screen clean
---   during an actual fight. Purely visual; never affects enforcement.
--- /conefireon -- the default: cone illustrations are always shown.
+--   during an actual fight. Purely visual; never affects enforcement. No
+--   effect at all while low-key mode is on (see /conefiredefault below --
+--   its own hidden-by-default rule takes over completely) unless
+--   /conefireoverlay's personal override is also active.
+-- /conefireon -- cone illustrations always shown, regardless of firing
+--   state. ALSO leaves low-key mode entirely if it's on (numbers, the
+--   aim-sweep wedge, and the setup-time cursor icon all come back too) --
+--   the reliable way out of it, since /conefiredefault below no longer
+--   toggles.
 -- /conefiredisable -- removes cone-of-fire from EVERY unit in the game at
 --   once (not just what's on screen) -- the same as clicking every "X" in
 --   one go.
 -- /conefirewedge -- toggles the red aim-sweep wedge (below) on/off for
---   every unit at once. On by default.
--- /conefiredefault -- resets /conefirehide-vs-on and /conefirewedge back
---   to their original defaults in one command.
--- (/conefirehide-vs-on and /conefirewedge are now saved across sessions --
---   they'll stay as you last set them next time you load into a game.)
--- The small "?" next to "X" -- opens an in-game panel listing every
---   control above, so none of this needs to be looked up in the .lua file.
---   Close it again with any "?", or the "X" in the panel's own upper-right
---   corner (works even if the unit that opened it no longer has cone-of-
---   fire active at all).
+--   every unit at once. On by default. No effect while low-key mode is on
+--   (wedge is hidden unconditionally either way -- see /conefiredefault)
+--   unless /conefirewedges' personal override is also active.
+-- /conefiredefault -- ALWAYS sets LOW-KEY MODE ON (not a toggle -- typing
+--   it again while already on just re-confirms it, never turns it off).
+--   Hides the degree/radius NUMBERS (at every stage of setup, not just once
+--   deployed), the red aim-sweep wedge, and the setup-time cursor icon,
+--   unconditionally. The cone/circle OUTLINE hides the moment setup
+--   finishes (deploy), regardless of firing state -- only the small "X"
+--   remains by default. Hover a configured unit to peek at its outline
+--   while the cursor's on it, or Ctrl+Click it to pin it permanently
+--   shown/hidden. Also clears all four personal overrides below back off.
+--   Type /conefireon above to leave low-key mode entirely.
+-- Low-key mode above is what a FIRST-TIME install of this widget actually
+--   starts in -- meant to feel like a plain, minimal built-in feature
+--   rather than something with a lot of personal knobs, in case this ever
+--   gets proposed for BAR's own official game repo. /conefirehide and
+--   /conefirewedge describe the ORIGINAL, non-low-key appearance you get
+--   once /conefireon turns it off.
+-- /conefiretooltip -- toggles the controls-reference panel (below) on/off,
+--   dead center on screen. Click and drag ANYWHERE on it to reposition it
+--   if it clashes with the minimap or HUD on a particular map -- not
+--   remembered after closing it, always opens dead center again next
+--   time. Not tied
+--   to low-key mode at all -- always available regardless of its state.
+-- /conefiredegrees, /conefirewedges, /conefireoverlay, /conefirecursor --
+--   four PERSONAL per-feature overrides, each an independent on/off toggle
+--   with no effect at all unless low-key mode is currently on:
+--   /conefiredegrees brings the degree/radius numbers back;
+--   /conefirewedges lets the red aim-sweep wedge show again (still
+--   following /conefirewedge's own on/off from there); /conefireoverlay
+--   makes the cone/circle outline stay visible after setup finishes
+--   instead of hiding on deploy (still following /conefirehide's own
+--   auto-hide-while-firing rule from there, same as if low-key mode
+--   weren't on for the outline specifically); /conefirecursor brings back
+--   the animated cursor icon and "Cone"/"Range"/"Circle" stage label while
+--   actively setting up (see DrawConeCursorIcon). Use these instead of
+--   /conefireon when you only want ONE thing back rather than leaving
+--   low-key mode entirely -- and /conefiredefault always resets all four
+--   to off, so a personal preference never bleeds into what the
+--   "official" default looks like for anyone else.
+-- /conefirelinger <n> -- sets how many seconds (a whole number, 1 to 15) a
+--   unit keeps attacking the last confirmed spot of something after it
+--   drops out of both LOS and radar, before giving up and going quiet --
+--   e.g. "/conefirelinger 8" for 8 seconds. Default is 8 seconds (build
+--   zz19, lowered from the original 15 -- the user found 15 "rather
+--   long"). Not tied to low-key mode at all -- affects enforcement itself,
+--   not appearance, so it's the same for everyone regardless.
+-- (/conefirehide-vs-on, /conefirewedge, low-key mode, all four personal
+--   overrides, and /conefirelinger above are saved across sessions --
+--   they'll stay as you last set them next time you load into a game.
+--   /conefiretooltip's panel is the one exception -- deliberately NOT
+--   saved, it's a "read this right now" reference, not a standing
+--   preference, so it always starts closed on a fresh load.)
+-- The controls-reference panel (/conefiretooltip above) -- lists every
+--   control on this page, so none of this needs to be looked up in the
+--   .lua file. Opens dead center on screen; close it again by typing
+--   /conefiretooltip a second time, or by clicking the "X" in the panel's
+--   own upper-right corner. Rows are laid out in several side-by-side
+--   columns (build zz22) rather than one tall list, and can be clicked
+--   and dragged from ANYWHERE on it (build zz23) if it clashes with
+--   the minimap or HUD on a particular map -- neither the drag position
+--   nor the panel being open at all is remembered after closing it or
+--   reloading. build zz21: used to open via a small "?" button on every
+--   configured unit -- removed for being redundant clutter once more than
+--   a couple of units were on screen at once (per the user: "makes every
+--   unit have a ? which is too redundant").
 -- A small red wedge (two converging lines) -- while actively engaging,
 --   shows the gap between where the turret is still turning FROM and the
 --   target it's turning TOWARD, shrinking as it catches up and vanishing
 --   once it's fully aimed (an approximation -- see the notes.md build-zs
 --   entry for why the engine won't give an exact live turret angle).
+--   Never shows at all under low-key mode, unconditionally, regardless of
+--   /conefirewedge's own setting, unless /conefirewedges' personal
+--   override is also active -- see /conefiredefault above.
 --------------------------------------------------------------------------------
 -- USER-TWEAKABLE SETTINGS -- read this first if you just want to change how
 -- the widget behaves, not how it works.
@@ -216,6 +297,22 @@ local MAX_HALF_WIDTH_DEG = 360
 -- can't produce a broken/unusable wheel step. Default is 10 (build zg,
 -- back to the original pre-build-za feel, per the user).
 local WHEEL_STEP_DEG = 10
+-- build zz7, per C3BO (BAR Discord) via the user: an alternate CIRCLE
+-- killzone shape, toggled with Ctrl+Left-click while choosing the cone's
+-- angle. How big the circle starts out, as a fraction of the unit's own
+-- native weapon range (e.g. 0.25 on a 1400-range Pulsar starts at a
+-- 350-elmo circle). Raise for a bigger starting circle, lower for a
+-- smaller one -- you can still resize it with the mouse wheel before
+-- locking it in either way.
+local DEFAULT_CIRCLE_RADIUS_FRACTION = 0.25
+-- The smallest circle radius you're allowed to set, in elmos. Same purpose
+-- as MIN_RANGE_CAP below -- stops the circle from being accidentally
+-- shrunk down to nothing.
+local MIN_CIRCLE_RADIUS = 200
+-- How many elmos the circle's radius changes per single mouse-wheel notch
+-- while placing it. Raise for faster/coarser resizing, lower for finer
+-- control.
+local CIRCLE_RADIUS_WHEEL_STEP = 100
 -- The smallest range cap you're allowed to set, in elmos (the game's world-
 -- distance unit -- for reference, armvulc's own weapon range is 5750
 -- elmos). Exists purely so the range can't be accidentally shrunk to
@@ -267,8 +364,14 @@ local ZOOM_OUT_RANGE_TIERS = {
 -- to 0 to disable this fallback entirely) if you'd rather the unit stop
 -- firing the instant it loses sight of something, even at the cost of
 -- sometimes giving up on a target that would have reappeared a moment
--- later. 450 = ~15 real seconds at 1x game speed.
-local GHOST_MEMORY_FRAMES = 450
+-- later. 240 = 8 real seconds at 1x game speed (build zz19, per the user:
+-- the original 450/15s "seems rather long" -- 8s picked as the new
+-- default). This is also a mutable variable, not a true constant any
+-- more -- "/conefirelinger <n>" (build zz19/zz20) lets the widget's author
+-- change it in-game to any whole number of seconds from 1 to 15 (e.g.
+-- "/conefirelinger 8") without editing this file, and the value they set
+-- persists across sessions the same way every other saved setting does.
+local GHOST_MEMORY_FRAMES = 240
 -- How often (sim frames, same ~30/real-second-at-1x-speed caveat as above)
 -- this widget re-sends its current order even when nothing has changed, as
 -- a safety net in case a single order silently failed to land. Purely
@@ -645,6 +748,17 @@ local AIM_SWEEP_TURN_RATE_RAD_PER_SEC = math.rad(AIM_SWEEP_TURN_RATE_DEG_PER_SEC
 -- RELOCK_GRACE_FRAMES/RETRY_COOLDOWN_FRAMES/NO_TARGET_GRACE_FRAMES and all
 -- the toggle-tracking state they needed are gone -- there's no toggle left
 -- to debounce.
+--
+-- build zz18, per the user ("should it start shooting the structures that
+-- are more important say a advance fusion vs bot... sorts all units via
+-- LOS/memory and shoots the costlier structures or units first"): the
+-- "find the closest" step above no longer means literally closest --
+-- FindBestLiveTargetInCone now ranks every qualifying target by build cost
+-- (metal + energy, see GetTargetValue) and only falls back to distance as
+-- a tie-break between two equally-valuable targets. Everything else about
+-- this design (Hold-Fire-once, explicit CMD.ATTACK, ghost-memory fallback,
+-- change-gated order issuing) is unchanged -- this only touches which
+-- target counts as "best" among what's currently qualifying.
 --------------------------------------------------------------------------------
 
 local spGetSelectedUnits   = Spring.GetSelectedUnits
@@ -712,11 +826,18 @@ local REMOVE_BUTTON_GROUND_MARGIN = 14     -- elmos beyond the unit's own radius
 local REMOVE_W, REMOVE_H = 18, 18          -- "X" (disable) button screen size, px
 
 -- build zo, per the user ("put a '?' next to X and when you click on it a
--- tooltip showing you all the functions"): a second, smaller world-
--- anchored button next to "X" that toggles a full controls-reference
--- panel -- see GetHelpScreenRect/DrawControlsHelpPanel/CONTROLS_HELP_ROWS.
-local HELP_W, HELP_H = 16, 16              -- "?" (help) button screen size, px
-local HELP_BUTTON_GAP_PX = 6               -- gap between "X" and "?", px
+-- tooltip showing you all the functions"): originally a second, smaller
+-- world-anchored button next to "X" on every configured unit, toggling a
+-- full controls-reference panel. build zz21, per the user ("right now
+-- makes every unit have a ? which is too redundant... make it that if
+-- someone types /conefiretooltip it just shows the tooltip dead center on
+-- the screen"): the per-unit "?" button is GONE -- with a unit's cone/
+-- circle already tied to it visually, a second clickable widget on every
+-- single configured unit was pure clutter once there were more than one
+-- or two on screen. The panel itself (DrawControlsHelpPanel/
+-- CONTROLS_HELP_ROWS) is unchanged and still the single source of truth
+-- for every control -- it's just opened by the /conefiretooltip chat
+-- command now, dead center on screen, instead of a per-unit button.
 
 -- Real engine FIRESTATE_* values (rts/Sim/Units/CommandAI/CommandAI.h),
 -- confirmed matching what Spring.GetUnitStates().firestate returns and what
@@ -855,17 +976,91 @@ local autoHideGuiWhileFiring = false
 -- restarting from hull-facing).
 local showAimSweepWedge = true
 
--- build zo: whether the on-screen controls-reference panel (toggled by
--- clicking any unit's "?" button, see GetHelpScreenRect/MousePress/
--- DrawControlsHelpPanel) is currently shown. Global, not per-unit -- one
--- panel, same content, regardless of which unit's "?" opened it.
-local showControlsHelp = false
+-- build zz9-zz12, per the user ("trying to make this widget as low key and
+-- appearing to be very simplistic"), through THREE rounds of follow-up
+-- correction: global runtime switch for the (rewritten) "/conefiredefault"
+-- chat command. Final behavior, while lowKeyMode is true:
+--   - The degree/radius NUMERIC TEXT labels (both the live readout while
+--     actively setting up, and the persistent one on a deployed unit) are
+--     hidden unconditionally, at every stage, no exceptions, regardless of
+--     hover/Ctrl+Click -- see DrawAngleReferenceLabels' own early-return.
+--   - The red aim-sweep wedge is hidden unconditionally too, same
+--     no-exceptions treatment -- the user's own reasoning: it only ever
+--     appears once a unit is actually firing, and low-key mode is
+--     specifically about not broadcasting that. See DrawAimSweep's call
+--     site.
+--   - The wedge/circle OUTLINE + center line (what the user actually means
+--     by "overlay") is hidden the moment setup finishes (deploy),
+--     unconditionally -- NOT tied to firing state at all (zz11 tried
+--     "hidden only while firing," matching /conefirehide, but the user
+--     pointed out that leaves it lingering the entire time a unit sits
+--     idle with nothing in its zone, which can be a long time -- with
+--     dozens of units deployed, that's dozens of outlines on screen,
+--     exactly what low-key mode is supposed to prevent). Two ways to
+--     reveal it again, both intentional: hovering the mouse over a
+--     configured unit shows it for as long as the cursor's on it (see
+--     hoveredUnitID, tracked in widget:Update -- this was in zz9, removed
+--     in zz10 on the mistaken assumption it was no longer needed, and
+--     restored here), and Ctrl+Click still works as a permanent pin either
+--     direction (checked first in ShouldShowConeGui, always wins).
+-- SETUP-time display (live while actively dragging out a cone/range/
+-- circle, mode ~= MODE_NONE) was never gated by any of this to begin with
+-- -- ShouldShowConeGui/lowKeyMode only ever applies to already-deployed
+-- configs in arcConfig.
+--
+-- build zz13, per the user ("so for first time uers of this widget the
+-- /conefiredefault is the 'default'?"): it wasn't -- a first-time user
+-- (nothing saved yet) started with this false, the ORIGINAL always-shown
+-- behavior, and had to type /conefiredefault once to actually reach
+-- low-key mode, despite the command's name implying it WAS the default.
+-- Flipped to true here so it now actually is: a fresh install (or anyone
+-- with no saved widget config) starts in low-key mode. Anyone who already
+-- has a saved preference (widget:SetConfigData, see below) keeps whatever
+-- they last set, completely unaffected by this default changing -- this
+-- only changes what a truly first-time player sees.
+--
+-- build zz15, per the user (found toggling confusing to reason about):
+-- /conefiredefault (ConeFireSetDefault) is no longer a toggle -- it always
+-- sets lowKeyMode = true, unconditionally, every time. /conefireon
+-- (ConeFireOn) is the explicit, reliable way to leave low-key mode.
+local lowKeyMode = true
 
--- build zo/zp: screen position (set at the moment a "?" is clicked, see
--- widget:MousePress) the panel opens next to -- see DrawControlsHelpPanel
--- for how this gets clamped so the panel always stays fully on screen
--- regardless of where on screen that "?" happened to be.
-local helpPanelAnchorX, helpPanelAnchorY = nil, nil
+-- build zz9, restored zz12: unit ID currently under the mouse cursor, or
+-- nil. Only kept up to date while lowKeyMode is on (see widget:Update) --
+-- a raycast every Update tick is pure overhead the rest of the time, since
+-- nothing reads this otherwise.
+local hoveredUnitID = nil
+
+-- build zz17, per the user: BAR's public/official version of this widget
+-- (should it ever get merged upstream) is meant to be the plain, minimal
+-- low-key experience with no personal knobs to fiddle with -- "less
+-- personalized feel and more of just a feature of the game." But the user
+-- still personally wants the OLD richer display (degree/radius numbers,
+-- the red aim-sweep wedge, the outline staying up after setup) available
+-- to themselves without exposing it as something ordinary players would
+-- stumble into via a single broad "/conefireon" (which also fully exits
+-- low-key mode and is the wrong granularity for "just bring back one
+-- thing"). These four flags are per-feature overrides, checked
+-- everywhere lowKeyMode itself is checked for that specific feature --
+-- each stays false (no effect) unless lowKeyMode is currently on, and
+-- ConeFireSetDefault (/conefiredefault, the "official" reset) always
+-- clears all four back to false along with everything else, so a
+-- personal override never survives a trip back to the public default.
+local showDegreesOverride = false     -- /conefiredegrees
+local showWedgeOverride = false       -- /conefirewedges
+local showOverlayOverride = false     -- /conefireoverlay
+local showCursorIconOverride = false  -- /conefirecursor
+
+-- build zo: whether the on-screen controls-reference panel is currently
+-- shown. build zz21: this is now the ONLY thing /conefiretooltip
+-- controls -- there's no more per-unit "?" button to open it, so this
+-- flag is both "should the button be drawn" (it no longer exists) and
+-- "is the panel open," collapsed into one. Toggled directly by
+-- /conefiretooltip (ConeFireTooltipToggle) or the panel's own "X" close
+-- button; not saved across sessions (deliberately -- it's a "read this
+-- right now" reference, not a standing preference, so it starts closed
+-- every load same as before).
+local showControlsHelp = false
 
 -- build zt, per the user: "make sure you ahve a close option for the ?
 -- tooltip using X upper right corner" -- the panel used to only close by
@@ -873,12 +1068,54 @@ local helpPanelAnchorX, helpPanelAnchorY = nil, nil
 -- disabling cone-of-fire on the unit whose "?" opened the panel (via its
 -- "X") removes that unit from arcConfig entirely, taking its "?" button
 -- with it -- leaving the panel open with no "?" left anywhere to click,
--- unless some OTHER unit still happens to have one. This close button is
--- independent of any unit -- always closes the panel regardless of what
--- happens to whichever unit opened it. Screen rect recomputed each frame
--- the panel is drawn (DrawControlsHelpPanel) and read back by
+-- unless some OTHER unit still happens to have one. build zz21: no unit
+-- has a "?" any more at all, so /conefiretooltip (typed again) is now the
+-- only other way to close it, but this close button remains as a second,
+-- purely mouse-driven option -- always closes the panel regardless.
+-- Screen rect recomputed each frame the panel is drawn
+-- (DrawControlsHelpPanel) and read back by
 -- widget:MousePress -- nil whenever the panel isn't currently shown.
 local helpPanelCloseRect = nil
+
+-- build zz23, per the user (screenshot: even the landscape 3-block layout
+-- from build zz22 can still get crowded against the minimap/command panel
+-- on some maps -- "make it draggable so i can move it down a bit so the
+-- map does[]t clash with it... I depends on the map as well sometimes it
+-- shows up bigger"): lets the panel be dragged to wherever's clear on THIS
+-- particular map/screen (see widget:MousePress/MouseMove/MouseRelease),
+-- rather than trying to guess a perfect fixed position for every map's
+-- minimap size and HUD layout up front. helpPanelOffsetX/Y is added on
+-- top of the normal dead-center position every frame (see
+-- DrawControlsHelpPanel) -- (0, 0) means "still dead center," exactly
+-- like before this build. Deliberately NOT saved anywhere
+-- (GetConfigData/SetConfigData, or even reset when the panel is closed
+-- and reopened) -- per the user, "persistent is not necessary" -- it just
+-- holds wherever you last dragged it to for the rest of THIS widget load,
+-- and goes back to dead center on the next reload/game restart same as
+-- the panel's own showControlsHelp already does.
+local helpPanelOffsetX, helpPanelOffsetY = 0, 0
+-- Whether the panel is currently being dragged (mouse button held down
+-- after a press inside helpPanelRect, build zz23) -- while true,
+-- widget:MouseMove adds the drag delta straight into helpPanelOffsetX/Y
+-- every frame the mouse moves, and widget:MouseRelease clears this back
+-- to false.
+local helpPanelDragging = false
+-- build zz23, per the user ("i don't like that top bar on it, since it's
+-- just one whole block i should be able to click on any spot of that
+-- tooltip and drag it"): originally a small title-bar-only drag handle
+-- (a visually separate tinted strip up top) -- removed in favor of this,
+-- the panel's FULL screen rect, so any click anywhere on the panel's
+-- background starts a drag (the close "X" is still checked first in
+-- widget:MousePress and always wins there, and clicking still can't
+-- reach row text underneath since GL text has no click target of its
+-- own anyway). This also plugs a latent bug: before this, a click
+-- anywhere on the panel OTHER than the title bar or "X" fell straight
+-- through to whatever unit/world interaction was underneath it on
+-- screen -- now every click on the panel is captured by the panel
+-- itself, full stop. Recomputed each frame the panel is drawn
+-- (DrawControlsHelpPanel), read back by widget:MousePress -- nil
+-- whenever the panel isn't currently shown.
+local helpPanelRect = nil
 
 -- build zo, reworked zp into a 2-column {label, desc} table per the user
 -- ("also make it 2 columns 1st column are the commans or subject and the
@@ -890,16 +1127,22 @@ local helpPanelCloseRect = nil
 local CONTROLS_HELP_ROWS = {
     { label = "Ctrl+C",              desc = "On selected unit(s) (or the Cone-of-Fire command-panel button) -- draw a new cone. Select MULTIPLE first to link them into one shared cone/range." },
     { label = "While aiming",        desc = "Scroll wheel widens/narrows the cone, left-click locks the angle, then move the mouse to set the range, left-click again to activate." },
-    { label = "Right-click",         desc = "During the RANGE step, backs up to the CONE (angle) step to re-adjust it. Right-click again (or Escape twice, any time) -- cancels setup entirely." },
+    { label = "Ctrl+Left-click",     desc = "While choosing the cone's angle, switches to an alternate CIRCLE killzone instead -- a fixed spot anywhere within the unit's own max range. Move the mouse to position it, scroll wheel to resize (clamped to the unit's max range), left-click to set. Ctrl+Left-click again to switch back to the cone." },
+    { label = "Right-click",         desc = "During the RANGE step (or while placing a circle), backs up to the CONE (angle) step to re-adjust it. Right-click again (or Escape twice, any time) -- cancels setup entirely." },
     { label = "\"X\"",               desc = "Remove that unit's cone-of-fire permanently." },
     { label = "Ctrl+Click \"X\"",    desc = "Clear every cone-of-fire config currently on screen at once." },
-    { label = "Ctrl+Click unit",     desc = "Toggle just that unit's cone illustration on/off. Always overrides /conefirehide auto-hide (below), and stays as you left it until Ctrl+Clicked again." },
-    { label = "/conefirehide",       desc = "Auto-hides the cone illustration on any unit the instant it starts actively engaging a target, and shows it again once it goes idle. Saved across sessions." },
-    { label = "/conefireon",         desc = "The default -- cone illustrations are always shown." },
+    { label = "Ctrl+Click unit",     desc = "Toggle just that unit's cone/circle OUTLINE on/off, permanently (a pin). Always overrides /conefirehide and low-key mode's hidden-by-default rule, and stays as you left it until Ctrl+Clicked again." },
+    { label = "/conefirehide",       desc = "Auto-hides the cone illustration on any unit the instant it starts actively engaging a target, and shows it again once it goes idle. No effect while low-key mode is on (see /conefiredefault). Saved across sessions." },
+    { label = "/conefireon",         desc = "Cone illustrations always shown, and also LEAVES low-key mode entirely if it's on -- the reliable way out of it, since /conefiredefault no longer toggles." },
     { label = "/conefiredisable",    desc = "Removes cone-of-fire from EVERY unit in the game at once (not just what's on screen)." },
-    { label = "/conefirewedge",      desc = "Toggles the red aim-sweep wedge (below) on/off for every unit at once. On by default. Saved across sessions." },
-    { label = "/conefiredefault",    desc = "Resets /conefirehide-vs-on and /conefirewedge back to their original defaults (always shown, wedge on)." },
-    { label = "\"?\"",               desc = "Toggle this panel. Click any \"?\" again, or the \"X\" in this panel's own upper-right corner, to close it." },
+    { label = "/conefirewedge",      desc = "Toggles the red aim-sweep wedge (below) on/off for every unit at once. On by default. No effect while low-key mode is on (wedge is hidden unconditionally -- see /conefiredefault). Saved across sessions." },
+    { label = "/conefiredefault",    desc = "ALWAYS sets LOW-KEY MODE ON (not a toggle -- /conefireon above is the way out). Hides degree/radius numbers, the red aim-sweep wedge, and the cursor icon, unconditionally. Outline hides on deploy -- hover a unit to peek, or Ctrl+Click to pin it. Clears all 4 personal overrides below. Saved across sessions." },
+    { label = "/conefiretooltip",    desc = "Toggles this very panel on/off, dead center on screen -- type it again, or click the \"X\" in the panel's own upper-right corner, to close it. Click and drag anywhere on it to move it if it clashes with the minimap or HUD; not remembered after closing. Not tied to low-key mode at all -- always available." },
+    { label = "/conefiredegrees",    desc = "PERSONAL override: brings degree/radius numbers back even under low-key mode. No effect if low-key mode is off. Saved across sessions." },
+    { label = "/conefirewedges",     desc = "PERSONAL override: lets the red aim-sweep wedge show again even under low-key mode (still follows /conefirewedge's own on/off). No effect if low-key mode is off. Saved across sessions." },
+    { label = "/conefireoverlay",    desc = "PERSONAL override: cone/circle outline stays visible after setup finishes instead of hiding on deploy, even under low-key mode (still follows /conefirehide from there). No effect if low-key mode is off. Saved across sessions." },
+    { label = "/conefirecursor",     desc = "PERSONAL override: brings back the animated cursor icon and stage label (\"Cone\"/\"Range\"/\"Circle\") while setting up, even under low-key mode. No effect if low-key mode is off. Saved across sessions." },
+    { label = "/conefirelinger <n>", desc = "Sets how many seconds (a whole number, 1-15) a unit keeps attacking the last confirmed spot of something after it drops out of LOS/radar, before giving up and going quiet -- e.g. \"/conefirelinger 8\". Default 8. Saved across sessions." },
     { label = "Red wedge",           desc = "While actively engaging, shows the gap between the turret's current heading and its target, shrinking as it turns and disappearing once fully aimed. An approximation -- the engine doesn't expose the real live turret angle for this weapon type. Toggle with /conefirewedge." },
 }
 
@@ -930,8 +1173,29 @@ local CONTROLS_HELP_ROWS = {
 -- reverts to "none" (or nil, before its first target) the instant
 -- nothing valid remains in its cone -- an existing, always-up-to-date
 -- signal that needed no new per-frame weapon queries to reuse here.
+-- build zz12, per the user's THIRD follow-up correction on low-key mode:
+-- zz11 tied the outline's hide/show to firing state (same rule as
+-- /conefirehide) -- but the user pointed out that's backwards for what
+-- they actually want: a unit can sit idle for a long time with nothing in
+-- its zone, and /conefirehide-style "hidden only while firing" means the
+-- outline LINGERS the entire time it's idle -- with dozens of units
+-- deployed, that's dozens of outlines cluttering the screen, exactly the
+-- opposite of "low key." What they want instead: the outline disappears
+-- the moment setup finishes (deploy), full stop, regardless of whether
+-- the unit ever fires -- back to hover-to-peek (the mechanism zz10 had
+-- removed, thinking it was no longer needed) plus Ctrl+Click as a
+-- permanent pin on top of it.
+-- build zz17: showOverlayOverride (/conefireoverlay) is a personal escape
+-- hatch out of JUST this rule -- while it's true, low-key mode's
+-- hover-only gate is skipped entirely and the outline instead falls back
+-- to the ORIGINAL always-shown/autoHideGuiWhileFiring rule below, exactly
+-- as if low-key mode didn't apply to the outline at all (degrees/wedge/"?"
+-- stay governed by their own separate overrides, untouched by this one).
 local function ShouldShowConeGui(unitID, cfg)
     if cfg.guiOverride ~= nil then return not cfg.guiOverride end
+    if lowKeyMode and not showOverlayOverride then
+        return hoveredUnitID == unitID
+    end
     if autoHideGuiWhileFiring then
         local kind = currentActionKind[unitID]
         if kind == "unit" or kind == "ground" then return false end
@@ -939,7 +1203,13 @@ local function ShouldShowConeGui(unitID, cfg)
     return true
 end
 
-local MODE_NONE, MODE_ANGLE, MODE_RANGE = 0, 1, 2
+-- build zz7: MODE_CIRCLE is a third, self-contained setup stage reached
+-- from MODE_ANGLE via Ctrl+Left-click (see widget:MousePress) -- unlike
+-- the cone's two-stage angle-then-range flow, a circle only needs a
+-- position and a radius, both set in this one stage, so it never
+-- transitions into MODE_RANGE at all; locking it in (plain left-click)
+-- deploys immediately, same as locking the cone's range does.
+local MODE_NONE, MODE_ANGLE, MODE_RANGE, MODE_CIRCLE = 0, 1, 2, 3
 local mode = MODE_NONE
 local modeUnitID = nil
 -- build ze, per the user ("multiple ragnaroks... shares exactly the final
@@ -959,6 +1229,13 @@ local previewAngle = 0
 local previewHalfWidth = DEFAULT_HALF_WIDTH
 local previewRangeCap = 0
 local modeNativeRange = 0
+-- build zz7: live preview state for MODE_CIRCLE, the circle-killzone
+-- alternate to the cone (see MODE_CIRCLE's own comment above). World
+-- position of the circle's center and its current radius while placing
+-- it -- both kept clamped, every frame, so the circle's far edge can never
+-- cross the unit's own max weapon range (see widget:Update/MouseWheel).
+local previewCircleX, previewCircleZ = 0, 0
+local previewCircleRadius = 0
 
 local lastEscapeTime = nil
 
@@ -1144,13 +1421,32 @@ end
 -- does with it from then on.
 local function DeployDraft(unitID)
     local d = pendingDraft[unitID]
-    if not (d and d.rangeCap) then return false end
-    arcConfig[unitID] = {
-        angle = d.angle,
-        halfWidth = d.halfWidth,
-        rangeCap = d.rangeCap,
-        enabled = true,
-    }
+    if not d then return false end
+    -- build zz7: shape-aware -- a circle draft carries circleX/Z/Radius +
+    -- nativeRange instead of angle/halfWidth/rangeCap (see MODE_CIRCLE's
+    -- MousePress handler). Everything below this point (fire-state
+    -- capture, Hold Fire order, command-panel refresh) is identical
+    -- either way -- only the fields actually copied into arcConfig differ.
+    if d.shape == "circle" then
+        if not (d.circleX and d.circleZ and d.circleRadius) then return false end
+        arcConfig[unitID] = {
+            shape = "circle",
+            circleX = d.circleX,
+            circleZ = d.circleZ,
+            circleRadius = d.circleRadius,
+            nativeRange = d.nativeRange,
+            enabled = true,
+        }
+    else
+        if not d.rangeCap then return false end
+        arcConfig[unitID] = {
+            shape = "cone",
+            angle = d.angle,
+            halfWidth = d.halfWidth,
+            rangeCap = d.rangeCap,
+            enabled = true,
+        }
+    end
     pendingDraft[unitID] = nil
     -- Rewritten 2026-09-03 (build n): finishing setup now puts the unit on
     -- HOLD FIRE, not Fire-at-Will -- per the user's direction, engagement
@@ -1333,21 +1629,29 @@ end
 --------------------------------------------------------------------------------
 -- CHAT COMMANDS -- build zi, per the user
 --------------------------------------------------------------------------------
--- Three typed-in-chat commands, registered as normal widget actions in
+-- Typed-in-chat commands, registered as normal widget actions in
 -- widget:Initialize below (Spring routes an unrecognized "/word args" chat
 -- line to the same action-dispatch system a keybind uses -- confirmed
 -- against the engine's own chat-handling source, CGame::ProcessAction ->
 -- GotChatMsg -> the widget's registered action of the same name -- so no
--- separate chat-parsing code is needed here, just three more
--- widgetHandler:AddAction calls).
+-- separate chat-parsing code is needed here, just one widgetHandler:AddAction
+-- call per command).
 --
 --   /conefirehide      -- turns ON auto-hide: any unit's cone illustration
 --                         (wedge/line/labels) hides itself the instant
 --                         that unit starts actively engaging something,
 --                         and reappears the instant it goes idle again.
---                         Purely visual -- never touches enforcement.
---   /conefireon        -- the default -- cone illustrations are always
---                         shown, regardless of whether a unit is firing.
+--                         Purely visual -- never touches enforcement. No
+--                         effect while low-key mode is on (see
+--                         /conefiredefault below) unless /conefireoverlay's
+--                         personal override is also active.
+--   /conefireon        -- cone illustrations always shown, regardless of
+--                         firing state. build zz15: also LEAVES low-key
+--                         mode entirely (degree/radius numbers, the
+--                         aim-sweep wedge, the setup-time cursor icon, and
+--                         the "?" button all come back too) -- the
+--                         reliable, explicit way out of it, since
+--                         /conefiredefault below no longer toggles.
 --   /conefiredisable   -- removes EVERY unit's cone-of-fire config
 --                         entirely, all at once -- the same thing clicking
 --                         the small red "X" does for one unit at a time,
@@ -1355,23 +1659,136 @@ end
 --   /conefirewedge     -- build zw: toggles the red aim-sweep wedge (the
 --                         "still turning to face its target" indicator,
 --                         see simulatedAimAngle/DrawAimSweep) on/off for
---                         every unit at once. On by default.
---   /conefiredefault   -- build zx: resets /conefirehide-vs-on and
---                         /conefirewedge back to their original defaults
---                         (always shown, wedge on) in one command.
+--                         every unit at once. On by default. No effect
+--                         while low-key mode is on (wedge is hidden
+--                         unconditionally either way -- see
+--                         /conefiredefault) unless /conefirewedges'
+--                         personal override is also active.
+--   /conefiredefault   -- build zz15: ALWAYS sets LOW-KEY MODE ON -- not a
+--                         toggle (build zz9-zz12 made it one, but the user
+--                         found that confusing to reason about: "does
+--                         /conefiredefault a toggle? if i do it the 2nd
+--                         time it stays default"). Typing it while already
+--                         in low-key mode just re-confirms it -- it can
+--                         never turn low-key mode off on its own. Hides
+--                         the degree/radius NUMBERS (at every stage of
+--                         setup, not just once deployed), the red
+--                         aim-sweep wedge, and the setup-time cursor icon,
+--                         unconditionally. The cone/circle OUTLINE hides
+--                         the moment setup finishes (deploy), regardless
+--                         of firing state -- only the small "X" remains by
+--                         default. Hover a configured unit to peek at its
+--                         outline while the cursor's on it, or Ctrl+Click
+--                         it to pin it permanently shown/hidden. build
+--                         zz17: also clears every personal override below
+--                         back off. Type /conefireon (above) to leave
+--                         low-key mode.
+--   /conefiretooltip   -- build zz9: originally toggled a "?" help button
+--                         shown on every configured unit, independent of
+--                         low-key mode. build zz17: renamed to the plural
+--                         "/conefiretooltips" to match the sibling
+--                         per-feature override commands below. build
+--                         zz21, per the user ("makes every unit have a ?
+--                         which is too redundant... make it that if
+--                         someone types /conefiretooltip it just shows
+--                         the tooltip dead center on the screen"): renamed
+--                         BACK to the singular "/conefiretooltip" (it's
+--                         not one of the per-feature overrides, so no
+--                         reason to match their naming) and now toggles
+--                         the controls-reference panel ITSELF, dead
+--                         center on screen -- no more per-unit button at
+--                         all. Retyping it, or clicking the panel's own
+--                         "X" (upper-right corner), closes it. Not tied to
+--                         low-key mode -- always available regardless.
+--   /conefiredegrees   -- build zz17, per the user (wants BAR-devs-ready
+--                         minimalism as the public default, but personal
+--                         access to the "richer" features he's used to):
+--                         PERSONAL override -- brings the degree/radius
+--                         numbers back even under low-key mode. No effect
+--                         if low-key mode is currently off.
+--   /conefirewedges    -- build zz17: PERSONAL override -- lets the red
+--                         aim-sweep wedge show again even under low-key
+--                         mode (still follows /conefirewedge's own on/off
+--                         from there). No effect if low-key mode is off.
+--   /conefireoverlay   -- build zz17: PERSONAL override -- the cone/circle
+--                         outline stays visible after setup finishes
+--                         instead of hiding on deploy, even under low-key
+--                         mode (still follows /conefirehide's own
+--                         auto-hide-while-firing rule from there). No
+--                         effect if low-key mode is off.
+--   /conefirecursor    -- build zz17, per the user ("Let's add the icon
+--                         cursor as well... this brings it back for
+--                         myself"): PERSONAL override -- brings back the
+--                         animated cursor icon and "Cone"/"Range"/"Circle"
+--                         stage label shown while actively setting up a
+--                         unit (DrawConeCursorIcon), even under low-key
+--                         mode. No effect if low-key mode is off.
+--   /conefirelinger <n> -- build zz19, per the user ("15 seconds seems
+--                         rather long" -> picked 8s as the new default,
+--                         then "add /conefirelinger# as # could be any
+--                         number from 1 to 15"): sets GHOST_MEMORY_FRAMES
+--                         (see its own declaration in USER-TWEAKABLE
+--                         SETTINGS) to `n` seconds -- how long a unit
+--                         keeps attacking the last confirmed spot of
+--                         something after losing sight of it before going
+--                         quiet. `n` must be a whole number from 1 to 15,
+--                         e.g. "/conefirelinger 8". Default 8 seconds (was
+--                         15 before this build). NOT tied to low-key mode
+--                         -- this changes enforcement itself, not
+--                         appearance, so unlike the four overrides above
+--                         it's the same for everyone regardless of
+--                         low-key mode's state. build zz20, per the user
+--                         ("can't you do /conefirelinger # with a space
+--                         so there are no 15 version of it?"): originally
+--                         fifteen separate fixed commands
+--                         (/conefirelinger1 .. /conefirelinger15) -- now a
+--                         single command reading its number from the
+--                         chat line's trailing argument instead (see
+--                         ConeFireLingerCommand).
 --
--- build zx: the /conefirehide-vs-on and /conefirewedge settings above are
--- now SAVED across sessions (widget:GetConfigData/SetConfigData, BAR's
--- standard per-widget settings persistence) -- they used to silently
--- reset to their defaults on every reload/restart.
+-- Each of the four personal overrides above exists so the widget's author
+-- can bring back just ONE piece of the pre-low-key-mode experience without
+-- typing /conefireon and leaving low-key mode entirely -- and every one of
+-- them is reset back to off by /conefiredefault, so a personal preference
+-- never bleeds into what a fresh install/tester actually sees by default.
+--
+-- build zx: the /conefirehide-vs-on and /conefirewedge settings above (and,
+-- build zz9, low-key mode, build zz17, all four personal overrides, and
+-- build zz19, /conefirelinger) are all SAVED across sessions
+-- (widget:GetConfigData/SetConfigData, BAR's standard per-widget settings
+-- persistence) -- they used to silently reset to their defaults on every
+-- reload/restart. build zz21: /conefiretooltip's panel (showControlsHelp)
+-- is deliberately NOT in that list -- it's a "read this right now"
+-- reference, not a standing preference, so it always starts closed.
 local function ConeFireOff()
     autoHideGuiWhileFiring = true
-    spEcho("[Cone-of-Fire] /conefirehide -- cone illustration will now hide itself on any unit actively firing (reappears once it goes idle). Type /conefireon to go back to always showing it.")
+    -- build zz16: autoHideGuiWhileFiring has NO effect at all while
+    -- lowKeyMode is on -- ShouldShowConeGui's low-key branch is checked
+    -- first and returns before this setting is ever consulted (low-key
+    -- mode's own "hidden unless hovered/pinned" rule already fully
+    -- subsumes it). Said so explicitly here rather than silently letting
+    -- the setting appear to do nothing.
+    if lowKeyMode and not showOverlayOverride then
+        spEcho("[Cone-of-Fire] /conefirehide -- saved, but low-key mode is currently ON and overrides this (outlines already hide by default -- see /conefiredefault). Type /conefireon to leave low-key mode, or /conefireoverlay to personally override just this, if you want this setting to actually take effect.")
+    else
+        spEcho("[Cone-of-Fire] /conefirehide -- cone illustration will now hide itself on any unit actively firing (reappears once it goes idle). Type /conefireon to go back to always showing it.")
+    end
 end
 
+-- build zz15, per the user (after finding /conefiredefault's toggle
+-- behavior confusing -- "does /conefiredefault a toggle? if i do it the
+-- 2nd time it stays default"): this is now low-key mode's explicit OFF
+-- switch, alongside its original job. Since /conefiredefault (below) always
+-- forces low-key mode ON rather than toggling, something has to be the
+-- reliable way OUT of it -- /conefireon already meant "always show the
+-- illustration," the exact opposite of what low-key mode does, so it now
+-- also clears lowKeyMode on top of its original autoHideGuiWhileFiring
+-- reset. build zz21: no longer touches showHelpButtons -- that flag is
+-- gone along with the per-unit "?" button it used to gate.
 local function ConeFireOn()
     autoHideGuiWhileFiring = false
-    spEcho("[Cone-of-Fire] /conefireon -- cone illustration is always shown again (the default).")
+    lowKeyMode = false
+    spEcho("[Cone-of-Fire] /conefireon -- cone illustration is always shown again, low-key mode OFF (degree/radius numbers, the aim-sweep wedge, and the setup-time cursor icon are all back too). Type /conefiredefault to go back to the low-key default.")
 end
 
 local function ConeFireDisableAll()
@@ -1390,25 +1807,163 @@ end
 -- default; typing it again switches it back.
 local function ConeFireWedgeToggle()
     showAimSweepWedge = not showAimSweepWedge
-    if showAimSweepWedge then
+    -- build zz16: same masking issue as autoHideGuiWhileFiring above --
+    -- the aim-sweep wedge's own draw gate is `showAimSweepWedge and
+    -- (not lowKeyMode or showWedgeOverride) and ...`, so this setting is a
+    -- no-op while low-key mode is on UNLESS /conefirewedges' personal
+    -- override (build zz17) is also active.
+    if lowKeyMode and not showWedgeOverride then
+        spEcho("[Cone-of-Fire] /conefirewedge -- saved, but low-key mode is currently ON and hides the aim-sweep wedge unconditionally either way (see /conefiredefault). Type /conefireon to leave low-key mode, or /conefirewedges to personally override just this, if you want this setting to actually take effect.")
+    elseif showAimSweepWedge then
         spEcho("[Cone-of-Fire] /conefirewedge -- red aim-sweep wedge is now ON (the default). Type it again to turn it off.")
     else
         spEcho("[Cone-of-Fire] /conefirewedge -- red aim-sweep wedge is now OFF. Type it again to turn it back on.")
     end
 end
 
+-- build zz17, per the user ("I would like these 4 features to be
+-- individually brought back... This way I don't have to use /conefireon
+-- when I just want 1 of them back", then mid-build: "Let's add the icon
+-- cursor as well... /conefirecursor this brings it back for myself"):
+-- personal per-feature overrides for a widget that's meant to look plain
+-- and minimal for anyone else (see lowKeyMode's own declaration above for
+-- the full reasoning) -- each of these five is a plain independent toggle,
+-- has no effect at all unless lowKeyMode is currently on, and gets reset
+-- back to false by /conefiredefault (ConeFireSetDefault) along with
+-- everything else, so a personal override never leaks into what the
+-- "official" default looks like for anyone else testing it fresh.
+local function ConeFireDegreesToggle()
+    showDegreesOverride = not showDegreesOverride
+    if showDegreesOverride then
+        spEcho("[Cone-of-Fire] /conefiredegrees -- degree/radius numbers are back, even under low-key mode. Type it again to hide them.")
+    else
+        spEcho("[Cone-of-Fire] /conefiredegrees -- degree/radius numbers suppressed again under low-key mode." .. (lowKeyMode and "" or " (low-key mode is currently off, so numbers already show regardless.)"))
+    end
+end
+
+local function ConeFireWedgesToggle()
+    showWedgeOverride = not showWedgeOverride
+    if showWedgeOverride then
+        spEcho("[Cone-of-Fire] /conefirewedges -- red aim-sweep wedge can show again even under low-key mode (still follows /conefirewedge's own on/off from there). Type it again to suppress it.")
+    else
+        spEcho("[Cone-of-Fire] /conefirewedges -- aim-sweep wedge suppressed again under low-key mode." .. (lowKeyMode and "" or " (low-key mode is currently off, so /conefirewedge already controls it normally.)"))
+    end
+end
+
+local function ConeFireOverlayToggle()
+    showOverlayOverride = not showOverlayOverride
+    if showOverlayOverride then
+        spEcho("[Cone-of-Fire] /conefireoverlay -- cone/circle outline now stays visible after setup finishes, even under low-key mode (follows /conefirehide normally from there). Type it again to go back to hidden-until-hover/pin.")
+    else
+        spEcho("[Cone-of-Fire] /conefireoverlay -- outline goes back to hiding on deploy under low-key mode (hover a unit or Ctrl+Click it to see it)." .. (lowKeyMode and "" or " (low-key mode is currently off, so the outline already shows normally regardless.)"))
+    end
+end
+
+-- build zz17, per the user ("Let's add the icon cursor as well. So it's
+-- removed on default, but if i want it back, set it as /conefirecursor
+-- this brings it back for myself"): the fifth personal override, for the
+-- animated triangle cursor icon and the "Cone"/"Range"/"Circle" stage
+-- label shown while actively setting up a unit (DrawConeCursorIcon).
+local function ConeFireCursorToggle()
+    showCursorIconOverride = not showCursorIconOverride
+    if showCursorIconOverride then
+        spEcho("[Cone-of-Fire] /conefirecursor -- the animated cursor icon and stage label are back while setting up, even under low-key mode. Type it again to hide them.")
+    else
+        spEcho("[Cone-of-Fire] /conefirecursor -- cursor icon and stage label suppressed again under low-key mode." .. (lowKeyMode and "" or " (low-key mode is currently off, so they already show regardless.)"))
+    end
+end
+
+-- build zz19, per the user ("15 seconds seems rather long" -- picked 8s as
+-- the new default via AskUserQuestion -- then "add /conefirelinger# as #
+-- could be any number from 1 to 15"): lets GHOST_MEMORY_FRAMES (see its
+-- own declaration in USER-TWEAKABLE SETTINGS above) be changed in-game
+-- without editing this file.
+--
+-- build zz20, per the user ("can't you do /conefirelinger # with a space
+-- so there are no 15 version of it?"): the first pass registered fifteen
+-- separate fixed actions (/conefirelinger1 .. /conefirelinger15) on the
+-- mistaken assumption that a single command couldn't take a trailing
+-- numeric argument -- Spring's action-dispatch callback is actually
+-- called as `func(cmd, line, words, bynum)`, where `line` is everything
+-- typed after the command and `words` is that same text pre-split on
+-- whitespace, so a single "/conefirelinger 8" naturally hands this
+-- `words[1] == "8"` -- no need for 15 registrations after all.
+local function ConeFireLingerSet(seconds)
+    GHOST_MEMORY_FRAMES = seconds * 30
+    spEcho(string.format(
+        "[Cone-of-Fire] /conefirelinger %d -- after losing sight of something in a unit's cone/circle, it'll keep attacking the last confirmed spot for up to %d more second%s before giving up and going quiet. Saved across sessions.",
+        seconds, seconds, seconds == 1 and "" or "s"))
+end
+
+-- The actual registered action, "/conefirelinger <n>" -- validates `n` is
+-- a whole number from 1 to 15 before handing off to ConeFireLingerSet;
+-- anything else (missing, non-numeric, out of range, fractional) gets a
+-- usage message instead of silently doing nothing or crashing on a nil
+-- arithmetic operand.
+local function ConeFireLingerCommand(cmd, line, words)
+    local arg = words and words[1]
+    local seconds = arg and tonumber(arg)
+    if not seconds or seconds ~= math.floor(seconds) or seconds < 1 or seconds > 15 then
+        spEcho("[Cone-of-Fire] /conefirelinger -- needs a whole number from 1 to 15, e.g. \"/conefirelinger 8\". Currently " .. tostring(GHOST_MEMORY_FRAMES / 30) .. " seconds.")
+        return
+    end
+    ConeFireLingerSet(seconds)
+end
+
 -- build zx, per the user (after learning the two settings above now
 -- persist across sessions via GetConfigData/SetConfigData -- see those
 -- callins near widget:Initialize below -- "lets go and also add another
 -- /chat command /conefiredefault which sets it at origina default"):
--- resets every chat-toggleable setting back to its ORIGINAL out-of-the-box
--- default in one shot, regardless of whatever got saved from a previous
--- session -- cone illustration always shown (same as /conefireon) and the
--- aim-sweep wedge on (same as /conefirewedge if it was off).
-local function ConeFireResetDefaults()
-    autoHideGuiWhileFiring = false
-    showAimSweepWedge = true
-    spEcho("[Cone-of-Fire] /conefiredefault -- all chat-toggleable settings reset to their original defaults (cone illustration always shown, aim-sweep wedge on).")
+-- originally a one-shot reset of autoHideGuiWhileFiring/showAimSweepWedge
+-- back to their stock defaults.
+--
+-- build zz9-zz12, per the user ("trying to make this widget as low key and
+-- appearing to be very simplistic"): a full ON/OFF toggle for low-key mode.
+--
+-- build zz15, per the user (found the toggle confusing to reason about --
+-- "does /conefiredefault a toggle? if i do it the 2nd time it stays
+-- default"): NO LONGER A TOGGLE. Always unconditionally sets low-key mode
+-- ON, every time -- typing it while already in low-key mode just re-
+-- confirms it, it can never turn low-key mode off. That's the actual
+-- literal meaning of "/conefiredefault": it sets things TO the default,
+-- full stop, not "flip whatever it currently is." /conefireon (above) is
+-- now the explicit, reliable way out of low-key mode.
+local function ConeFireSetDefault()
+    lowKeyMode = true
+    -- build zz17: also clears every personal override back to false -- the
+    -- "official" default a fresh player/tester gets should never carry over
+    -- a knob the user personally flipped on for themselves (see
+    -- /conefiredegrees, /conefirewedges, /conefireoverlay, /conefirecursor
+    -- above).
+    showDegreesOverride = false
+    showWedgeOverride = false
+    showOverlayOverride = false
+    showCursorIconOverride = false
+    spEcho("[Cone-of-Fire] /conefiredefault -- low-key mode ON (the default): degree/radius numbers, the red aim-sweep wedge, and the setup-time cursor icon no longer show, ever. The cone/circle outline hides the moment setup finishes (deploy), regardless of whether the unit ever fires -- hover the mouse over a configured unit to peek at it while the cursor's on it, or Ctrl+Click it to pin it permanently shown/hidden. Any personal /conefiredegrees, /conefirewedges, /conefireoverlay, or /conefirecursor overrides were reset too. Type /conefireon to leave low-key mode, or bring back just one thing with /conefiredegrees, /conefirewedges, /conefireoverlay, or /conefirecursor.")
+end
+
+-- build zz9: (or type "/conefire?" -- not registered, Spring action names
+-- can't contain "?" -- this is the actual command) originally toggled a
+-- "?" help button shown on every configured unit. build zz17 renamed it
+-- from the singular "/conefiretooltip" to "/conefiretooltips" to match
+-- the naming of the per-feature override commands added alongside it.
+-- build zz21, per the user ("right now makes every unit have a ? which
+-- is too redundant... make it that if someone types /conefiretooltip it
+-- just shows the tooltip dead center on the screen and either retyping
+-- it again removes it or clickin the X on the top right removes it"):
+-- renamed BACK to the singular "/conefiretooltip" (there's only one
+-- panel, and it's not a per-feature override any more so it no longer
+-- needs to match that family's plural naming), and it now toggles the
+-- controls-reference panel (showControlsHelp) directly instead of a
+-- per-unit button that used to open it. Not tied to low-key mode at all
+-- -- always available, on-demand, regardless of low-key mode's state.
+local function ConeFireTooltipToggle()
+    showControlsHelp = not showControlsHelp
+    if showControlsHelp then
+        spEcho("[Cone-of-Fire] /conefiretooltip -- controls reference shown, dead center on screen. Type it again, or click the \"X\" in its own upper-right corner, to close it.")
+    else
+        spEcho("[Cone-of-Fire] /conefiretooltip -- controls reference closed. Type it again to bring it back.")
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -1440,9 +1995,10 @@ end
 -- perspective projection doing the scaling now, not a manual pixel fudge,
 -- the button tracks the unit's true rendered base correctly at every zoom
 -- level, the same way the model itself does.
--- Shared by GetSwitchScreenRect and GetHelpScreenRect (build zo) -- the
--- single world-anchored screen point both buttons are laid out from, so
--- they always stay glued together at every zoom level.
+-- Used by GetSwitchScreenRect ("X") to lay out its world-anchored screen
+-- point. build zo added a second button (GetHelpScreenRect, "?") sharing
+-- this same anchor -- removed in build zz21, see the notes near "?"'s
+-- other former call sites above.
 local function GetButtonAnchorScreen(unitID)
     local ux, uy, uz = spGetUnitPosition(unitID)
     if not ux then return nil end
@@ -1464,24 +2020,25 @@ local function GetSwitchScreenRect(unitID)
     return rx1, ry1, rx2, ry2
 end
 
--- build zo: the "?" button sits immediately to the right of "X", laid out
--- from the exact same world anchor so it tracks it perfectly at any zoom.
-local function GetHelpScreenRect(unitID)
-    local cx, cy = GetButtonAnchorScreen(unitID)
-    if not cx then return nil end
-    local hcx = cx + REMOVE_W * 0.5 + HELP_BUTTON_GAP_PX + HELP_W * 0.5
-    local rx1 = hcx - HELP_W * 0.5
-    local rx2 = hcx + HELP_W * 0.5
-    local ry1 = cy - HELP_H * 0.5
-    local ry2 = cy + HELP_H * 0.5
-    return rx1, ry1, rx2, ry2
-end
+-- build zo: used to lay out the "?" button immediately to the right of
+-- "X" here (GetHelpScreenRect) -- removed in build zz21 along with the
+-- button itself.
 
 --------------------------------------------------------------------------------
 -- CALLINS
 --------------------------------------------------------------------------------
 function widget:Initialize()
     spEcho("[Cone-of-Fire] Loaded, build " .. WIDGET_BUILD .. ".")
+    -- build zz13, per the user: low-key mode is now ON by default for
+    -- first-time users (see lowKeyMode's own declaration), so a one-time
+    -- reminder at load time whenever it's currently active -- covers both
+    -- a brand-new install AND a returning player who already had it on --
+    -- explains why deployed cones/circles won't visibly show up without
+    -- hovering the unit or Ctrl+Clicking it. Silent whenever low-key mode
+    -- is off, so this never nags a player who's already turned it off.
+    if lowKeyMode then
+        spEcho("[Cone-of-Fire] Low-key mode is ON (the default) -- deployed cone/circle outlines stay hidden until you hover the unit or Ctrl+Click it. Type /conefiredefault to turn this off.")
+    end
     local missing = {}
     for name in pairs(ARC_UNIT_NAMES) do
         local ud = UnitDefNames[name]
@@ -1519,7 +2076,16 @@ function widget:Initialize()
     widgetHandler:AddAction("conefireon", ConeFireOn, nil, "t")
     widgetHandler:AddAction("conefiredisable", ConeFireDisableAll, nil, "t")
     widgetHandler:AddAction("conefirewedge", ConeFireWedgeToggle, nil, "t")
-    widgetHandler:AddAction("conefiredefault", ConeFireResetDefaults, nil, "t")
+    widgetHandler:AddAction("conefiredefault", ConeFireSetDefault, nil, "t")
+    widgetHandler:AddAction("conefiretooltip", ConeFireTooltipToggle, nil, "t")
+    -- build zz17: personal per-feature low-key overrides -- see their own
+    -- declarations above.
+    widgetHandler:AddAction("conefiredegrees", ConeFireDegreesToggle, nil, "t")
+    widgetHandler:AddAction("conefirewedges", ConeFireWedgesToggle, nil, "t")
+    widgetHandler:AddAction("conefireoverlay", ConeFireOverlayToggle, nil, "t")
+    widgetHandler:AddAction("conefirecursor", ConeFireCursorToggle, nil, "t")
+    -- build zz20: "/conefirelinger <n>", n = 1-15.
+    widgetHandler:AddAction("conefirelinger", ConeFireLingerCommand, nil, "t")
 end
 
 -- build zx, per the user ("those chat commanders are persistent?" -- they
@@ -1538,6 +2104,25 @@ function widget:GetConfigData()
     return {
         autoHideGuiWhileFiring = autoHideGuiWhileFiring,
         showAimSweepWedge = showAimSweepWedge,
+        -- build zz9: low-key mode now persists the same way -- no reason
+        -- it should silently reset on every reload/restart when the other
+        -- two above don't. (build zz21: showHelpButtons used to persist
+        -- here too -- removed along with the per-unit "?" button it
+        -- gated; showControlsHelp, its replacement, is deliberately NOT
+        -- persisted -- see its own declaration.)
+        lowKeyMode = lowKeyMode,
+        -- build zz17: the personal per-feature overrides persist the same
+        -- way -- so the user's own preferred "richer" setup survives a
+        -- reload without having to retype all of them every time.
+        showDegreesOverride = showDegreesOverride,
+        showWedgeOverride = showWedgeOverride,
+        showOverlayOverride = showOverlayOverride,
+        showCursorIconOverride = showCursorIconOverride,
+        -- build zz19/zz20: /conefirelinger's own setting -- persisted as
+        -- frames (matches GHOST_MEMORY_FRAMES's own unit internally) rather
+        -- than seconds, so no conversion is needed on either side of a
+        -- save/load round-trip.
+        ghostMemoryFrames = GHOST_MEMORY_FRAMES,
     }
 end
 
@@ -1551,6 +2136,24 @@ function widget:SetConfigData(data)
     if data.showAimSweepWedge ~= nil then
         showAimSweepWedge = data.showAimSweepWedge
     end
+    if data.lowKeyMode ~= nil then
+        lowKeyMode = data.lowKeyMode
+    end
+    if data.showDegreesOverride ~= nil then
+        showDegreesOverride = data.showDegreesOverride
+    end
+    if data.showWedgeOverride ~= nil then
+        showWedgeOverride = data.showWedgeOverride
+    end
+    if data.showOverlayOverride ~= nil then
+        showOverlayOverride = data.showOverlayOverride
+    end
+    if data.showCursorIconOverride ~= nil then
+        showCursorIconOverride = data.showCursorIconOverride
+    end
+    if data.ghostMemoryFrames ~= nil then
+        GHOST_MEMORY_FRAMES = data.ghostMemoryFrames
+    end
 end
 
 function widget:Shutdown()
@@ -1560,6 +2163,12 @@ function widget:Shutdown()
     widgetHandler:RemoveAction("conefiredisable")
     widgetHandler:RemoveAction("conefirewedge")
     widgetHandler:RemoveAction("conefiredefault")
+    widgetHandler:RemoveAction("conefiretooltip")
+    widgetHandler:RemoveAction("conefiredegrees")
+    widgetHandler:RemoveAction("conefirewedges")
+    widgetHandler:RemoveAction("conefireoverlay")
+    widgetHandler:RemoveAction("conefirecursor")
+    widgetHandler:RemoveAction("conefirelinger")
     -- Don't leave any unit stuck on a forced Hold Fire if the widget gets
     -- disabled/reloaded while actively suppressing one.
     for unitID in pairs(suppressedFireState) do
@@ -1729,11 +2338,67 @@ local function UpdateSimulatedAimAngles(dt)
     end
 end
 
+-- build zz14, per the user ("overlay should show if you hover regardless
+-- if unit is selected or not, right now if selected hover doesn't work"):
+-- Spring.TraceScreenRay alone turned out to be unreliable for a SELECTED
+-- unit specifically -- a selected unit gets extra engine-drawn geometry
+-- (the selection highlight/decal) that can win the ray intersection ahead
+-- of the unit's own collision volume, or shift what TraceScreenRay
+-- resolves to, so the raycast can come back as the wrong thing (or
+-- "ground"/nil) even though the cursor is squarely over the unit on
+-- screen. Rather than depend on that one call being authoritative, this
+-- adds a screen-space fallback: project every CONFIGURED unit's own world
+-- position to screen coordinates (cheap -- bounded by however many units
+-- actually have cone-of-fire deployed, not every unit on the map) and
+-- treat the closest one within HOVER_PICK_RADIUS_PX of the cursor as
+-- hovered whenever the raycast itself didn't already resolve to a
+-- configured unit. Tried first since it's exact when it works; this is
+-- purely a safety net for the cases it doesn't.
+local HOVER_PICK_RADIUS_PX = 26
+
+local function FindHoveredConfiguredUnit(mx, my)
+    local typ, hitID = spTraceScreenRay(mx, my, false)
+    if typ == "unit" and hitID and arcConfig[hitID] then
+        return hitID
+    end
+    local bestID, bestDist
+    for unitID in pairs(arcConfig) do
+        if spValidUnitID(unitID) then
+            local ux, uy, uz = spGetUnitPosition(unitID)
+            if ux then
+                local sx, sy, sz = spWorldToScreenCoords(ux, uy, uz)
+                if sx and not (sz and sz < 0) then
+                    local dx, dy = sx - mx, sy - my
+                    local dist = math.sqrt(dx * dx + dy * dy)
+                    if dist <= HOVER_PICK_RADIUS_PX and (not bestDist or dist < bestDist) then
+                        bestID, bestDist = unitID, dist
+                    end
+                end
+            end
+        end
+    end
+    return bestID
+end
+
 -- Live preview tracking: follows the mouse every frame while in angle/range
 -- setup, without needing the button held down (matches the "aim with the
 -- mouse, wheel adjusts width, LMB just confirms" flow the user described).
 function widget:Update(dt)
     UpdateSimulatedAimAngles(dt)
+
+    -- build zz9, restored zz12, fixed zz14: keeps hoveredUnitID current
+    -- for ShouldShowConeGui's low-key-mode branch above -- runs regardless
+    -- of setup mode (hover peeking is a post-deploy thing, unrelated to
+    -- whether the player is also mid-setup on some other unit right now).
+    -- build zz17: matches ShouldShowConeGui's own gate exactly -- no point
+    -- tracking hover at all while showOverlayOverride has already made the
+    -- outline ignore hover entirely.
+    if lowKeyMode and not showOverlayOverride then
+        local mx, my = spGetMouseState()
+        hoveredUnitID = FindHoveredConfiguredUnit(mx, my)
+    else
+        hoveredUnitID = nil
+    end
 
     if mode == MODE_NONE or not modeUnitID then return end
     if not spValidUnitID(modeUnitID) then
@@ -1753,6 +2418,21 @@ function widget:Update(dt)
         if dist < MIN_RANGE_CAP then dist = MIN_RANGE_CAP end
         if dist > modeNativeRange then dist = modeNativeRange end
         previewRangeCap = dist
+    elseif mode == MODE_CIRCLE then
+        -- build zz7: the circle follows the mouse, but its CENTER distance
+        -- from the unit is clamped so the circle's FAR edge (center dist +
+        -- radius) never crosses the unit's own max weapon range -- per the
+        -- user's diagram, the whole circle has to stay inside that
+        -- boundary, not just its center point.
+        local dx, dz = gx - ux, gz - uz
+        local centerDist = math.sqrt(dx * dx + dz * dz)
+        local maxCenterDist = modeNativeRange - previewCircleRadius
+        if maxCenterDist < 0 then maxCenterDist = 0 end
+        if centerDist > maxCenterDist and centerDist > 0 then
+            local scale = maxCenterDist / centerDist
+            dx, dz = dx * scale, dz * scale
+        end
+        previewCircleX, previewCircleZ = ux + dx, uz + dz
     end
 end
 
@@ -1792,6 +2472,33 @@ function widget:MouseWheel(up, value)
         -- the scroll so the camera doesn't zoom out from under the player
         -- mid-setup.
         return true
+    elseif mode == MODE_CIRCLE then
+        -- build zz7: resizes the circle, same magnitude-scaling treatment
+        -- as the cone's own width wheel above (see its build-zc comment --
+        -- `value` is the actual reported scroll magnitude, not a fixed
+        -- 1.0-per-notch flag).
+        local delta = CIRCLE_RADIUS_WHEEL_STEP * math.abs(value or 1)
+        if up then
+            previewCircleRadius = previewCircleRadius + delta
+        else
+            previewCircleRadius = previewCircleRadius - delta
+        end
+        if previewCircleRadius < MIN_CIRCLE_RADIUS then previewCircleRadius = MIN_CIRCLE_RADIUS end
+        -- Same max-range clamp as widget:Update, from the OTHER direction:
+        -- growing the radius can't push the far edge past the boundary
+        -- either, capped by however close to it the circle's current
+        -- center already sits.
+        if modeUnitID then
+            local ux, uy, uz = spGetUnitPosition(modeUnitID)
+            if ux then
+                local dx, dz = previewCircleX - ux, previewCircleZ - uz
+                local centerDist = math.sqrt(dx * dx + dz * dz)
+                local maxRadius = modeNativeRange - centerDist
+                if maxRadius < MIN_CIRCLE_RADIUS then maxRadius = MIN_CIRCLE_RADIUS end
+                if previewCircleRadius > maxRadius then previewCircleRadius = maxRadius end
+            end
+        end
+        return true
     end
     return false
 end
@@ -1810,11 +2517,61 @@ function widget:MousePress(mx, my, button)
         end
     end
 
+    -- build zz23, per the user ("since it's just one whole block i should
+    -- be able to click on any spot of that tooltip and drag it"): a click
+    -- ANYWHERE on the panel starts a drag -- checked right after the close
+    -- button (so it always takes priority over setup mode/per-unit clicks
+    -- underneath, same reasoning as the close button above; a click that
+    -- landed on the close button itself already returned above and never
+    -- reaches here). This also means a click on the panel can no longer
+    -- fall through to whatever unit/world interaction happened to be
+    -- underneath it on screen.
+    if button == 1 and showControlsHelp and helpPanelRect then
+        local r = helpPanelRect
+        if mx >= r.x1 and mx <= r.x2 and my >= r.y1 and my <= r.y2 then
+            helpPanelDragging = true
+            return true
+        end
+    end
+
     if mode == MODE_ANGLE then
         if button == 1 then
+            -- build zz7, per C3BO (BAR Discord) via the user: Ctrl+Left-
+            -- click while choosing the cone's angle switches to the
+            -- alternate CIRCLE killzone shape instead of locking the cone.
+            -- Reuses Ctrl since it's already this widget's "modifier"
+            -- convention everywhere else (Ctrl+C, Ctrl+Click-unit,
+            -- Ctrl+Click-X) rather than introducing a new keybind.
+            local _, ctrlHeld = spGetModKeyState()
+            if ctrlHeld then
+                mode = MODE_CIRCLE
+                local ux, uy, uz = spGetUnitPosition(modeUnitID)
+                modeNativeRange = GetWeaponRange(spGetUnitDefID(modeUnitID))
+                if ux then
+                    -- Seed the circle at a sensible starting size roughly
+                    -- under the cursor already, clamped the same way
+                    -- resizing/moving it afterward would be (see
+                    -- widget:Update/MouseWheel's MODE_CIRCLE branches).
+                    local gx, gy, gz = GetMouseGroundPos()
+                    local cx, cz = gx or ux, gz or uz
+                    local startRadius = math.max(MIN_CIRCLE_RADIUS, modeNativeRange * DEFAULT_CIRCLE_RADIUS_FRACTION)
+                    local dx, dz = cx - ux, cz - uz
+                    local dist = math.sqrt(dx * dx + dz * dz)
+                    local maxCenterDist = math.max(0, modeNativeRange - startRadius)
+                    if dist > maxCenterDist and dist > 0 then
+                        local scale = maxCenterDist / dist
+                        dx, dz = dx * scale, dz * scale
+                    end
+                    previewCircleX, previewCircleZ = ux + dx, uz + dz
+                    previewCircleRadius = startRadius
+                end
+                spEcho("[Cone-of-Fire] Circle killzone: move mouse to position, scroll wheel to resize, left-click to set. Ctrl+left-click to switch back to the cone.")
+                return true
+            end
             local ux, uy, uz = spGetUnitPosition(modeUnitID)
             modeNativeRange = GetWeaponRange(spGetUnitDefID(modeUnitID))
             pendingDraft[modeUnitID] = {
+                shape = "cone",
                 angle = previewAngle,
                 halfWidth = previewHalfWidth,
             }
@@ -1823,6 +2580,82 @@ function widget:MousePress(mx, my, button)
             spEcho("[Cone-of-Fire] Select range/distance limit: left-click mouse.")
         elseif button == 3 then
             CancelMode()
+        end
+        return true
+    elseif mode == MODE_CIRCLE then
+        if button == 1 then
+            local _, ctrlHeld = spGetModKeyState()
+            if ctrlHeld then
+                -- Toggle back to the cone -- previewAngle/previewHalfWidth
+                -- were never touched while in MODE_CIRCLE, so they're
+                -- still exactly where they were left, same "no state to
+                -- restore" property as the RMB step-back below.
+                mode = MODE_ANGLE
+                spEcho("[Cone-of-Fire] Back to cone -- scroll wheel to adjust width, left-click to set. Ctrl+left-click to switch to a circle instead.")
+                return true
+            end
+            -- Lock the circle in and deploy immediately -- one stage
+            -- instead of the cone's two, since position+radius is
+            -- everything a circle needs (no separate angle dimension).
+            local unitID = modeUnitID
+            local group = modeGroupUnitIDs
+            local cx, cz, cr = previewCircleX, previewCircleZ, previewCircleRadius
+            local nativeRange = modeNativeRange
+            mode = MODE_NONE
+            modeUnitID = nil
+            modeGroupUnitIDs = nil
+            pendingDraft[unitID] = {
+                shape = "circle",
+                circleX = cx,
+                circleZ = cz,
+                circleRadius = cr,
+                nativeRange = nativeRange,
+            }
+            local ok = DeployDraft(unitID)
+
+            -- build zz7: linked-group deploy, MUCH simpler than the cone's
+            -- (see GetConeEdgePoints/DeriveLinkedCone above) -- a circle
+            -- isn't anchored to any one shooter's position at all, so
+            -- every other linked unit just gets the literal SAME
+            -- circleX/Z/radius. Each still gets its OWN nativeRange
+            -- captured, so IsPointInConfiguredZone can correctly reject
+            -- anything outside THAT unit's own reach even though the
+            -- shared circle itself is identical for the whole group.
+            local linkedCount = 0
+            if ok and group and #group > 1 then
+                for i = 1, #group do
+                    local otherID = group[i]
+                    if otherID ~= unitID and spValidUnitID(otherID) then
+                        local otherNativeRange = GetWeaponRange(spGetUnitDefID(otherID))
+                        pendingDraft[otherID] = {
+                            shape = "circle",
+                            circleX = cx,
+                            circleZ = cz,
+                            circleRadius = cr,
+                            nativeRange = otherNativeRange,
+                        }
+                        if DeployDraft(otherID) then
+                            linkedCount = linkedCount + 1
+                        end
+                    end
+                end
+            end
+
+            if ok then
+                if linkedCount > 0 then
+                    spEcho(string.format(
+                        "[Cone-of-Fire] Active on %d units -- shared circle killzone. Fire-at-Will enabled on all of them, restricted to the circle (and each unit's own range).",
+                        linkedCount + 1))
+                else
+                    spEcho("[Cone-of-Fire] Active -- Fire-at-Will enabled, restricted to the circle killzone.")
+                end
+            end
+        elseif button == 3 then
+            -- Mirrors the cone's RMB-steps-back convention below: back to
+            -- the cone's angle step first, a second right-click (now in
+            -- MODE_ANGLE) cancels for real.
+            mode = MODE_ANGLE
+            spEcho("[Cone-of-Fire] Back to cone -- scroll wheel to adjust, left-click to set. Right-click again to cancel entirely.")
         end
         return true
     elseif mode == MODE_RANGE then
@@ -1867,7 +2700,7 @@ function widget:MousePress(mx, my, button)
                             if ox then
                                 local nativeRange = GetWeaponRange(spGetUnitDefID(otherID))
                                 local oAngle, oHalfWidth, oRangeCap = DeriveLinkedCone(ox, oz, nativeRange, lx, lz, rx, rz)
-                                pendingDraft[otherID] = { angle = oAngle, halfWidth = oHalfWidth, rangeCap = oRangeCap }
+                                pendingDraft[otherID] = { shape = "cone", angle = oAngle, halfWidth = oHalfWidth, rangeCap = oRangeCap }
                                 if DeployDraft(otherID) then
                                     linkedCount = linkedCount + 1
                                 end
@@ -1949,22 +2782,12 @@ function widget:MousePress(mx, my, button)
                     return true
                 end
 
-                -- build zo: the "?" button -- toggles the controls-help
-                -- panel (see DrawControlsHelpPanel). No Ctrl needed, and
-                -- unlike "X" this never touches the unit's config at all.
-                local hx1, hy1, hx2, hy2 = GetHelpScreenRect(unitID)
-                if hx1 and mx >= hx1 and mx <= hx2 and my >= hy1 and my <= hy2 then
-                    showControlsHelp = not showControlsHelp
-                    -- build zp, per the user ("make that position aware"):
-                    -- remember where THIS "?" was on screen so the panel
-                    -- opens next to it instead of always the same fixed
-                    -- spot -- see DrawControlsHelpPanel for the clamping
-                    -- that keeps it fully on screen from any anchor.
-                    helpPanelAnchorX, helpPanelAnchorY = (hx1 + hx2) * 0.5, (hy1 + hy2) * 0.5
-                    spEcho("[Cone-of-Fire] Controls help " ..
-                        (showControlsHelp and "shown -- click any \"?\" again to close it." or "closed."))
-                    return true
-                end
+                -- build zo: used to hit-test a per-unit "?" button here --
+                -- removed in build zz21 along with the button itself; the
+                -- controls-help panel now only opens via /conefiretooltip
+                -- (ConeFireTooltipToggle) or closes via its own "X" (see
+                -- widget:MousePress's top, checked before this whole
+                -- per-unit block runs).
             end
         end
 
@@ -2003,6 +2826,26 @@ function widget:MousePress(mx, my, button)
     end
 
     return false
+end
+
+-- build zz23: the other two-thirds of the panel-drag gesture started by
+-- widget:MousePress above -- once MousePress returns true for the title
+-- bar, the engine routes the rest of this same mouse-down gesture (every
+-- move, then the eventual release) back to THIS widget specifically,
+-- regardless of what's under the cursor by then, which is exactly what a
+-- drag needs (the cursor often ends up over map terrain, other UI, etc.
+-- by the time the drag finishes).
+function widget:MouseMove(mx, my, dx, dy, button)
+    if not helpPanelDragging then return false end
+    helpPanelOffsetX = helpPanelOffsetX + dx
+    helpPanelOffsetY = helpPanelOffsetY + dy
+    return true
+end
+
+function widget:MouseRelease(mx, my, button)
+    if not helpPanelDragging then return false end
+    helpPanelDragging = false
+    return true
 end
 
 function widget:KeyPress(key, mods, isRepeat)
@@ -2112,17 +2955,75 @@ end
 -- (STOP_ECHO_THROTTLE_FRAMES itself now lives in the USER-TWEAKABLE
 -- SETTINGS block near the top of this file.)
 
--- Finds the closest enemy or neutral unit this widget can CURRENTLY see
--- (Spring.GetUnitsInCylinder only ever returns units the local team
+-- build zz7: shape-aware "is this world point a valid target spot for this
+-- unit's config" check, shared by FindBestLiveTargetInCone below and the
+-- ghost-memory fallback in EnforceArcOnUnit -- previously each did its own
+-- inline bearing/halfWidth/rangeCap check; factored out so both handle the
+-- new circle shape identically instead of duplicating the branch twice.
+-- For a cone: unchanged logic (distance <= rangeCap, bearing within
+-- halfWidth of angle). For a circle: the point has to sit within
+-- cfg.circleRadius of the circle's own world center (cfg.circleX/Z) --
+-- unrelated to this unit's facing/bearing at all, that's the whole point
+-- of the shape -- AND within THIS unit's own native weapon range from its
+-- current position (cfg.nativeRange, captured at deploy time), since a
+-- shared circle in a linked group isn't necessarily within reach of every
+-- linked unit the way a cone (whose rangeCap is always derived/clamped per
+-- unit) always is.
+local function IsPointInConfiguredZone(cfg, ux, uz, px, pz)
+    if cfg.shape == "circle" then
+        if cfg.nativeRange and cfg.nativeRange > 0 then
+            local dx, dz = px - ux, pz - uz
+            if math.sqrt(dx * dx + dz * dz) > cfg.nativeRange then return false end
+        end
+        local cdx, cdz = px - cfg.circleX, pz - cfg.circleZ
+        return math.sqrt(cdx * cdx + cdz * cdz) <= cfg.circleRadius
+    else
+        local dx, dz = px - ux, pz - uz
+        local dist = math.sqrt(dx * dx + dz * dz)
+        if dist > cfg.rangeCap then return false end
+        local bearing = BearingTo(ux, uz, px, pz)
+        local diff = NormalizeAngle(bearing - cfg.angle)
+        return math.abs(diff) <= cfg.halfWidth
+    end
+end
+
+-- build zz18, per the user ("should it start shooting the structures that
+-- are more important say a advance fusion vs bot... sorts all units via
+-- LOS/memory and shoots the costlier structures or units first"): a rough
+-- "how valuable is this target" heuristic -- each unit's own build cost
+-- (metal + energy) straight from its UnitDef. Deliberately simple: no
+-- per-unit HP/DPS lookups or a hand-maintained priority list to keep in
+-- sync with every unit mod adds -- cost alone already puts an Advanced
+-- Fusion Reactor (or any other expensive structure) well above a cheap
+-- bot, which is the actual case the user described.
+local function GetTargetValue(unitDefID)
+    local ud = UnitDefs[unitDefID]
+    if not ud then return 0 end
+    return (ud.metalCost or 0) + (ud.energyCost or 0)
+end
+
+-- Finds the highest-VALUE enemy or neutral unit this widget can CURRENTLY
+-- see (Spring.GetUnitsInCylinder only ever returns units the local team
 -- currently has in LOS or on radar -- confirmed from
 -- rts/Lua/LuaUtils.cpp::IsUnitVisible -- so this can't leak fog-of-war
--- information) sitting inside the cone+range. Returns the target's unit
--- ID and position, or nil if nothing currently qualifies.
+-- information) sitting inside the cone+range (or, build zz7, the circle
+-- killzone). build zz18: ranks candidates by GetTargetValue (highest
+-- first) instead of picking the closest one -- distance is now only the
+-- tie-breaker between two equally-valuable targets. Returns the target's
+-- unit ID and position, or nil if nothing currently qualifies.
 local function FindBestLiveTargetInCone(unitID, cfg, ux, uz)
     local myTeam = Spring.GetUnitTeam(unitID)
-    local nearby = Spring.GetUnitsInCylinder(ux, uz, cfg.rangeCap)
+    -- build zz7: a circle's search area is centered on the CIRCLE, not the
+    -- shooter -- GetUnitsInCylinder just needs a superset to narrow down
+    -- from; IsPointInConfiguredZone below does the exact/authoritative
+    -- check (including, for a circle, this unit's own native-range reach).
+    local queryX, queryZ, queryRadius = ux, uz, cfg.rangeCap
+    if cfg.shape == "circle" then
+        queryX, queryZ, queryRadius = cfg.circleX, cfg.circleZ, cfg.circleRadius
+    end
+    local nearby = Spring.GetUnitsInCylinder(queryX, queryZ, queryRadius)
     if not nearby then return nil end
-    local bestID, bestX, bestY, bestZ, bestDist
+    local bestID, bestX, bestY, bestZ, bestDist, bestValue
     for i = 1, #nearby do
         local otherID = nearby[i]
         if otherID ~= unitID then
@@ -2131,17 +3032,18 @@ local function FindBestLiveTargetInCone(unitID, cfg, ux, uz)
             -- (both are valid targets) while excluding our own team/allies.
             if otherTeam and myTeam and not Spring.AreTeamsAllied(myTeam, otherTeam) then
                 local ox, oy, oz = spGetUnitPosition(otherID)
-                if ox then
+                if ox and IsPointInConfiguredZone(cfg, ux, uz, ox, oz) then
                     local dx, dz = ox - ux, oz - uz
                     local dist = math.sqrt(dx * dx + dz * dz)
-                    if dist <= cfg.rangeCap then
-                        local bearing = BearingTo(ux, uz, ox, oz)
-                        local diff = NormalizeAngle(bearing - cfg.angle)
-                        if math.abs(diff) <= cfg.halfWidth then
-                            if not bestDist or dist < bestDist then
-                                bestID, bestX, bestY, bestZ, bestDist = otherID, ox, oy, oz, dist
-                            end
-                        end
+                    local value = GetTargetValue(spGetUnitDefID(otherID))
+                    -- Highest value wins outright; among equally-valuable
+                    -- targets (most often two of the same unit type), the
+                    -- closest one wins, same tie-break rule the old
+                    -- closest-only logic used throughout.
+                    if not bestID or value > bestValue
+                        or (value == bestValue and dist < bestDist) then
+                        bestID, bestX, bestY, bestZ, bestDist, bestValue =
+                            otherID, ox, oy, oz, dist, value
                     end
                 end
             end
@@ -2187,14 +3089,9 @@ local function EnforceArcOnUnit(unitID, cfg, n)
     else
         local ghost = ghostContact[unitID]
         if ghost and (n - ghost.frame) < GHOST_MEMORY_FRAMES then
-            local dx, dz = ghost.x - ux, ghost.z - uz
-            local dist = math.sqrt(dx * dx + dz * dz)
-            if dist <= cfg.rangeCap then
-                local bearing = BearingTo(ux, uz, ghost.x, ghost.z)
-                local diff = NormalizeAngle(bearing - cfg.angle)
-                if math.abs(diff) <= cfg.halfWidth then
-                    wantKind, wantX, wantY, wantZ = "ground", ghost.x, ghost.y, ghost.z
-                end
+            -- build zz7: shape-aware now -- see IsPointInConfiguredZone.
+            if IsPointInConfiguredZone(cfg, ux, uz, ghost.x, ghost.z) then
+                wantKind, wantX, wantY, wantZ = "ground", ghost.x, ghost.y, ghost.z
             end
         end
     end
@@ -2322,6 +3219,41 @@ local function DrawGroundWedgeOutline(ux, uy, uz, angle, halfWidth, radius, r, g
     end)
 end
 
+-- build zz7: full-circle counterparts to the two wedge drawers above, for
+-- the circle killzone shape. Same ground-conforming triangle-fan/line-loop
+-- technique, just without a wedge's apex-and-two-straight-edges (a full
+-- circle has no "apex" to draw lines to -- (cx,cz) is its own center, not
+-- a shooter's position the boundary radiates from).
+local function DrawGroundCircle(cx, cy, cz, radius, r, g, b, a, segments)
+    segments = segments or 32
+    glColor(r, g, b, a)
+    glBeginEnd(GL_TRIANGLE_FAN, function()
+        glVertex(cx, cy + 4, cz)
+        for i = 0, segments do
+            local t = (2 * math.pi) * (i / segments)
+            local px = cx + math.sin(t) * radius
+            local pz = cz + math.cos(t) * radius
+            local py = (spGetGroundHeight(px, pz) or cy) + 4
+            glVertex(px, py, pz)
+        end
+    end)
+end
+
+local function DrawGroundCircleOutline(cx, cy, cz, radius, r, g, b, a, segments)
+    segments = segments or 32
+    glColor(r, g, b, a)
+    glLineWidth(1.5)
+    glBeginEnd(GL_LINE_LOOP, function()
+        for i = 0, segments - 1 do
+            local t = (2 * math.pi) * (i / segments)
+            local px = cx + math.sin(t) * radius
+            local pz = cz + math.cos(t) * radius
+            local py = (spGetGroundHeight(px, pz) or cy) + 5
+            glVertex(px, py, pz)
+        end
+    end)
+end
+
 -- 2026-09-02 (build j): the user's latest screenshot hand-drew "up" and
 -- "right" arrows from their unit and concluded the actual cone (logged as
 -- center=45, half-width=45) didn't match -- reasoning from screen-relative
@@ -2437,6 +3369,22 @@ function widget:DrawWorldPreUnit()
                 DrawGroundWedge(ux, uy, uz, ang, hw, radius, tr, tg, tb, 0.18)
                 DrawGroundWedgeOutline(ux, uy, uz, ang, hw, radius, tr, tg, tb, 0.9)
                 DrawAngleLine(ux, uy, uz, ang, radius, 1.0, 0.6, 0.0, 0.95, 2.5)
+            elseif mode == MODE_CIRCLE then
+                -- build zz7: distinct tint from the cone (yellow/cyan) so a
+                -- screenshot makes it obvious at a glance which shape a
+                -- unit is using. Also draws a dim reference ring at the
+                -- unit's own max weapon range -- the boundary the circle
+                -- is clamped inside of (see widget:Update/MouseWheel and
+                -- the user's own diagram: the circle's edge must never
+                -- cross this line). No linked-group preview needed here,
+                -- unlike the cone above -- a circle isn't anchored to any
+                -- one shooter's position, so the single circle drawn IS
+                -- exactly what every linked unit will also get.
+                local ccx, ccz = previewCircleX, previewCircleZ
+                local ccy = spGetGroundHeight(ccx, ccz) or uy
+                DrawGroundCircleOutline(ux, uy, uz, modeNativeRange, 1.0, 1.0, 1.0, 0.35)
+                DrawGroundCircle(ccx, ccy, ccz, previewCircleRadius, 0.75, 0.25, 0.85, 0.22)
+                DrawGroundCircleOutline(ccx, ccy, ccz, previewCircleRadius, 0.75, 0.25, 0.85, 0.9)
             end
 
             -- build zf, per the user ("if i choose 2+ ragnaroks can show
@@ -2471,15 +3419,39 @@ function widget:DrawWorldPreUnit()
         end
     end
 
-    -- Persistent cones for already-configured units.
+    -- Persistent cones/circles for already-configured units.
     for unitID, cfg in pairs(arcConfig) do
         if spValidUnitID(unitID) and unitID ~= modeUnitID and ShouldShowConeGui(unitID, cfg) then
             local ux, uy, uz = spGetUnitPosition(unitID)
             if ux then
-                if cfg.enabled then
-                    DrawGroundWedgeOutline(ux, uy, uz, cfg.angle, cfg.halfWidth, cfg.rangeCap, 0.2, 1.0, 0.3, 0.55)
-                    DrawAngleLine(ux, uy, uz, cfg.angle, cfg.rangeCap, 1.0, 0.6, 0.0, 0.85, 2.0)
+                -- build zz7: the aim-sweep wedge below is shape-agnostic
+                -- except for its radius argument -- a cone reaches the
+                -- same distance as the cone itself (cfg.rangeCap), but a
+                -- circle killzone sits at its own separate world spot, not
+                -- around the shooter, so cfg.circleRadius wouldn't mean
+                -- the same thing here -- falls back to the short fixed
+                -- AIM_SWEEP_RADIUS instead, same as it always did before
+                -- any cfg.rangeCap was available.
+                local sweepRadius = (cfg.shape == "circle") and AIM_SWEEP_RADIUS or (cfg.rangeCap or AIM_SWEEP_RADIUS)
 
+                if cfg.shape == "circle" then
+                    local ccx, ccz = cfg.circleX, cfg.circleZ
+                    local ccy = spGetGroundHeight(ccx, ccz) or uy
+                    if cfg.enabled then
+                        DrawGroundCircleOutline(ccx, ccy, ccz, cfg.circleRadius, 0.2, 1.0, 0.3, 0.55)
+                    else
+                        DrawGroundCircleOutline(ccx, ccy, ccz, cfg.circleRadius, 0.6, 0.6, 0.6, 0.3)
+                    end
+                else
+                    if cfg.enabled then
+                        DrawGroundWedgeOutline(ux, uy, uz, cfg.angle, cfg.halfWidth, cfg.rangeCap, 0.2, 1.0, 0.3, 0.55)
+                        DrawAngleLine(ux, uy, uz, cfg.angle, cfg.rangeCap, 1.0, 0.6, 0.0, 0.85, 2.0)
+                    else
+                        DrawGroundWedgeOutline(ux, uy, uz, cfg.angle, cfg.halfWidth, cfg.rangeCap, 0.6, 0.6, 0.6, 0.3)
+                    end
+                end
+
+                if cfg.enabled then
                     -- build zs: only while this widget actually has the
                     -- unit commanded to attack something (see
                     -- EnforceArcOnUnit/currentActionKind) AND has a
@@ -2492,7 +3464,34 @@ function widget:DrawWorldPreUnit()
                     -- being tracked even while hidden and the wedge picks
                     -- up mid-turn instantly if toggled back on.
                     local kind = currentActionKind[unitID]
-                    local simAngle = showAimSweepWedge and simulatedAimAngle[unitID]
+                    -- build zz8, per the user ("wedges are broken since
+                    -- these are circles now"): a circle killzone has no
+                    -- angular front -- a target inside it can sit at any
+                    -- bearing from the unit, not confined to a narrow arc
+                    -- the way a cone constrains it, and sweepRadius falls
+                    -- back to the short fixed AIM_SWEEP_RADIUS for circles
+                    -- (see above) rather than reaching out to where the
+                    -- circle itself sits -- so the aim-sweep wedge it drew
+                    -- looked disconnected/broken (jumping to wide, semi-
+                    -- random angles right next to the unit). Hard-
+                    -- suppressed for circle configs regardless of
+                    -- showAimSweepWedge/-conefirewedge -- this isn't a
+                    -- display preference to toggle, it's just not a
+                    -- meaningful visualization for this shape. Cone configs
+                    -- are completely unaffected; /conefirewedge still
+                    -- controls those exactly as before.
+                    -- build zz9, per the user ("no wedges since thats post
+                    -- firing anyway and default suppose to not show
+                    -- overlay after firing"): also hard-suppressed
+                    -- whenever low-key mode is on, regardless of
+                    -- /conefirewedge's own setting.
+                    -- build zz17: showWedgeOverride (/conefirewedges) is a
+                    -- personal escape hatch out of just this suppression --
+                    -- once it's true, low-key mode no longer blocks the
+                    -- wedge, and it goes back to following showAimSweepWedge
+                    -- (/conefirewedge) normally, same as if low-key mode
+                    -- weren't on.
+                    local simAngle = showAimSweepWedge and (not lowKeyMode or showWedgeOverride) and cfg.shape ~= "circle" and simulatedAimAngle[unitID]
                     if (kind == "unit" or kind == "ground") and simAngle then
                         local targetAngle
                         if kind == "unit" then
@@ -2509,11 +3508,9 @@ function widget:DrawWorldPreUnit()
                             -- build zu: reach the same distance as the
                             -- main cone (green wedge / orange center
                             -- line) instead of a short fixed radius.
-                            DrawAimSweep(ux, uy, uz, simAngle, targetAngle, cfg.rangeCap or AIM_SWEEP_RADIUS)
+                            DrawAimSweep(ux, uy, uz, simAngle, targetAngle, sweepRadius)
                         end
                     end
-                else
-                    DrawGroundWedgeOutline(ux, uy, uz, cfg.angle, cfg.halfWidth, cfg.rangeCap, 0.6, 0.6, 0.6, 0.3)
                 end
             end
         end
@@ -2601,6 +3598,21 @@ local function SeparateLabels(labels)
 end
 
 local function DrawAngleReferenceLabels()
+    -- build zz9: every single thing this function draws is a numeric
+    -- degree/radius text label -- the live setup-time readout (cone width,
+    -- circle radius) AND the persistent post-deploy readout, for both
+    -- shapes -- exactly what low-key mode is supposed to strip out
+    -- unconditionally, "no matter what part of the procedure" per the
+    -- user. One early return covers all of it; the wedge/circle OUTLINE
+    -- these labels sit next to is drawn elsewhere (DrawWorldPreUnit) and
+    -- is untouched by this.
+    -- build zz17: showDegreesOverride (/conefiredegrees) is a personal
+    -- escape hatch out of just this suppression -- skips the early return
+    -- entirely, bringing every label above back exactly as if low-key mode
+    -- weren't on, while outline/wedge/"?" stay governed by their own
+    -- separate overrides.
+    if lowKeyMode and not showDegreesOverride then return end
+
     local function labelFor(ux, uy, uz, angle, halfWidth)
         local labels = {}
 
@@ -2684,7 +3696,10 @@ local function DrawAngleReferenceLabels()
         end
     end
 
-    if mode ~= MODE_NONE and modeUnitID and spValidUnitID(modeUnitID) then
+    -- build zz7: these two cone/angle labels don't apply to MODE_CIRCLE
+    -- (no angle/cone-width to report) -- its own live radius readout is
+    -- drawn separately, right below, next to the circle itself.
+    if mode ~= MODE_NONE and mode ~= MODE_CIRCLE and modeUnitID and spValidUnitID(modeUnitID) then
         local ux, uy, uz = spGetUnitPosition(modeUnitID)
         if ux then
             local angle, halfWidth
@@ -2698,13 +3713,29 @@ local function DrawAngleReferenceLabels()
             end
             labelFor(ux, uy, uz, angle, halfWidth)
         end
+    elseif mode == MODE_CIRCLE and modeUnitID and spValidUnitID(modeUnitID) then
+        -- Live "Rnnn" readout at the circle's own center, mirroring the
+        -- cone's live width label -- updates every frame while resizing.
+        local csx, csy, csz = spWorldToScreenCoords(previewCircleX,
+            spGetGroundHeight(previewCircleX, previewCircleZ) or 0, previewCircleZ)
+        if csx and not (csz and csz < 0) then
+            glColor(1.0, 1.0, 1.0, 0.95)
+            glText(string.format("R%.0f", previewCircleRadius), csx, csy, 13, "c")
+        end
     end
 
     for unitID, cfg in pairs(arcConfig) do
-        if cfg.enabled and unitID ~= modeUnitID and spValidUnitID(unitID) and ShouldShowConeGui(unitID, cfg) then
+        if cfg.enabled and cfg.shape ~= "circle" and unitID ~= modeUnitID and spValidUnitID(unitID) and ShouldShowConeGui(unitID, cfg) then
             local ux, uy, uz = spGetUnitPosition(unitID)
             if ux then
                 labelFor(ux, uy, uz, cfg.angle, cfg.halfWidth)
+            end
+        elseif cfg.enabled and cfg.shape == "circle" and unitID ~= modeUnitID and spValidUnitID(unitID) and ShouldShowConeGui(unitID, cfg) then
+            local csx, csy, csz = spWorldToScreenCoords(cfg.circleX,
+                spGetGroundHeight(cfg.circleX, cfg.circleZ) or 0, cfg.circleZ)
+            if csx and not (csz and csz < 0) then
+                glColor(1.0, 1.0, 1.0, 0.95)
+                glText(string.format("R%.0f", cfg.circleRadius), csx, csy, 13, "c")
             end
         end
     end
@@ -2715,11 +3746,14 @@ local function DrawSetupPrompt()
     if mode == MODE_NONE then return end
     local msg
     if mode == MODE_ANGLE then
-        msg = string.format("Cone-of-Fire: scroll wheel to adjust width (%.0f deg), left-click to set",
+        msg = string.format("Cone-of-Fire: scroll wheel to adjust width (%.0f deg), left-click to set. Ctrl+left-click for a circle instead.",
             math.deg(previewHalfWidth) * 2)
     elseif mode == MODE_RANGE then
         msg = string.format("Cone-of-Fire: move mouse to set range (%.0f), left-click to activate",
             previewRangeCap)
+    elseif mode == MODE_CIRCLE then
+        msg = string.format("Cone-of-Fire: circle killzone -- move mouse to position, scroll wheel to resize (%.0f), left-click to set",
+            previewCircleRadius)
     end
     if msg then
         local vsx, vsy = Spring.GetViewGeometry()
@@ -2757,6 +3791,12 @@ end
 --      of sim frame rate or game speed.
 local function DrawConeCursorIcon()
     if mode == MODE_NONE then return end
+    -- build zz17: showCursorIconOverride (/conefirecursor) is a personal
+    -- escape hatch out of low-key mode's suppression of the animated
+    -- cursor icon and the "Cone"/"Range"/"Circle" stage label during
+    -- setup. Off by default (low-key mode default hides both), and
+    -- reset to false whenever /conefiredefault runs.
+    if lowKeyMode and not showCursorIconOverride then return end
     local mx, my = spGetMouseState()
     if not mx then return end
 
@@ -2768,7 +3808,7 @@ local function DrawConeCursorIcon()
     -- icon (which sits off to the side via CONE_ICON_OFFSET_X/Y). Drawn
     -- from the RAW mouse position, before the icon's own glTranslate
     -- below, since it's anchored to the cursor itself, not the icon.
-    local stageLabel = (mode == MODE_ANGLE) and "Cone" or (mode == MODE_RANGE) and "Range" or nil
+    local stageLabel = (mode == MODE_ANGLE) and "Cone" or (mode == MODE_RANGE) and "Range" or (mode == MODE_CIRCLE) and "Circle" or nil
     if stageLabel then
         glColor(1, 1, 1, 0.95)
         glText(stageLabel, mx, my + CURSOR_MODE_LABEL_OFFSET_Y, 13, "c")
@@ -2826,20 +3866,12 @@ local function DrawToggleSwitches()
                 glText("X", (rx1 + rx2) * 0.5, ry1 + 4, 11, "c")
             end
 
-            -- build zo: the "?" (help) button, right next to "X".
-            local hx1, hy1, hx2, hy2 = GetHelpScreenRect(unitID)
-            if hx1 then
-                glColor(0.1, 0.3, 0.55, 0.9)
-                glRect(hx1, hy1, hx2, hy2)
-                glColor(0, 0, 0, 0.8)
-                glLineWidth(1)
-                glBeginEnd(GL_LINE_LOOP, function()
-                    glVertex(hx1, hy1, 0); glVertex(hx2, hy1, 0)
-                    glVertex(hx2, hy2, 0); glVertex(hx1, hy2, 0)
-                end)
-                glColor(1, 1, 1, 1)
-                glText("?", (hx1 + hx2) * 0.5, hy1 + 3, 11, "c")
-            end
+            -- build zo: used to draw a "?" (help) button here, right next
+            -- to "X" -- removed in build zz21 (see the note near
+            -- REMOVE_BUTTON_GROUND_MARGIN/HELP_W's old declaration above):
+            -- a "?" on every single configured unit was clutter once more
+            -- than one or two were on screen. /conefiretooltip now opens
+            -- the same reference panel from chat instead.
         end
     end
     glColor(1, 1, 1, 1)
@@ -2856,10 +3888,30 @@ local HELP_PANEL_PADDING = 12
 local HELP_PANEL_FONT_SIZE = 13
 local HELP_PANEL_LINE_H = 17
 local HELP_PANEL_ROW_GAP = 5      -- extra vertical space between rows
-local HELP_PANEL_COL1_W = 150     -- column 1 ("label") fixed width, px
-local HELP_PANEL_COL_GAP = 14     -- gap between column 1 and column 2
-local HELP_PANEL_COL2_W = 380     -- column 2 ("desc") wrap width, px
-local HELP_PANEL_MARGIN = 8       -- kept this far from every screen edge
+local HELP_PANEL_COL1_W = 150     -- label column's fixed width, px (per block, see HELP_PANEL_BLOCKS)
+local HELP_PANEL_COL_GAP = 14     -- gap between a block's label and its own description
+local HELP_PANEL_COL2_W = 300     -- description column's wrap width, px (per block)
+local HELP_PANEL_MARGIN = 8       -- kept this far from the LEFT/RIGHT/BOTTOM screen edges
+-- build zz22, per the user (screenshot: with 19 rows in one tall label|
+-- desc column, the panel towered over the whole 1080p screen and got
+-- pushed up so far it landed behind BAR's own top HUD bar, hiding the
+-- title and the close "X" entirely -- "way too big and i can't even
+-- close it via X the top bar is blocking me"; then "make it into several
+-- columns? landscape orientation"): the TOP edge gets its own, larger
+-- margin -- BAR's default resource bar sits roughly in this range at
+-- common UI scales, and a plain 8px margin (fine for the other three
+-- edges) put the panel right underneath it. Raise this if the panel's
+-- title/close button ever still end up covered on a particular setup.
+local HELP_PANEL_TOP_MARGIN = 70
+-- build zz22: the label|desc rows are now split into this many side-by-
+-- side BLOCKS (landscape layout, "several columns" per the user) instead
+-- of one single tall column -- cuts the panel's height by roughly this
+-- factor since each block only holds ~1/HELP_PANEL_BLOCKS of the rows.
+-- 3 fits comfortably within a 1920x1080 (and wider) viewport alongside
+-- HELP_PANEL_COL2_W's per-block width above; lower this back toward 1 on
+-- a narrower/smaller screen if three blocks ever run off the sides.
+local HELP_PANEL_BLOCKS = 3
+local HELP_PANEL_BLOCK_GAP = 26   -- horizontal gap between blocks, px
 local HELP_PANEL_CLOSE_SIZE = 16  -- the upper-right "X" close button, px
 
 -- Greedy word-wrap using the same gl.GetTextWidth technique as the angle-
@@ -2888,56 +3940,105 @@ end
 -- build zp: CONTROLS_HELP_ROWS is static, so each row's description only
 -- actually gets wrapped once (the first time the panel is opened) and
 -- cached here -- cheap enough not to matter, but no reason to redo it
--- every single frame the panel happens to stay open.
-local cachedHelpRows
-local function GetHelpRows()
-    if cachedHelpRows then return cachedHelpRows end
-    local out = {}
-    for i = 1, #CONTROLS_HELP_ROWS do
-        local row = CONTROLS_HELP_ROWS[i]
-        out[#out + 1] = {
-            label = row.label,
-            descLines = WrapHelpLine(row.desc, HELP_PANEL_COL2_W, HELP_PANEL_FONT_SIZE),
-        }
+-- every single frame the panel happens to stay open. build zz22: now
+-- splits the flat row list into HELP_PANEL_BLOCKS side-by-side groups
+-- (see its own declaration above) instead of returning one long list --
+-- rows are handed out round-robin-by-count (block 1 gets the first
+-- ceil(N/BLOCKS) rows, and so on), not balanced by actual wrapped height,
+-- which is a good enough approximation given how close the rows' lengths
+-- already are to each other.
+local cachedHelpBlocks
+local function GetHelpBlocks()
+    if cachedHelpBlocks then return cachedHelpBlocks end
+    local total = #CONTROLS_HELP_ROWS
+    local blocks = {}
+    for b = 1, HELP_PANEL_BLOCKS do blocks[b] = {} end
+    local base = math.floor(total / HELP_PANEL_BLOCKS)
+    local extra = total % HELP_PANEL_BLOCKS
+    local idx = 1
+    for b = 1, HELP_PANEL_BLOCKS do
+        local count = base + ((b <= extra) and 1 or 0)
+        for _ = 1, count do
+            local row = CONTROLS_HELP_ROWS[idx]
+            if row then
+                blocks[b][#blocks[b] + 1] = {
+                    label = row.label,
+                    descLines = WrapHelpLine(row.desc, HELP_PANEL_COL2_W, HELP_PANEL_FONT_SIZE),
+                }
+                idx = idx + 1
+            end
+        end
     end
-    cachedHelpRows = out
-    return out
+    cachedHelpBlocks = blocks
+    return blocks
 end
 
 -- build zo, per the user ("put a '?' next to X and when you click on it a
 -- tooltip showing you all the functions"); build zp added position-
--- awareness ("make that position aware") -- opens next to whichever "?"
--- was actually clicked (helpPanelAnchorX/Y, set in widget:MousePress)
--- instead of one fixed screen spot, then clamps so it always stays fully
--- on screen (within HELP_PANEL_MARGIN of every edge) no matter where on
--- screen that "?" was. Drawn last (on top of everything else in
--- DrawScreen) so it's never obscured. Fixed to the screen, not any
--- particular unit -- there is only ever one panel regardless of which
--- unit's "?" opened it.
+-- awareness, opening next to whichever "?" was actually clicked instead
+-- of one fixed screen spot. build zz21, per the user ("makes every unit
+-- have a ? which is too redundant... make it that if someone types
+-- /conefiretooltip it just shows the tooltip dead center on the
+-- screen"): the per-unit "?" button is gone, so there's no longer a
+-- click position to open "next to" -- this now always centers itself in
+-- the middle of the viewport, full stop.
+--
+-- build zz22, per the user (screenshot at 1920x1080: one single tall
+-- label|desc column, by then 19 rows deep, towered over the entire
+-- screen and got clamped up behind BAR's own top HUD bar -- "way too big
+-- and i can't even close it via X the top bar is blocking me", then
+-- "make it into several columns? landscape orientation"): rows are now
+-- laid out as HELP_PANEL_BLOCKS side-by-side label|desc blocks
+-- (GetHelpBlocks) instead of one column, so the panel grows WIDE instead
+-- of TALL -- a much better fit for a normal widescreen monitor. The top
+-- edge also gets its own larger margin (HELP_PANEL_TOP_MARGIN) so the
+-- title/close button can't end up hidden under the HUD bar again even if
+-- a future row count grows the panel again.
+--
+-- build zz23, per the user (a further screenshot: even the landscape
+-- layout can still clash with a map's minimap or command panel depending
+-- on the map -- "make it draggable so i can move it down a bit... I
+-- depends on the map as well sometimes it shows up bigger", then, after a
+-- first pass added a dedicated title-bar drag handle: "i don't like that
+-- top bar on it, since it's just one whole block i should be able to
+-- click on any spot of that tooltip and drag it"): the dead-center
+-- position above is now just the BASE position -- helpPanelOffsetX/Y
+-- (see its own declaration, dragged by clicking anywhere on the panel,
+-- see widget:MousePress/MouseMove) is added on top of it every frame, so
+-- wherever the panel was last dragged to (this widget load only -- not
+-- persisted, see helpPanelOffsetX's own comment) is where it stays.
 local function DrawControlsHelpPanel()
     if not showControlsHelp then return end
     local vsx, vsy = Spring.GetViewGeometry()
-    local rows = GetHelpRows()
+    local blocks = GetHelpBlocks()
 
     local titleFontSize = 15
-    local panelW = HELP_PANEL_PADDING * 2 + HELP_PANEL_COL1_W + HELP_PANEL_COL_GAP + HELP_PANEL_COL2_W
+    local blockW = HELP_PANEL_COL1_W + HELP_PANEL_COL_GAP + HELP_PANEL_COL2_W
+    local panelW = HELP_PANEL_PADDING * 2 + HELP_PANEL_BLOCKS * blockW + (HELP_PANEL_BLOCKS - 1) * HELP_PANEL_BLOCK_GAP
     local panelH = HELP_PANEL_PADDING * 2 + titleFontSize + 10
-    for i = 1, #rows do
-        panelH = panelH + (#rows[i].descLines) * HELP_PANEL_LINE_H + HELP_PANEL_ROW_GAP
+    for b = 1, #blocks do
+        local blockH = 0
+        local rows = blocks[b]
+        for i = 1, #rows do
+            blockH = blockH + (#rows[i].descLines) * HELP_PANEL_LINE_H + HELP_PANEL_ROW_GAP
+        end
+        if blockH > panelH - (HELP_PANEL_PADDING * 2 + titleFontSize + 10) then
+            panelH = blockH + HELP_PANEL_PADDING * 2 + titleFontSize + 10
+        end
     end
 
-    -- Anchor next to the "?" that was clicked (falls back to screen
-    -- center if none has been clicked yet this load), opening down-and-
-    -- right from it, same convention as gui_eco_graph.lua's own hover
-    -- tooltips -- then clamp fully on screen from there.
-    local anchorX = helpPanelAnchorX or (vsx * 0.5)
-    local anchorY = helpPanelAnchorY or (vsy * 0.5)
-
-    local px1 = anchorX + 16
-    local py2 = anchorY - 10
+    -- Dead center of the viewport, plus wherever the user has dragged it
+    -- to since (0, 0 by default -- see helpPanelOffsetX's declaration).
+    local px1 = (vsx - panelW) * 0.5 + helpPanelOffsetX
     local px2 = px1 + panelW
-    local py1 = py2 - panelH
+    local py1 = (vsy - panelH) * 0.5 + helpPanelOffsetY
+    local py2 = py1 + panelH
 
+    -- Safety-net clamp, for a viewport too small/short to fit the panel at
+    -- true center, AND for a drag that would otherwise pull it partly or
+    -- fully off screen -- keeps it fully on screen either way. The top
+    -- edge uses HELP_PANEL_TOP_MARGIN (bigger, to clear BAR's own HUD
+    -- bar); the other three edges use the smaller HELP_PANEL_MARGIN.
     if px2 > vsx - HELP_PANEL_MARGIN then
         px2 = vsx - HELP_PANEL_MARGIN
         px1 = px2 - panelW
@@ -2950,10 +4051,16 @@ local function DrawControlsHelpPanel()
         py1 = HELP_PANEL_MARGIN
         py2 = py1 + panelH
     end
-    if py2 > vsy - HELP_PANEL_MARGIN then
-        py2 = vsy - HELP_PANEL_MARGIN
+    if py2 > vsy - HELP_PANEL_TOP_MARGIN then
+        py2 = vsy - HELP_PANEL_TOP_MARGIN
         py1 = py2 - panelH
     end
+
+    -- build zz23: the panel's full screen rect -- since ANY click on the
+    -- panel now starts a drag (per the user: "since it's just one whole
+    -- block i should be able to click on any spot of that tooltip and
+    -- drag it"), not just a dedicated title bar -- see widget:MousePress.
+    helpPanelRect = { x1 = px1, y1 = py1, x2 = px2, y2 = py2 }
 
     glColor(1, 1, 1, 0.94)
     glRect(px1, py1, px2, py2)
@@ -2985,25 +4092,40 @@ local function DrawControlsHelpPanel()
     glColor(1, 1, 1, 1)
     glText("X", (cx1 + cx2) * 0.5, cy1 + 3, 11, "c")
 
-    local col1X = px1 + HELP_PANEL_PADDING
-    local col2X = col1X + HELP_PANEL_COL1_W + HELP_PANEL_COL_GAP
-    -- thin divider between the two columns, spanning the full row area
-    glColor(0, 0, 0, 0.15)
-    glBeginEnd(GL_LINES, function()
-        glVertex(col2X - HELP_PANEL_COL_GAP * 0.5, py1 + HELP_PANEL_PADDING * 0.5, 0)
-        glVertex(col2X - HELP_PANEL_COL_GAP * 0.5, py2 - HELP_PANEL_PADDING - titleFontSize - 6, 0)
-    end)
+    local rowsTopY = py2 - HELP_PANEL_PADDING - titleFontSize - 10
+    for b = 1, #blocks do
+        local blockX = px1 + HELP_PANEL_PADDING + (b - 1) * (blockW + HELP_PANEL_BLOCK_GAP)
+        local col1X = blockX
+        local col2X = col1X + HELP_PANEL_COL1_W + HELP_PANEL_COL_GAP
 
-    glColor(0, 0, 0, 1)
-    local ty = py2 - HELP_PANEL_PADDING - titleFontSize - 10
-    for i = 1, #rows do
-        local row = rows[i]
-        glText(row.label, col1X, ty, HELP_PANEL_FONT_SIZE, "l")
-        for j = 1, #row.descLines do
-            glText(row.descLines[j], col2X, ty, HELP_PANEL_FONT_SIZE, "l")
-            ty = ty - HELP_PANEL_LINE_H
+        -- thin divider between this block's label and description columns
+        glColor(0, 0, 0, 0.15)
+        glBeginEnd(GL_LINES, function()
+            glVertex(col2X - HELP_PANEL_COL_GAP * 0.5, py1 + HELP_PANEL_PADDING * 0.5, 0)
+            glVertex(col2X - HELP_PANEL_COL_GAP * 0.5, rowsTopY + HELP_PANEL_LINE_H, 0)
+        end)
+        -- a second, taller divider between this block and the next one
+        -- (skipped after the last block -- nothing to its right)
+        if b < #blocks then
+            local sepX = blockX + blockW + HELP_PANEL_BLOCK_GAP * 0.5
+            glBeginEnd(GL_LINES, function()
+                glVertex(sepX, py1 + HELP_PANEL_PADDING * 0.5, 0)
+                glVertex(sepX, py2 - HELP_PANEL_PADDING - titleFontSize - 6, 0)
+            end)
         end
-        ty = ty - HELP_PANEL_ROW_GAP
+
+        glColor(0, 0, 0, 1)
+        local ty = rowsTopY
+        local rows = blocks[b]
+        for i = 1, #rows do
+            local row = rows[i]
+            glText(row.label, col1X, ty, HELP_PANEL_FONT_SIZE, "l")
+            for j = 1, #row.descLines do
+                glText(row.descLines[j], col2X, ty, HELP_PANEL_FONT_SIZE, "l")
+                ty = ty - HELP_PANEL_LINE_H
+            end
+            ty = ty - HELP_PANEL_ROW_GAP
+        end
     end
     glColor(1, 1, 1, 1)
 end
