@@ -4,7 +4,7 @@
 -- running the latest fix or a stale copy left over from before a reload --
 -- this removes that ambiguity going forward: every future log's very first
 -- line says exactly which build produced the rest of it.
-local WIDGET_BUILD = "2026-09-04zz24"
+local WIDGET_BUILD = "2026-09-10zz25"
 
 function widget:GetInfo()
     return {
@@ -37,8 +37,11 @@ end
 --   killzone instead: a fixed spot anywhere within the unit's own max
 --   range, rather than a wedge in front of it. Move the mouse to position
 --   it, scroll wheel to resize (clamped so the circle's edge never crosses
---   the unit's max-range boundary), left-click to set. Ctrl+Left-click
---   again to switch back to the cone. Requested by C3BO (BAR Discord) for
+--   the unit's max-range boundary), left-click to set -- Ctrl held or not,
+--   it always plops the circle (2026-09-10: this used to toggle back to
+--   the cone if Ctrl was still held on that click, which bit anyone who
+--   naturally keeps Ctrl down through the whole gesture). Right-click to
+--   switch back to the cone instead. Requested by C3BO (BAR Discord) for
 --   locking onto one specific spot/base that phases in/out of LOS without
 --   also engaging unrelated traffic that happens to pass through a cone's
 --   path. Multi-unit linking (above) works the same way -- every linked
@@ -791,6 +794,8 @@ local glPushMatrix = gl.PushMatrix
 local glPopMatrix  = gl.PopMatrix
 local glTranslate  = gl.Translate
 local glGetTextWidth = gl.GetTextWidth -- build u: used to keep the angle-reference labels from overlapping (see DrawAngleReferenceLabels)
+local glDepthTest = gl.DepthTest
+local glDepthMask = gl.DepthMask
 local GL_LINE_LOOP = GL.LINE_LOOP
 local GL_TRIANGLE_FAN = GL.TRIANGLE_FAN
 local GL_LINES = GL.LINES
@@ -1127,7 +1132,7 @@ local helpPanelRect = nil
 local CONTROLS_HELP_ROWS = {
     { label = "Ctrl+C",              desc = "On selected unit(s) (or the Cone-of-Fire command-panel button) -- draw a new cone. Select MULTIPLE first to link them into one shared cone/range." },
     { label = "While aiming",        desc = "Scroll wheel widens/narrows the cone, left-click locks the angle, then move the mouse to set the range, left-click again to activate." },
-    { label = "Ctrl+Left-click",     desc = "While choosing the cone's angle, switches to an alternate CIRCLE killzone instead -- a fixed spot anywhere within the unit's own max range. Move the mouse to position it, scroll wheel to resize (clamped to the unit's max range), left-click to set. Ctrl+Left-click again to switch back to the cone." },
+    { label = "Ctrl+Left-click",     desc = "While choosing the cone's angle, switches to an alternate CIRCLE killzone instead -- a fixed spot anywhere within the unit's own max range. Move the mouse to position it, scroll wheel to resize (clamped to the unit's max range), left-click to set (Ctrl held or not -- it always plops the circle). Right-click to switch back to the cone instead." },
     { label = "Right-click",         desc = "During the RANGE step (or while placing a circle), backs up to the CONE (angle) step to re-adjust it. Right-click again (or Escape twice, any time) -- cancels setup entirely." },
     { label = "\"X\"",               desc = "Remove that unit's cone-of-fire permanently." },
     { label = "Ctrl+Click \"X\"",    desc = "Clear every cone-of-fire config currently on screen at once." },
@@ -2565,7 +2570,7 @@ function widget:MousePress(mx, my, button)
                     previewCircleX, previewCircleZ = ux + dx, uz + dz
                     previewCircleRadius = startRadius
                 end
-                spEcho("[Cone-of-Fire] Circle killzone: move mouse to position, scroll wheel to resize, left-click to set. Ctrl+left-click to switch back to the cone.")
+                spEcho("[Cone-of-Fire] Circle killzone: move mouse to position, scroll wheel to resize, left-click to set. Right-click to switch back to the cone.")
                 return true
             end
             local ux, uy, uz = spGetUnitPosition(modeUnitID)
@@ -2584,16 +2589,22 @@ function widget:MousePress(mx, my, button)
         return true
     elseif mode == MODE_CIRCLE then
         if button == 1 then
-            local _, ctrlHeld = spGetModKeyState()
-            if ctrlHeld then
-                -- Toggle back to the cone -- previewAngle/previewHalfWidth
-                -- were never touched while in MODE_CIRCLE, so they're
-                -- still exactly where they were left, same "no state to
-                -- restore" property as the RMB step-back below.
-                mode = MODE_ANGLE
-                spEcho("[Cone-of-Fire] Back to cone -- scroll wheel to adjust width, left-click to set. Ctrl+left-click to switch to a circle instead.")
-                return true
-            end
+            -- 2026-09-10, per the user: LMB always plops the circle here,
+            -- Ctrl held or not. This used to check spGetModKeyState() and
+            -- treat Ctrl+LMB as "switch back to the cone" instead -- a
+            -- symmetric toggle with the Ctrl+LMB that ENTERS circle mode
+            -- from MODE_ANGLE above. In practice that was a trap: a player
+            -- naturally keeps Ctrl held down through both clicks of the
+            -- same gesture (Ctrl+LMB to switch to the circle, then LMB to
+            -- set it), and if Ctrl was still down for that second click it
+            -- silently bounced back to the cone instead of deploying --
+            -- exactly the "if you're holding ctrl and click LMB, it goes
+            -- back to the cone setup again" bug report. The on-screen
+            -- setup prompt (DrawSetupPrompt, MODE_CIRCLE case) already only
+            -- ever said "left-click to set" -- never mentioned Ctrl -- so
+            -- this brings the actual behavior in line with what it always
+            -- told the player. Right-click (button==3, below) is the
+            -- unchanged, unambiguous way back to the cone step.
             -- Lock the circle in and deploy immediately -- one stage
             -- instead of the cone's two, since position+radius is
             -- everything a circle needs (no separate angle dimension).
@@ -3327,6 +3338,35 @@ local function DrawAimSweep(ux, uy, uz, currentAngle, targetAngle, radius)
 end
 
 function widget:DrawWorldPreUnit()
+    -- 2026-09-10: every cone/circle drawn by this widget (live setup
+    -- preview below, plus the persistent already-configured wedges/
+    -- circles further down) is an informational ground-paint overlay, not
+    -- real terrain geometry -- each ring/wedge is only sampled at
+    -- segments=24/32 points around its arc (and the straight apex-edge/
+    -- centerline/reference lines drawn by DrawAngleLine are just a single
+    -- 2-point segment end to end, no interior sampling at all). On maps
+    -- with sharp elevation changes -- exactly what the user reported
+    -- ("on maps with many mountains... the overlay disappears due to the
+    -- height and angle of the mountains") -- real terrain between those
+    -- sampled/interpolated points can rise above the overlay's own
+    -- surface and win normal depth testing, hiding part or all of it
+    -- right when the player is trying to aim it. This is the identical
+    -- root cause already diagnosed and fixed in this same project for
+    -- `influence_map.lua` (Session 7 -- flat per-cell ground quads let
+    -- undulating dune terrain poke through) and reused verbatim in
+    -- `gui_drawing_tool.lua`'s map stickers -- this widget was the one
+    -- ground-overlay drawer in the project that had never gotten it.
+    -- Fix: disable depth testing and depth writes for this whole
+    -- function's draws (every DrawGroundWedge/-Outline, DrawGroundCircle/
+    -- -Outline and DrawAngleLine/DrawAimSweep call below, for both the
+    -- live setup preview and the persistent configured cones) so they
+    -- read as a flat coat of paint on the ground regardless of terrain
+    -- bumps under the coarse sampling, then restore both immediately
+    -- after so nothing drawn afterward (units, features, etc.) is
+    -- affected.
+    glDepthTest(false)
+    glDepthMask(false)
+
     -- Live preview while configuring.
     if mode ~= MODE_NONE and modeUnitID and spValidUnitID(modeUnitID) then
         local ux, uy, uz = spGetUnitPosition(modeUnitID)
@@ -3516,6 +3556,9 @@ function widget:DrawWorldPreUnit()
         end
     end
     glColor(1, 1, 1, 1)
+
+    glDepthMask(true)
+    glDepthTest(true)
 end
 
 -- Screen-space text labels for the two reference lines drawn above --
