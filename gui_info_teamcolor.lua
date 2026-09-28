@@ -915,6 +915,73 @@ end
 
 TEAMCOLOR_RECOLOR_ENABLED = true -- flip to false to disable without deleting any code
 
+-- TEMP DIAGNOSTIC (2026-09-28): flip to true to visualize which pixels the
+-- shader's hue/saturation gate is actually matching on a live icon, instead
+-- of guessing from offline pixel sampling. When on, every pixel that FAILS
+-- the matchArm/matchCor/matchLeg test is drawn as opaque magenta/cyan
+-- (instead of fully transparent) wherever the source icon itself is opaque
+-- -- so a real in-game screenshot shows exactly what this shader thinks is
+-- or isn't "trim". This is how the too-narrow Legion hue band (see
+-- TEAMCOLOR_RECOLOR_HUE_MAX_LEG below) was actually found and confirmed --
+-- left in place, defaulted off, in case the band needs further tuning later.
+TEAMCOLOR_RECOLOR_DEBUG_MASK = false
+
+-- TEMP DIAGNOSTIC (2026-09-28, armadvsol spatial-restriction orientation):
+-- flip to true to visualize texCoord.t directly instead of any hue/saturation
+-- match -- every icon's pixels are painted RED (top third of the drawn icon,
+-- texCoord.t > 0.667), GREEN (middle third), or BLUE (bottom third),
+-- bypassing all normal recolor logic entirely. Needed because two rounds of
+-- guessing armadvsol's restrictArmVMin/VMax window (see
+-- TEAMCOLOR_RECOLOR_SPATIAL_RESTRICT below) both produced wrong or
+-- inconclusive live results -- this settles, from one screenshot, exactly
+-- which physical part of an icon (as actually rendered on screen) corresponds
+-- to which texCoord.t range, removing the guesswork.
+--
+-- RESULT (2026-09-28): confirmed via a live screenshot of the small info-card
+-- icon -- screen-top showed BLUE (low t), screen-bottom showed RED (high t).
+-- The mapping is DIRECT (t = row_norm of the source DDS, no flip); see the
+-- corrected armadvsol window above. Turned back off now that its job is
+-- done, left in place in case another icon needs the same diagnosis later.
+TEAMCOLOR_RECOLOR_DEBUG_VCOORD = false
+
+-- TEMP DIAGNOSTIC (2026-09-28, corllt/corhllt horizontal-restriction
+-- orientation): flip to true to visualize texCoord.s directly instead of any
+-- hue/saturation match -- every icon's pixels are painted RED (screen-right
+-- third, texCoord.s > 0.667), GREEN (middle third), or BLUE (screen-left
+-- third), bypassing all normal recolor logic entirely. Needed because
+-- TexRectRound's x-coordinate formula (xNorm = (x - px) * invWidth, no "1 -"
+-- flip) is structurally different from its y-coordinate one (which DID have
+-- a "1 -" flip and yet still turned out to map directly) -- so the confirmed
+-- vertical result above does not by itself prove the horizontal direction.
+--
+-- RESULT (2026-09-28): confirmed via a live screenshot -- screen-left showed
+-- BLUE (low s), screen-right showed RED (high s), exactly matching the
+-- shader's original, un-flipped assumption. The mapping is DIRECT, same as
+-- texCoord.t. This means the earlier "flip" correction applied to
+-- corllt/corhllt's hMin/hMax window (see the old TEAMCOLOR_RECOLOR_SPATIAL_
+-- RESTRICT comment, now superseded below) was chasing the wrong theory --
+-- the real problem was never axis orientation, see the
+-- TEAMCOLOR_RECOLOR_LINE_EXCLUDE comment below for what it actually was.
+-- Turned back off now that its job is done, left in place for future use.
+TEAMCOLOR_RECOLOR_DEBUG_HCOORD = false
+
+-- TEMP DIAGNOSTIC (2026-09-28, corllt/corhllt beam-vs-trim boundary): see the
+-- debugCorMaskMode uniform comment in the fragment shader above. Flip to
+-- true to overlay magenta on every pixel the current matchCor condition
+-- (hue, sat, and whatever spatial restriction is live) still lets recolor,
+-- on the real live-rendered icon.
+--
+-- RESULT (2026-09-28): with the (already-flipped) hMin/hMax box live, this
+-- showed the icon almost ENTIRELY solid magenta -- the box was barely
+-- restricting anything, confirming the flip fix never worked. Real pixel
+-- extraction + connected-component clustering (see TEAMCOLOR_RECOLOR_LINE_
+-- EXCLUDE below) showed why: the false-positive beam/blast region and the
+-- legitimate trim region overlap on BOTH texCoord axes, so no axis-aligned
+-- box (in either direction) can separate them -- a diagonal cut is needed.
+-- Turned back off now that the box has been replaced by a line-exclude test;
+-- left in place for future troubleshooting.
+TEAMCOLOR_RECOLOR_DEBUG_CORMASK = false
+
 -- Armada: default cyan-blue trim.
 TEAMCOLOR_RECOLOR_HUE_MIN_ARM = 0.50
 TEAMCOLOR_RECOLOR_HUE_MAX_ARM = 0.66
@@ -924,8 +991,45 @@ TEAMCOLOR_RECOLOR_HUE_MIN_COR = 0.95
 TEAMCOLOR_RECOLOR_HUE_MAX_COR = 0.035
 
 -- Legion: default green trim.
+-- LOCAL MOD (2026-09-28, band-width fix): MAX was 0.37, which turned out to
+-- cut the band off right before the trim's own densest, most saturated
+-- region. Direct pixel analysis of the live legafus.dds (pulled straight out
+-- of the game's asset pool, not a guess) showed a huge, highly-saturated
+-- cluster (median sat 0.6-0.9) sitting at hue 0.34-0.40, mostly ABOVE the
+-- old 0.37 ceiling -- confirmed in-game via a magenta/cyan debug overlay:
+-- EVERY Legion unit's icon was landing 100% outside the hue band (all
+-- magenta, zero cyan), not merely under-saturated. Widened to 0.44 to cover
+-- that whole cluster with margin; still well clear of Armada's band (starts
+-- at 0.50), so there's no new collision risk.
 TEAMCOLOR_RECOLOR_HUE_MIN_LEG = 0.27
-TEAMCOLOR_RECOLOR_HUE_MAX_LEG = 0.37
+TEAMCOLOR_RECOLOR_HUE_MAX_LEG = 0.44
+
+-- Scavengers: default purple trim.
+-- LOCAL MOD (2026-09-28, new band): user reported "Scav Epic Fusion Reactor"
+-- (armafust3_scav, i.e. the Scavenger-side clone of the Armada Adv Fusion
+-- Reactor, built via a runtime unit-duplication gadget for the "_scav"
+-- variant) showing its stock purple trim in the info panel instead of the
+-- player's own team color, even though its real 3D battlefield model
+-- correctly showed team color. Investigated via the same real-asset-pool
+-- extraction methodology as the Legion band-width fix: the "_scav" variant
+-- of a unit does NOT reuse the plain faction buildpic (e.g. ARMAFUS.DDS) --
+-- the shipped archive also carries a wholly separate, Scavenger-specific
+-- buildpic per unit at unitpics/scavengers/<name>.dds (armafust3.dds,
+-- corafust3.dds, legafust3.dds all confirmed present as distinct files/md5s
+-- from their plain-faction counterparts), and it's THAT file the recolor
+-- shader actually samples for a "_scav"-suffixed unitDefID. Pulled and
+-- histogrammed all three real unitpics/scavengers/*.dds files: despite
+-- coming from three different faction models, all three share one common,
+-- highly-saturated purple accent cluster (median hue 0.78-0.82, i.e. this is
+-- a single shared "this is Scavenger tech" palette applied uniformly across
+-- factions, not a per-faction color) -- confirming this needed a genuinely
+-- new 4th band, not a widening of any existing one. Set with margin to cover
+-- the 5th-95th percentile hue range measured across all three real assets
+-- (armafust3_scav ~0.70-0.84, corafust3_scav ~0.75-0.88, legafust3_scav
+-- ~0.75-0.78), while staying clear of Armada's band (ends at 0.66) and
+-- Cortex's band (starts at 0.95).
+TEAMCOLOR_RECOLOR_HUE_MIN_SCAV = 0.68
+TEAMCOLOR_RECOLOR_HUE_MAX_SCAV = 0.90
 
 TEAMCOLOR_RECOLOR_SAT_THRESHOLD = 0.30 -- ignore low-saturation pixels (grays/whites/blacks/shadows)
 
@@ -949,7 +1053,100 @@ teamColorRecolorFragmentShader = [[
 	uniform float refHueMaxCor;
 	uniform float refHueMinLeg;
 	uniform float refHueMaxLeg;
-	uniform float satThreshold;
+	uniform float refHueMinScav;
+	uniform float refHueMaxScav;
+	uniform float satThresholdArm;
+	uniform float satThresholdCor;
+	uniform float satThresholdLeg;
+	uniform float satThresholdScav;
+	// LOCAL MOD (2026-09-28, spatial restriction): see the long comment above
+	// TEAMCOLOR_RECOLOR_SPATIAL_RESTRICT for the full rationale. Defaults to
+	// [0.0, 1.0] (the whole icon, i.e. a no-op) for every unit except ones
+	// with an explicit override -- currently only armadvsol's Armada band.
+	uniform float restrictArmVMin;
+	uniform float restrictArmVMax;
+	// LOCAL MOD (2026-09-28, T1 laser tower false positive): corllt/corhllt's
+	// own Cortex-band red trim and their laser beam's red glow occupy the
+	// same hue/saturation range (unlike armbeamer/armllt's beams, which are a
+	// DIFFERENT faction's hue entirely and so are handled by the sat-threshold
+	// override instead -- see TEAMCOLOR_RECOLOR_SAT_THRESHOLD_OVERRIDE). An
+	// axis-aligned texCoord.s (horizontal) box was tried first and confirmed
+	// NOT to work (see TEAMCOLOR_RECOLOR_DEBUG_CORMASK's RESULT note above) --
+	// real pixel extraction showed the beam/blast region and the legitimate
+	// trim region overlap on both texCoord axes, so no box in either
+	// direction can separate them. Replaced with a linear (diagonal) cut in
+	// (s,t) space instead: a point is EXCLUDED (treated as beam, not trim)
+	// when lineExcludeCorA*s + lineExcludeCorB*t + lineExcludeCorC > 0. Each
+	// unit's a/b/c come from fitting a logistic-regression decision boundary
+	// to real extracted-icon pixels labeled by connected-component cluster
+	// identity -- see TEAMCOLOR_RECOLOR_LINE_EXCLUDE below for the full
+	// methodology and per-unit fit quality. Defaults to a=0, b=0, c=-1 (the
+	// expression is always -1, never > 0, i.e. a no-op) for every unit
+	// without an override.
+	uniform float lineExcludeCorA;
+	uniform float lineExcludeCorB;
+	uniform float lineExcludeCorC;
+	// TEAMCOLOR_RECOLOR_CIRCLE_EXCLUDE (2026-09-28, corllt muzzle blast): a
+	// single linear cut can only bisect a round region, not exclude all of
+	// it -- confirmed by a live screenshot showing corllt's circular muzzle
+	// blast half-recolored (the half on the trim side of the line). Adds a
+	// second, radial exclusion test OR'd with the line test above: a point
+	// is EXCLUDED when its distance from (circleExcludeCorX,
+	// circleExcludeCorY) in (s,t) space is < circleExcludeCorR. Defaults to
+	// circleExcludeCorR=0.0, a no-op (distance is never negative, so
+	// distance < 0 is never true) for every unit without an override -- see
+	// TEAMCOLOR_RECOLOR_CIRCLE_EXCLUDE below for the fitted per-unit values.
+	uniform float circleExcludeCorX;
+	uniform float circleExcludeCorY;
+	uniform float circleExcludeCorR;
+	// TEAMCOLOR_RECOLOR_RESCUE_INCLUDE (2026-09-28, corllt torso-plate wedge):
+	// a small legitimate trim wedge sits close enough to the beam that the
+	// LINE_EXCLUDE fit's diagonal cut (tuned for the head/torso/base-ring
+	// boundary far above it) wrongly clips it too -- confirmed by a live
+	// screenshot circling it, and by re-checking the real extracted icon's
+	// pixels directly: the wedge is excluded by the line even though its
+	// brightness (~0.71) matches legitimate trim, not the beam (~0.96) a few
+	// pixels away. Rather than re-fitting the whole line and risking new
+	// regressions elsewhere, this adds a targeted rescue: a point that would
+	// otherwise be excluded (by the line OR the circle above) is forced back
+	// to "keep" when its distance from (rescueCorX, rescueCorY) is <
+	// rescueCorR. Defaults to rescueCorR=0.0, a no-op (distance is never
+	// negative, so distance < 0 is never true) for every unit without an
+	// override -- see TEAMCOLOR_RECOLOR_RESCUE_INCLUDE below for the fitted
+	// per-unit values.
+	uniform float rescueCorX;
+	uniform float rescueCorY;
+	uniform float rescueCorR;
+	uniform float debugMode;
+	// TEMP DIAGNOSTIC (2026-09-28, armadvsol spatial-restriction orientation):
+	// see TEAMCOLOR_RECOLOR_DEBUG_VCOORD above. When on, every icon's pixels
+	// are painted by a 3-band split of their own texCoord.t, bypassing all
+	// normal recolor logic, so a live screenshot can show definitively which
+	// physical part of an icon (top/middle/bottom on screen) corresponds to
+	// which texCoord.t range -- resolving the orientation question that two
+	// rounds of guessing on armadvsol's vMin/vMax window failed to nail.
+	uniform float debugVCoordMode;
+	// TEMP DIAGNOSTIC (2026-09-28, corllt/corhllt horizontal-restriction
+	// orientation): same idea as debugVCoordMode above, but splits by
+	// texCoord.s (horizontal) instead of .t (vertical) -- RED for the
+	// screen-right third, GREEN for the middle, BLUE for the screen-left
+	// third. Needed because TexRectRound's x-coordinate formula has no "1 -"
+	// flip (unlike its y-coordinate one), so the vertical mapping already
+	// confirmed direct doesn't by itself prove the horizontal one is too.
+	uniform float debugHCoordMode;
+	// TEMP DIAGNOSTIC (2026-09-28, corllt/corhllt beam-vs-trim boundary): the
+	// horizontal-mapping question is settled (debugHCoordMode confirmed a
+	// DIRECT mapping, no flip), but the beam still bled through after both
+	// the original and the flipped window -- meaning this was never really
+	// an orientation problem, and guessing a third window blind risks a
+	// third wrong answer. This paints the REAL icon as-is, but tints any
+	// pixel currently satisfying the FULL matchCor condition (hue, sat, AND
+	// whatever spatial restriction is live -- at the time this was written,
+	// the restrictCorHMin/HMax box; now lineExcludeCorA/B/C, see
+	// TEAMCOLOR_RECOLOR_LINE_EXCLUDE) solid magenta -- so a screenshot shows
+	// exactly which live, real-size, real-mip-blended pixels are being
+	// recolored right now, including whether the beam/blast is among them.
+	uniform float debugCorMaskMode;
 	varying vec2 texCoord;
 
 	vec3 rgb2hsv(vec3 c) {
@@ -975,14 +1172,96 @@ teamColorRecolorFragmentShader = [[
 	}
 
 	void main() {
+		// TEMP DIAGNOSTIC (2026-09-28): see debugVCoordMode above. Short-circuits
+		// everything else -- paints RED for the screen-top third of the icon
+		// (texCoord.t closest to 1, since TexRectRound's yc = 1 - yNorm means
+		// t=1 at the top of the drawn quad and t=0 at the bottom), GREEN for
+		// the middle third, BLUE for the bottom third, so a screenshot directly
+		// shows which physical part of the icon maps to which texCoord.t band.
+		if (debugVCoordMode > 0.5) {
+			if (texCoord.t > 0.6666) {
+				gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+			} else if (texCoord.t > 0.3333) {
+				gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+			} else {
+				gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
+			}
+			return;
+		}
+
+		// TEMP DIAGNOSTIC (2026-09-28): see debugHCoordMode above. RED for the
+		// screen-right third of the icon (texCoord.s closest to 1, if the
+		// x-coordinate mapping turns out direct same as y's did), GREEN for
+		// the middle third, BLUE for the screen-left third.
+		if (debugHCoordMode > 0.5) {
+			if (texCoord.s > 0.6666) {
+				gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+			} else if (texCoord.s > 0.3333) {
+				gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+			} else {
+				gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
+			}
+			return;
+		}
+
 		vec4 texColor = texture2D(tex0, texCoord);
 		vec3 hsv = rgb2hsv(texColor.rgb);
 
-		bool inBand = inHueBand(hsv.x, refHueMinArm, refHueMaxArm)
-			|| inHueBand(hsv.x, refHueMinCor, refHueMaxCor)
-			|| inHueBand(hsv.x, refHueMinLeg, refHueMaxLeg);
+		// LOCAL MOD (2026-09-27, per-band threshold fix): each faction band now
+		// has its OWN saturation gate instead of one shared satThreshold --
+		// see gui_gridmenu_teamcolor.lua's own copy of this shader for the full
+		// rationale (lets a per-unit override suppress just ONE band's false
+		// positive without touching another band's legitimate trim on the
+		// same icon).
+		// LOCAL MOD (2026-09-28, spatial restriction): armadvsol's solar-panel
+		// glass and its leg/connector trim share statistically indistinguishable
+		// hue/saturation/value in the source art (confirmed via real pixel
+		// sampling -- no threshold-based fix can separate them), so the Armada
+		// band additionally gates on texCoord.t (the icon's vertical UV
+		// coordinate) for units with a spatial override. restrictArmVMin/VMax
+		// default to [0.0, 1.0] (full range, i.e. a no-op) for every unit
+		// without one -- see TEAMCOLOR_RECOLOR_SPATIAL_RESTRICT below.
+		bool matchArm = inHueBand(hsv.x, refHueMinArm, refHueMaxArm) && hsv.y >= satThresholdArm
+			&& texCoord.t >= restrictArmVMin && texCoord.t <= restrictArmVMax;
+		// LOCAL MOD (2026-09-28, T1 laser tower false positive): see the
+		// comment above lineExcludeCorA/B/C. Same anti-leak-safe default
+		// (a=0,b=0,c=-1, a no-op) as every other per-band override uniform.
+		bool corLineExclude = (lineExcludeCorA * texCoord.s + lineExcludeCorB * texCoord.t + lineExcludeCorC) > 0.0;
+		// LOCAL MOD (2026-09-28, corllt muzzle blast): see the comment above
+		// circleExcludeCorX/Y/R. Same anti-leak-safe default (r=0, a no-op)
+		// as every other per-band override uniform.
+		float corBlastDist = distance(texCoord, vec2(circleExcludeCorX, circleExcludeCorY));
+		bool corCircleExclude = corBlastDist < circleExcludeCorR;
+		// LOCAL MOD (2026-09-28, corllt torso-plate wedge): see the comment
+		// above rescueCorX/Y/R. Same anti-leak-safe default (r=0, a no-op) as
+		// every other per-band override uniform. Rescue wins over either
+		// exclude test -- it un-excludes, it never excludes something the
+		// other two tests would otherwise have kept.
+		float corRescueDist = distance(texCoord, vec2(rescueCorX, rescueCorY));
+		bool corRescue = corRescueDist < rescueCorR;
+		bool corExcluded = (corLineExclude || corCircleExclude) && !corRescue;
+		bool matchCor = inHueBand(hsv.x, refHueMinCor, refHueMaxCor) && hsv.y >= satThresholdCor
+			&& !corExcluded;
+		bool matchLeg = inHueBand(hsv.x, refHueMinLeg, refHueMaxLeg) && hsv.y >= satThresholdLeg;
+		// LOCAL MOD (2026-09-28): 4th band for Scavenger-tech "_scav" unit
+		// variants, which sample a wholly separate unitpics/scavengers/*.dds
+		// buildpic with its own shared purple accent -- see the comment above
+		// TEAMCOLOR_RECOLOR_HUE_MIN_SCAV for the full investigation.
+		bool matchScav = inHueBand(hsv.x, refHueMinScav, refHueMaxScav) && hsv.y >= satThresholdScav;
 
-		if (inBand && hsv.y >= satThreshold) {
+		// TEMP DIAGNOSTIC: see debugCorMaskMode above. Short-circuits with the
+		// real icon shown as-is, magenta only where matchCor (the live,
+		// currently-deployed condition, restriction included) is true.
+		if (debugCorMaskMode > 0.5) {
+			if (matchCor) {
+				gl_FragColor = vec4(1.0, 0.0, 1.0, texColor.a);
+			} else {
+				gl_FragColor = texColor;
+			}
+			return;
+		}
+
+		if (matchArm || matchCor || matchLeg || matchScav) {
 			// LOCAL MOD (2026-09-27, accuracy fix): also carry over the team
 			// color's own SATURATION, not just its hue -- see the matching
 			// comment in gui_gridmenu_teamcolor.lua's own copy of this
@@ -993,6 +1272,23 @@ teamColorRecolorFragmentShader = [[
 			hsv.x = targetHue;
 			hsv.y = targetSat;
 			gl_FragColor = vec4(hsv2rgb(hsv), texColor.a);
+		} else if (debugMode > 0.5) {
+			// TEMP DIAGNOSTIC round 2: the first pass (flat magenta) showed
+			// the WHOLE legafus icon failing to match -- this splits WHY,
+			// so a screenshot tells us which failure mode we're in without
+			// another guess-and-redeploy cycle:
+			//   CYAN   = hue IS inside the Legion band, but saturation fell
+			//            short of satThresholdLeg (a real threshold/render
+			//            problem -- lower the Legion threshold for this unit)
+			//   MAGENTA = hue isn't in ANY band at all (a hue problem, not a
+			//            saturation problem -- the threshold is irrelevant,
+			//            something upstream of matching is wrong)
+			bool hueInLegBandIgnoringSat = inHueBand(hsv.x, refHueMinLeg, refHueMaxLeg);
+			if (hueInLegBandIgnoringSat) {
+				gl_FragColor = vec4(0.0, 1.0, 1.0, texColor.a);
+			} else {
+				gl_FragColor = vec4(1.0, 0.0, 1.0, texColor.a);
+			}
 		} else {
 			gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
 		}
@@ -1028,15 +1324,332 @@ function rgbToSat(r, g, b)
 	return (maxc - minc) / maxc
 end
 
+-- LOCAL MOD (2026-09-27): per-unit, PER-BAND saturation-threshold override,
+-- identical rationale and data as gui_gridmenu_teamcolor.lua's own copy of
+-- this same table -- see the long comment above that file's
+-- TEAMCOLOR_RECOLOR_SAT_THRESHOLD_OVERRIDE for the full investigation
+-- (real pixel-sampling of LEGAFUS.DDS confirmed the false positive; a full
+-- per-unit EXCLUSION list was tried first and reverted because it also
+-- killed the icon's own legitimate trim recoloring entirely -- "makes the
+-- legion afuses green and it sucks"; a single shared-threshold override was
+-- tried next and also reverted, since raising ONE shared satThreshold still
+-- cut into the legitimate Legion-band trim, and the real in-game render
+-- filtered out far more of it than raw source-pixel sampling predicted --
+-- reported back as the icon still showing fully stock green). The actual
+-- fix gates each hue band with its OWN saturation threshold, so this icon's
+-- Armada-band gate (where the false-positive "electric arc" pixels live) can
+-- be pushed high enough to never match anything, while its Legion-band gate
+-- (the real green trim) stays at the normal shared default -- zero tradeoff,
+-- since there's no legitimate reason for real Armada-hue trim on a Legion
+-- icon in the first place. 1.5 is the "never matches" sentinel value (real
+-- saturation never exceeds 1.0).
+-- LOCAL MOD (2026-09-28, coradvsol/legadvsol false positive): the SAME
+-- shared blue solar-panel material that caused the armadvsol false positive
+-- also appears on Cortex's and Legion's own Advanced Solar Collector icons
+-- (confirmed via real pixel extraction: coradvsol has 264 Armada-hue
+-- saturated pixels, legadvsol has 109 -- both clustered narrowly, unlike
+-- armadvsol's much larger false-positive area). Unlike armadvsol, THESE two
+-- don't need the spatial-restriction mechanism at all: Cortex's own
+-- legitimate trim is red-band (hue 0.95-0.035) and Legion's is green-band
+-- (hue 0.27-0.44), both entirely disjoint from the Armada band (0.50-0.66)
+-- by construction -- so there is no legitimate reason for ANY Armada-hue
+-- pixel to exist on either unit's icon, the same reasoning that justified
+-- the legafus/legafust3 "never matches" sentinel below. Pushing their
+-- Armada-band threshold to 1.5 fully suppresses the false positive with
+-- zero risk to their own (differently-hued) real trim recolor.
+-- LOCAL MOD (2026-09-28, T1 laser tower false positive): armbeamer's laser
+-- beam glow is purple-hued (falls in the SCAV band, meant for the unrelated
+-- Scavenger-tech purple accent -- pure coincidence of hue, armbeamer has
+-- nothing to do with Scavengers) and armllt's laser beam is red-hued (falls
+-- in the COR band -- also pure coincidence, armllt has nothing to do with
+-- Cortex). Confirmed via real pixel extraction + a magenta overlay of each
+-- band's match: both bands' matches land EXACTLY on the beam graphic and
+-- nowhere on the icon's own legitimate (Armada-band) blue trim, so the same
+-- "never matches" sentinel used for legafus/coradvsol/legadvsol fully
+-- suppresses each false positive with zero effect on the real trim recolor.
+TEAMCOLOR_RECOLOR_SAT_THRESHOLD_OVERRIDE = {
+	legafus = { arm = 1.5 },
+	legafust3 = { arm = 1.5 },
+	coradvsol = { arm = 1.5 },
+	legadvsol = { arm = 1.5 },
+	armbeamer = { scav = 1.5 },
+	armllt = { cor = 1.5 },
+}
+
+-- LOCAL MOD (2026-09-28, armadvsol false positive): the Advanced Solar
+-- Collector's solar-panel glass (a fixed blue material property, should
+-- NEVER recolor) and its small leg/connector trim (legitimately should
+-- track team color) occupy the SAME hue/saturation/value range in the
+-- source art -- confirmed via real extracted-pixel percentile analysis
+-- (panel avgHue=0.603/avgSat=0.717/avgVal=0.721 vs legs
+-- avgHue=0.596/avgSat=0.707/avgVal=0.678, effectively indistinguishable).
+-- Every previous false-positive fix in this shader (Legion's legafus arc,
+-- the Scavenger band, etc.) was solvable with hue/saturation alone; this
+-- one isn't, so this is the first band that also gates on WHERE in the
+-- icon a pixel sits: texCoord.t is the icon's vertical UV coordinate.
+--
+-- CORRECTED (2026-09-28, after a first deploy left the icon fully
+-- unrecolored -- neither panel nor legs). A live in-game debug diagnostic
+-- (paint by texCoord.t: red = t>0.667, green = 0.333-0.667, blue = t<0.333)
+-- confirmed the mapping is DIRECT, not flipped: screen-top of the drawn
+-- icon is LOW t, screen-bottom is HIGH t, matching the DDS file's own row
+-- order (row 0 = top of image = low t). So orientation was never the bug.
+-- The real cause: the first window (0.60-0.90) reached back into the
+-- panel's own row range (dense cluster ends sharply at row 163 of 256,
+-- t=0.637) and also included the SPARSEST, lowest-density edge of the legs
+-- cluster (rows 172-191, count 17-49 per 4-row block) -- exactly the kind
+-- of thin, low-saturation-after-downscaling content that BAR's own icon
+-- mip-blur washes out below the saturation gate at actual render size
+-- (the same lesson learned from the Legion hue-band investigation).
+-- Retightened to sit on the legs cluster's DENSEST, most robust rows
+-- (192-207, count 104-241 per 4-row block -- by far the strongest signal
+-- in the whole cluster) with a small margin on each side, and now starts
+-- comfortably clear of the panel's row-163 cutoff.
+-- Every unit without an entry here gets vMin=0.0/vMax=1.0 (full range,
+-- i.e. a complete no-op) so this can never affect any other icon.
+-- LOCAL MOD (2026-09-28, T1 laser tower false positive, corllt/corhllt):
+-- unlike armbeamer/armllt above, corllt's and corhllt's laser beams are RED
+-- -- the SAME hue as their own legitimate Cortex-band trim (confirmed via
+-- real pixel extraction: no saturation or value threshold cleanly separates
+-- the two populations, the same "same-hue" problem armadvsol's panel/legs
+-- had). Two rounds of an axis-aligned texCoord.s (horizontal) box on the COR
+-- band -- first a guessed window, then its mirrored "flip" -- both failed
+-- (confirmed live via TEAMCOLOR_RECOLOR_DEBUG_CORMASK's near-total-magenta
+-- result): real pixel-cluster analysis showed why a box can never work here,
+-- for either unit -- the beam/blast blob's bounding box overlaps the
+-- legitimate trim's bounding box on BOTH texCoord axes. See
+-- TEAMCOLOR_RECOLOR_LINE_EXCLUDE below for the mechanism that replaced it.
+TEAMCOLOR_RECOLOR_SPATIAL_RESTRICT = {
+	armadvsol = { arm = { vMin = 0.68, vMax = 0.84 } },
+}
+
+-- LOCAL MOD (2026-09-28, T1 laser tower false positive, corllt/corhllt --
+-- real fix): replaces the corllt/corhllt entries formerly in
+-- TEAMCOLOR_RECOLOR_SPATIAL_RESTRICT above (removed, see its comment) with a
+-- linear/diagonal cut in (s,t) texture-coordinate space instead of an
+-- axis-aligned box, since the false-positive beam/blast region and the
+-- legitimate trim region overlap on both axes and no box can separate them.
+--
+-- Methodology: the real corllt.dds/corhllt.dds unitpics were extracted and
+-- converted to PNG, the same Cortex hue/saturation match the shader itself
+-- uses was computed per-pixel offline, and scipy.ndimage.label found the
+-- resulting match mask's separate connected-component blobs. A
+-- logistic-regression classifier was then fit on (s,t) coordinates to find
+-- the linear decision boundary a*s + b*t + c = 0 that best separates a
+-- "keep" (trim) labeled population from an "exclude" (beam/blast) labeled
+-- one -- a pixel is EXCLUDED, i.e. treated as beam and denied recolor, when
+-- a*s + b*t + c > 0. Each fit was visually confirmed against the real
+-- extracted icon before being deployed here.
+--
+-- corhllt's clusters are labeled by mean VALUE (HSV brightness): its
+-- beam/muzzle-blast blobs are bright/white-hot (meanVal ~0.89-0.98) while
+-- its legitimate matte-red trim panels are notably darker (meanVal
+-- ~0.42-0.76), and -- crucially -- its twin-turret geometry keeps the two
+-- gun housings' own red panels spatially disconnected from either beam in
+-- the connected-component analysis, so labeling by cluster identity alone
+-- was safe.
+--
+-- CORRECTED (2026-09-28, user screenshot: base recolored, gun turret head
+-- stayed stock red): the FIRST corllt fit (a=8.1262, b=-13.1285, c=2.2661,
+-- deployed alongside corhllt's fit above) used the single biggest connected
+-- blob as "exclude" without checking what it contained -- and unlike
+-- corhllt, corllt's single gun barrel sits close enough to its own blast
+-- that the housing's red head/torso panels and the beam+blast fused into
+-- ONE 7,184px connected blob, so that fit wrongly excluded the whole gun
+-- head from recoloring along with the real beam. Re-fit using explicit
+-- rectangular regions of the real extracted icon (head+torso box, base-ring
+-- box) as "keep" ground truth instead of blob identity, letting the
+-- classifier find the true beam-only diagonal -- confirmed visually against
+-- the real icon (head, torso, and base all stay red/recolorable; only the
+-- blast+beam diagonal is excluded) before redeploying.
+--
+--   corllt:  a=23.6226 b=-6.9825  c=-11.9803  (93.6% training accuracy;
+--            corrected fit -- see above)
+--   corhllt: a=17.2151 b=-2.6811  c=-9.1859  (89.6% training accuracy --
+--            good but imperfect; corhllt's twin beams are two separate thin
+--            diagonal streaks from two different gun points rather than one
+--            blob, a harder shape for a single straight cut, but the fitted
+--            line still cleanly excludes the whole beam-side region while
+--            leaving the turret body and base trim intact)
+--
+-- Every unit without an entry here gets a=0, b=0, c=-1 (the expression is
+-- always -1, never > 0, i.e. a complete no-op) so this can never affect any
+-- other icon.
+TEAMCOLOR_RECOLOR_LINE_EXCLUDE = {
+	corllt = { cor = { a = 23.6226, b = -6.9825, c = -11.9803 } },
+	corhllt = { cor = { a = 17.2151, b = -2.6811, c = -9.1859 } },
+}
+
+-- TEAMCOLOR_RECOLOR_CIRCLE_EXCLUDE (2026-09-28, corllt muzzle blast "half
+-- red"): user screenshot showed corllt's turret head now correctly
+-- recoloring after the LINE_EXCLUDE fit above, but the circular muzzle
+-- blast at the gun's tip was only HALF excluded -- the half on the trim
+-- side of the fitted line stayed included and wrongly recolored, since a
+-- single straight cut can only bisect a round region, not exclude all of
+-- it. Fixed by adding a second exclusion primitive, OR'd with the line
+-- test: a point is excluded when its (s,t) distance from
+-- (circleExcludeCorX, circleExcludeCorY) is < circleExcludeCorR.
+--
+-- CORRECTED (2026-09-28, user screenshot with arrows: "if you bring it
+-- lower it should work"): the FIRST circle fit (x=0.60, y=0.28, r=0.15) was
+-- centered/sized by eye against a coordinate-grid overlay of the real icon
+-- and looked clean in isolation, but a live screenshot showed it reaching
+-- up and left into the turret's own solid-red head panel and the torso's
+-- red edge strip below the collar -- both still stock red where they
+-- should recolor. A closer, un-tinted zoomed crop of the real icon showed
+-- why: those panels are flat-shaded with sharp edges (highlight lines,
+-- vent-slot details) right up against the muzzle, so the original circle's
+-- upper-left arc clipped straight through them. Re-centered further
+-- down-right, tucked against the barrel tip rather than the wider glow's
+-- fuzzy outer edge, and shrunk slightly so its boundary stays clear of
+-- every sharp panel edge (confirmed numerically: 0 of the solid head
+-- diamond's pixels, 0 of the base-ring's, 0 of any pixel at s<=0.45, fall
+-- inside the new circle) while still fully covering the specific lobe of
+-- the blast that was wrongly recoloring.
+--
+-- CORRECTED AGAIN (2026-09-28, user screenshot with a hand-drawn blue
+-- crescent: "if we can expand to the left it's almost there now"): the
+-- SECOND fit (x=0.65, y=0.37, r=0.12) fixed the head/torso clipping, but
+-- was tucked in tight enough that it left a thin crescent-shaped sliver of
+-- the blast's own glow -- right where it wraps around the barrel's base,
+-- between the collar and the main blast core -- still on the keep side,
+-- so that sliver stayed wrongly recolored. Confirmed against the same
+-- keep/exclude pixel overlay used throughout this investigation: a small
+-- cyan "peninsula" reaching down from the collar into the blast region,
+-- exactly matching the user's hand-drawn crescent. Widened the radius and
+-- shifted the center up-left slightly to absorb that peninsula, re-checked
+-- that this still doesn't reach the solid head diamond, the base ring, or
+-- anything at s<=0.45 (still 0 pixels each).
+--
+-- CORRECTED A THIRD TIME (2026-09-28, user screenshot: "arrows point to just
+-- a little more expansion to the left to cover teamcolor showing in the
+-- blast"): the THIRD fit (x=0.62, y=0.35, r=0.14) fixed the barrel-base
+-- crescent, but its lower edge still fell just short of the blast's actual
+-- extent where it meets the collar -- a thin strip of team color (~150px in
+-- the real icon) was still showing inside what should read as solid blast.
+-- Grown and re-centered slightly down: 262 of that strip's 267 pixels now
+-- fall inside the new circle, still with 0 pixels of the solid head
+-- diamond, 0 of the base-ring, and 0 at s<=0.45 caught (re-checked again at
+-- this size).
+--
+--   corllt: x=0.62 y=0.37 r=0.16  (was x=0.62 y=0.35 r=0.14)
+--
+-- corhllt was checked too (same method: painted every Cor-matched pixel by
+-- current keep/exclude status over the full real icon) and does NOT have
+-- this bug -- both of its twin-turret muzzle blasts fall entirely on the
+-- exclude side of its existing line fit already, with no overlap, so it
+-- gets no entry here.
+--
+-- Every unit without an entry here gets r=0 (distance is never negative, so
+-- distance < 0 is never true, i.e. a complete no-op) so this can never
+-- affect any other icon.
+TEAMCOLOR_RECOLOR_CIRCLE_EXCLUDE = {
+	corllt = { cor = { x = 0.62, y = 0.37, r = 0.16 } },
+}
+
+-- TEAMCOLOR_RECOLOR_RESCUE_INCLUDE (2026-09-28, corllt torso-plate wedge
+-- caught by the LINE fit): the SAME screenshot above also circled a small
+-- red wedge on the torso, well below and outside the blast circle entirely
+-- -- a separate bug from the blast, in the original LINE_EXCLUDE fit rather
+-- than the circle. Re-checking the real icon confirmed it: a small (~267px)
+-- triangular sliver of legitimate torso-plate trim (mean brightness ~0.71,
+-- consistent with trim, not the ~0.96 of the beam glow immediately next to
+-- it) sits just inside the line's "exclude" half-plane, even though it has
+-- nothing to do with the beam. Re-fitting the line to exclude this one
+-- wedge risked reopening one of the three previous rounds of regressions on
+-- the OTHER side of the boundary, so instead this rescues it directly: a
+-- small circle that forces matchCor back to true regardless of what the
+-- line or the blast circle above say, for any unit with an entry here.
+-- Confirmed the rescue circle stays clear of the real beam glow immediately
+-- next to the wedge (0 pixels of that ~90px, ~0.96-brightness cluster fall
+-- inside it).
+--
+--   corllt: x=0.71 y=0.665 r=0.06
+--
+-- Every unit without an entry here gets r=0 (distance is never negative, so
+-- distance < 0 is never true, i.e. a complete no-op) so this can never
+-- affect any other icon.
+TEAMCOLOR_RECOLOR_RESCUE_INCLUDE = {
+	corllt = { cor = { x = 0.71, y = 0.665, r = 0.06 } },
+}
+
 -- Draws the recolor pass for one already-drawn unit icon at (x1,y1)-(x2,y2),
 -- the same rect and the same "usedZoom + 0.02" offset convention passed to
 -- the real UiUnit(...)/WG.FlowUI.Draw.Unit call just before it, so this
 -- overlay lines up pixel-perfectly with the icon that call just drew.
 -- Takes plain x1/y1/x2/y2 (not a "rect" table like gridmenu's version) since
 -- that's what this file's own two call sites already have on hand.
-function DrawTeamColorRecolor(x1, y1, x2, y2, cornerSizeArg, unitTexture, usedZoom)
+function DrawTeamColorRecolor(x1, y1, x2, y2, cornerSizeArg, unitTexture, usedZoom, unitDefID)
 	if not TEAMCOLOR_RECOLOR_ENABLED or not teamColorRecolorShader then
 		return
+	end
+
+	-- LOCAL MOD (2026-09-27): per-unit, per-band saturation-threshold
+	-- override, see the comment above TEAMCOLOR_RECOLOR_SAT_THRESHOLD_OVERRIDE.
+	-- Each band independently falls back to the normal shared threshold
+	-- unless this unit's override table supplies that specific band.
+	local satThresholdArmForThisDraw = TEAMCOLOR_RECOLOR_SAT_THRESHOLD
+	local satThresholdCorForThisDraw = TEAMCOLOR_RECOLOR_SAT_THRESHOLD
+	local satThresholdLegForThisDraw = TEAMCOLOR_RECOLOR_SAT_THRESHOLD
+	local satThresholdScavForThisDraw = TEAMCOLOR_RECOLOR_SAT_THRESHOLD
+	-- LOCAL MOD (2026-09-28, spatial restriction): see the comment above
+	-- TEAMCOLOR_RECOLOR_SPATIAL_RESTRICT. Defaults to the full [0.0, 1.0]
+	-- range (a no-op) for every unit except an explicit override.
+	local restrictArmVMinForThisDraw = 0.0
+	local restrictArmVMaxForThisDraw = 1.0
+	-- LOCAL MOD (2026-09-28, T1 laser tower false positive -- real fix): see
+	-- the comment above TEAMCOLOR_RECOLOR_LINE_EXCLUDE. a=0,b=0,c=-1 is a
+	-- no-op (the expression is always -1, never > 0, so corLineExclude is
+	-- always false) for every unit without an override.
+	local lineExcludeCorAForThisDraw = 0.0
+	local lineExcludeCorBForThisDraw = 0.0
+	local lineExcludeCorCForThisDraw = -1.0
+	-- LOCAL MOD (2026-09-28, corllt muzzle blast -- real fix): see the
+	-- comment above TEAMCOLOR_RECOLOR_CIRCLE_EXCLUDE. r=0 is a no-op
+	-- (distance is never negative, so distance < r is always false) for
+	-- every unit without an override.
+	local circleExcludeCorXForThisDraw = 0.0
+	local circleExcludeCorYForThisDraw = 0.0
+	local circleExcludeCorRForThisDraw = 0.0
+	-- LOCAL MOD (2026-09-28, corllt torso-plate wedge): see the comment
+	-- above TEAMCOLOR_RECOLOR_RESCUE_INCLUDE. r=0 is a no-op (distance is
+	-- never negative, so distance < r is always false) for every unit
+	-- without an override.
+	local rescueCorXForThisDraw = 0.0
+	local rescueCorYForThisDraw = 0.0
+	local rescueCorRForThisDraw = 0.0
+	if unitDefID then
+		local uDef = UnitDefs[unitDefID]
+		local override = uDef and TEAMCOLOR_RECOLOR_SAT_THRESHOLD_OVERRIDE[uDef.name]
+		if override then
+			satThresholdArmForThisDraw = override.arm or satThresholdArmForThisDraw
+			satThresholdCorForThisDraw = override.cor or satThresholdCorForThisDraw
+			satThresholdLegForThisDraw = override.leg or satThresholdLegForThisDraw
+			satThresholdScavForThisDraw = override.scav or satThresholdScavForThisDraw
+		end
+		local spatialOverride = uDef and TEAMCOLOR_RECOLOR_SPATIAL_RESTRICT[uDef.name]
+		if spatialOverride and spatialOverride.arm then
+			restrictArmVMinForThisDraw = spatialOverride.arm.vMin or restrictArmVMinForThisDraw
+			restrictArmVMaxForThisDraw = spatialOverride.arm.vMax or restrictArmVMaxForThisDraw
+		end
+		local lineExcludeOverride = uDef and TEAMCOLOR_RECOLOR_LINE_EXCLUDE[uDef.name]
+		if lineExcludeOverride and lineExcludeOverride.cor then
+			lineExcludeCorAForThisDraw = lineExcludeOverride.cor.a or lineExcludeCorAForThisDraw
+			lineExcludeCorBForThisDraw = lineExcludeOverride.cor.b or lineExcludeCorBForThisDraw
+			lineExcludeCorCForThisDraw = lineExcludeOverride.cor.c or lineExcludeCorCForThisDraw
+		end
+		local circleExcludeOverride = uDef and TEAMCOLOR_RECOLOR_CIRCLE_EXCLUDE[uDef.name]
+		if circleExcludeOverride and circleExcludeOverride.cor then
+			circleExcludeCorXForThisDraw = circleExcludeOverride.cor.x or circleExcludeCorXForThisDraw
+			circleExcludeCorYForThisDraw = circleExcludeOverride.cor.y or circleExcludeCorYForThisDraw
+			circleExcludeCorRForThisDraw = circleExcludeOverride.cor.r or circleExcludeCorRForThisDraw
+		end
+		local rescueOverride = uDef and TEAMCOLOR_RECOLOR_RESCUE_INCLUDE[uDef.name]
+		if rescueOverride and rescueOverride.cor then
+			rescueCorXForThisDraw = rescueOverride.cor.x or rescueCorXForThisDraw
+			rescueCorYForThisDraw = rescueOverride.cor.y or rescueCorYForThisDraw
+			rescueCorRForThisDraw = rescueOverride.cor.r or rescueCorRForThisDraw
+		end
 	end
 
 	local tr, tg, tb = Spring.GetTeamColor(myTeamID)
@@ -1060,6 +1673,39 @@ function DrawTeamColorRecolor(x1, y1, x2, y2, cornerSizeArg, unitTexture, usedZo
 	teamColorRecolorShader:Activate()
 	teamColorRecolorShader:SetUniform("targetHue", targetHue)
 	teamColorRecolorShader:SetUniform("targetSat", targetSat)
+	-- TEMP DIAGNOSTIC: see TEAMCOLOR_RECOLOR_DEBUG_MASK above.
+	teamColorRecolorShader:SetUniform("debugMode", TEAMCOLOR_RECOLOR_DEBUG_MASK and 1 or 0)
+	-- TEMP DIAGNOSTIC: see TEAMCOLOR_RECOLOR_DEBUG_VCOORD above.
+	teamColorRecolorShader:SetUniform("debugVCoordMode", TEAMCOLOR_RECOLOR_DEBUG_VCOORD and 1 or 0)
+	-- TEMP DIAGNOSTIC: see TEAMCOLOR_RECOLOR_DEBUG_HCOORD above.
+	teamColorRecolorShader:SetUniform("debugHCoordMode", TEAMCOLOR_RECOLOR_DEBUG_HCOORD and 1 or 0)
+	-- TEMP DIAGNOSTIC: see TEAMCOLOR_RECOLOR_DEBUG_CORMASK above.
+	teamColorRecolorShader:SetUniform("debugCorMaskMode", TEAMCOLOR_RECOLOR_DEBUG_CORMASK and 1 or 0)
+	-- LOCAL MOD (2026-09-27): all three per-band satThreshold uniforms are
+	-- always set explicitly (default or overridden), same reasoning as
+	-- gui_gridmenu_teamcolor.lua's own copy of this line -- this is one
+	-- shared shader instance reused across every icon's draw call, so
+	-- skipping any of these when there's no override would leak whatever the
+	-- PREVIOUS icon's draw set (possibly a Legion-only override) into
+	-- unrelated icons drawn right after it.
+	teamColorRecolorShader:SetUniform("satThresholdArm", satThresholdArmForThisDraw)
+	teamColorRecolorShader:SetUniform("satThresholdCor", satThresholdCorForThisDraw)
+	teamColorRecolorShader:SetUniform("satThresholdLeg", satThresholdLegForThisDraw)
+	teamColorRecolorShader:SetUniform("satThresholdScav", satThresholdScavForThisDraw)
+	-- LOCAL MOD (2026-09-28): same anti-leak discipline as the satThreshold
+	-- uniforms above -- always set explicitly (default or overridden) since
+	-- this is one shared shader instance reused across every icon's draw.
+	teamColorRecolorShader:SetUniform("restrictArmVMin", restrictArmVMinForThisDraw)
+	teamColorRecolorShader:SetUniform("restrictArmVMax", restrictArmVMaxForThisDraw)
+	teamColorRecolorShader:SetUniform("lineExcludeCorA", lineExcludeCorAForThisDraw)
+	teamColorRecolorShader:SetUniform("lineExcludeCorB", lineExcludeCorBForThisDraw)
+	teamColorRecolorShader:SetUniform("lineExcludeCorC", lineExcludeCorCForThisDraw)
+	teamColorRecolorShader:SetUniform("circleExcludeCorX", circleExcludeCorXForThisDraw)
+	teamColorRecolorShader:SetUniform("circleExcludeCorY", circleExcludeCorYForThisDraw)
+	teamColorRecolorShader:SetUniform("circleExcludeCorR", circleExcludeCorRForThisDraw)
+	teamColorRecolorShader:SetUniform("rescueCorX", rescueCorXForThisDraw)
+	teamColorRecolorShader:SetUniform("rescueCorY", rescueCorYForThisDraw)
+	teamColorRecolorShader:SetUniform("rescueCorR", rescueCorRForThisDraw)
 	gl.BeginEnd(GL_QUADS, WG.FlowUI.Draw.TexRectRound, x1, y1, x2, y2, cornerSizeArg, 1, 1, 1, 1, usedZoom + 0.02)
 	teamColorRecolorShader:Deactivate()
 	glTexture(false)
@@ -1095,7 +1741,27 @@ function widget:Initialize()
 				refHueMaxCor = TEAMCOLOR_RECOLOR_HUE_MAX_COR,
 				refHueMinLeg = TEAMCOLOR_RECOLOR_HUE_MIN_LEG,
 				refHueMaxLeg = TEAMCOLOR_RECOLOR_HUE_MAX_LEG,
-				satThreshold = TEAMCOLOR_RECOLOR_SAT_THRESHOLD,
+				refHueMinScav = TEAMCOLOR_RECOLOR_HUE_MIN_SCAV,
+				refHueMaxScav = TEAMCOLOR_RECOLOR_HUE_MAX_SCAV,
+				satThresholdArm = TEAMCOLOR_RECOLOR_SAT_THRESHOLD,
+				satThresholdCor = TEAMCOLOR_RECOLOR_SAT_THRESHOLD,
+				satThresholdLeg = TEAMCOLOR_RECOLOR_SAT_THRESHOLD,
+				satThresholdScav = TEAMCOLOR_RECOLOR_SAT_THRESHOLD,
+				restrictArmVMin = 0.0,
+				restrictArmVMax = 1.0,
+				lineExcludeCorA = 0.0,
+				lineExcludeCorB = 0.0,
+				lineExcludeCorC = -1.0,
+				circleExcludeCorX = 0.0,
+				circleExcludeCorY = 0.0,
+				circleExcludeCorR = 0.0,
+				rescueCorX = 0.0,
+				rescueCorY = 0.0,
+				rescueCorR = 0.0,
+				debugMode = 0,
+				debugVCoordMode = 0,
+				debugHCoordMode = 0,
+				debugCorMaskMode = 0,
 			},
 		}, "InfoTeamColorRecolor")
 		if not teamColorRecolorShader:Initialize() then
@@ -1410,7 +2076,8 @@ local function drawSelectionCell(cellID, uDefID, usedZoom, highlightColor)
 		cellRect[cellID][4],
 		cornerSize,
 		unitTexture,
-		usedZoom
+		usedZoom,
+		uDefID
 	)
 	tracy.ZoneEnd()
 
@@ -1847,7 +2514,8 @@ local function drawUnitInfo()
 			iconY,
 			math_max(1, math_floor(iconSize * 0.024)),
 			"#" .. displayUnitDefID,
-			0.03
+			0.03,
+			displayUnitDefID
 		)
 		tracy.ZoneEnd()
 		tracy.ZoneBeginN("W:Info:DrawUnitInfo:BuildText")
