@@ -42,6 +42,24 @@ function widget:GetInfo()
 		layer = 0,
 		enabled = true,
 		handler = true,
+		-- LOCAL MOD (2026-10-01): this widget issues build orders via
+		-- Spring.GiveOrderToUnit (see the grid-click handler below) just like
+		-- the stock "Grid menu" widget it replaces -- that makes it a "unit
+		-- control" widget by BAR engine's own definition (see PR #5430,
+		-- beyond-all-reason/Beyond-All-Reason: a user-loaded widget's
+		-- GiveOrder* calls get swapped for error-raising stubs when a ranked
+		-- lobby's allowunitcontrolwidgets modoption disallows user unit-
+		-- control widgets -- built-in/"mod" widgets are exempt, user-loaded
+		-- ones are not). Without this flag, this widget would still load and
+		-- draw its UI in such a lobby, but every click would silently fail to
+		-- issue the build order once GiveOrderToUnit gets stubbed -- and
+		-- since widget:Initialize() below also disables the real stock Grid
+		-- menu, that would leave the player with NO working build menu at
+		-- all. Declaring control = true lets the engine gracefully skip
+		-- loading this widget in that case instead, so the stock Grid menu
+		-- never gets disabled and the player falls back to a normal
+		-- (uncolored) working build menu.
+		control = true,
 	}
 end
 

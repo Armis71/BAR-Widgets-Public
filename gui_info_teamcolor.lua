@@ -43,6 +43,25 @@ function widget:GetInfo()
 		-- them also sets this, confirmed by grepping the whole upstream repo.
 		-- Without it, widgetHandler is a restricted proxy that doesn't expose
 		-- those methods at all (nil), which is exactly the runtime error this fixes.
+		-- LOCAL MOD (2026-10-01): this widget issues unit orders via
+		-- Spring.GiveOrderToUnit (transport unload, stop commands -- see the
+		-- selected-unit panel's button handlers) just like the stock "Info"
+		-- widget it replaces -- that makes it a "unit control" widget by BAR
+		-- engine's own definition (see PR #5430,
+		-- beyond-all-reason/Beyond-All-Reason: a user-loaded widget's
+		-- GiveOrder* calls get swapped for error-raising stubs when a ranked
+		-- lobby's allowunitcontrolwidgets modoption disallows user unit-
+		-- control widgets -- built-in/"mod" widgets are exempt, user-loaded
+		-- ones are not). Without this flag, this widget would still load and
+		-- draw its UI in such a lobby, but every button click would silently
+		-- fail once GiveOrderToUnit gets stubbed -- and since
+		-- widget:Initialize() below also disables the real stock Info
+		-- widget, that would leave the player with no working info panel at
+		-- all. Declaring control = true lets the engine gracefully skip
+		-- loading this widget in that case instead, so the stock Info widget
+		-- never gets disabled and the player falls back to a normal
+		-- (uncolored) working info panel. Same fix as gui_gridmenu_teamcolor.lua.
+		control = true,
 	}
 end
 

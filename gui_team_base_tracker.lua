@@ -5,7 +5,24 @@ function widget:GetInfo()
     author    = "Armis71 + Claude AI",
     date      = "2026",
     license   = "GPL",
-    layer     = 0,
+    -- Was 0 (the common default most widgets use, including whatever
+    -- other overlay is intercepting clicks meant for the docked Casting
+    -- Mode bar -- see the 2026-09-09 notes). widgetHandler:MousePress
+    -- walks its widget list in ASCENDING layer order and stops at the
+    -- FIRST widget whose own MousePress returns true, so at a tied
+    -- layer=0 it's pure luck (load order / alphabetical tiebreak)
+    -- whether our pill buttons or some other widget's hit-test underneath
+    -- them gets first refusal on a click -- that's why pressing
+    -- Leaderboard could instead select whatever player/unit sits at the
+    -- same screen position. widgetHandler:DrawScreen walks the same
+    -- layer-sorted list in REVERSE, so a lower layer also draws LAST
+    -- (i.e. visually on top) -- moving to -50 both wins the click race
+    -- against default-layer (0-ish) widgets AND keeps our own pills
+    -- drawn over them, with no observed downside. It's not so extreme
+    -- (e.g. -100000) that it should out-rank something deliberately
+    -- topmost like a tooltip widget, which typically uses a far more
+    -- negative layer than that on purpose.
+    layer     = -50,
     enabled   = true,
   }
 end
@@ -26,7 +43,7 @@ local dividerRowH = 36
 local pinDividerRowH = 14
 local nameFontSize       = 16
 local badgeFontSizeBySize = { [96] = 21.6, [88] = 19.8, [80] = 18.0, [72] = 16.2, [64] = 14.4, [56] = 12.6, [48] = 10.8, [40] = 9.0 }
-local backgroundOpacity  = 0.8    -- panel background opacity: 0 = fully transparent, 1 = fully opaque
+local backgroundOpacity  = 0.9    -- panel background opacity: 0 = fully transparent, 1 = fully opaque
 
 -- The header packs two stacked pill rows on the right (Icon/Leaderboard
 -- /Size/? on top, F7/<> below) plus the title on the left. Their
@@ -300,11 +317,30 @@ local labDisplayNames = {
 -- TECH‑TIER SORT ORDER (optional, kept for future use)
 ------------------------------------------------------------
 
+-- 2026-09-12: added "bp" (total build power) and "ev" (economy value),
+-- per the user comparing this table against BAR's own stock Spectator
+-- HUD (Settings > Interface > Spectator HUD), which shows both -- see
+-- recountLabs() below for how each is computed; formatCastStat()
+-- already handles arbitrary columns generically, so no rendering-side
+-- changes were needed.
+--
+-- Same-day follow-up: both were originally appended at the END of this
+-- list (rather than interleaved) specifically because `LabTracker_
+-- StatSort` persists the user's sort choice as a raw POSITIONAL INDEX
+-- into this array (see widget:Initialize below), and reordering shifts
+-- that index out from under anyone's already-saved preference. The user
+-- explicitly asked for BP/EV to sit between EP and AV instead (matching
+-- the reference screenshot's layout) despite that tradeoff, so the
+-- reorder below is intentional -- anyone with a saved sort preference
+-- from before this reorder may see it silently point at a different
+-- column once, until they click a header again.
 local statColumns = {
   {key = "mps", label = "M/s"},
   {key = "eps", label = "E/s"},
   {key = "mp",  label = "MP"},
   {key = "ep",  label = "EP"},
+  {key = "bp",  label = "BP"},
+  {key = "ev",  label = "EV"},
   {key = "av",  label = "AV"},
   {key = "dv",  label = "DV"},
   {key = "up",  label = "UP"},
@@ -365,6 +401,28 @@ local statDescriptions = {
   dd  = "DD - Damage dealt to enemies",
   up  = "UP - Units produced",
   uk  = "UK - Enemy units killed",
+  bp  = "BP - Total build power (constructors, factories/labs, and the commander)",
+  ev  = "EV - Economy value in metal (everything not counted as Army or Defense)",
+}
+
+-- 2026-09-12: short, plain-English expansions of each stat abbreviation
+-- ("M/s" -> "Metal per Second"), shown in the floating Stats window's own
+-- hover tooltip (see DrawStatsWindow) -- deliberately separate from
+-- statDescriptions above, which is longer/denser prose used for a
+-- different spot (the description bar under the NORMAL panel's own
+-- header row).
+local statFullNames = {
+  mps = "Metal per Second",
+  eps = "Energy per Second",
+  mp  = "Metal Produced",
+  ep  = "Energy Produced",
+  bp  = "Build Power",
+  ev  = "Economy Value",
+  av  = "Army Value",
+  dv  = "Defense Value",
+  up  = "Units Produced",
+  dd  = "Damage Dealt",
+  uk  = "Units Killed",
 }
 
 local viewModeDescriptions = {
@@ -979,6 +1037,13 @@ local uiRects = {
   resizeHandle = {x1=0,y1=0,x2=0,y2=0},
   helpToggle = {x1=0,y1=0,x2=0,y2=0},
   hideUiToggle = {x1=0,y1=0,x2=0,y2=0},
+  castToggle = {x1=0,y1=0,x2=0,y2=0},
+  autoHideToggle = {x1=0,y1=0,x2=0,y2=0},
+  statsWindowToggle = {x1=0,y1=0,x2=0,y2=0},
+  statsWinHeader = {x1=0,y1=0,x2=0,y2=0},
+  helpWinHeader = {x1=0,y1=0,x2=0,y2=0},
+  helpWinClose = {x1=0,y1=0,x2=0,y2=0},
+  helpWinBody = {x1=0,y1=0,x2=0,y2=0},
 }
 local cachedLayout = { items = {}, maxIcons = 0, totalWidth = 0, autoWidth = 0, minWidth = 0, iconContentWidth = 0, headerFontSize = 0, statLeaders = {}, myOwnedUnitTiers = {} }
 
@@ -1045,10 +1110,112 @@ local COMMANDER_GLOW_FRAMES = 450   -- ~15s at 30fps dissipating glow after the 
 local commanderResurrectByTeam = {}
 
 -- Whether the panel keeps drawing itself (via DrawScreenEffects) while
--- BAR's Show/Hide UI toggle (F7 / Ctrl+F7) is active. Toggled by the
--- "F7" pill next to the "<>" resize handle in the header; persisted
--- like the rest of this widget's settings.
-local stayVisibleWhenUIHidden = true
+-- BAR's Show/Hide UI toggle (F7 / Ctrl+F7) is active. Toggled by its own
+-- "F7" pill next to the "<>" resize handle in the header, and (as of
+-- 2026-09-10) also kept in sync with castingMode automatically every
+-- time the "CAST" pill is clicked -- see MousePress's castToggle
+-- handler. Defaults OFF (was ON prior to 2026-09-10, independent of
+-- castingMode -- see widget:Initialize's one-time realignment of any
+-- save stuck with the old default). Persisted like the rest of this
+-- widget's settings.
+local stayVisibleWhenUIHidden = false
+
+-- "Casting Mode" -- docks the panel into a full-width bottom bar instead
+-- of the normal draggable floating panel. As of 2026-09-10 this is a
+-- pure layout switch, independent of whether BAR's UI is currently
+-- hidden: widget:DrawScreen uses the docked bar any time this is on, GUI
+-- visible or not (previously the docked bar only ever appeared while
+-- GUI was hidden). Turning it on also flips stayVisibleWhenUIHidden on
+-- (and off flips it off) via the "CAST" pill's own MousePress handler,
+-- so CAST alone is enough to also carry the docked bar through Show/Hide
+-- UI (F7/Ctrl+F7) without a separate step -- while CAST is off, the
+-- (now floating) panel simply disappears when the UI is hidden, like any
+-- other widget. When this AND stayVisibleWhenUIHidden are both on and
+-- Spring.IsGUIHidden() is true, widget:DrawScreenEffects additionally
+-- takes over drawing the engine's own built-in minimap
+-- (gl.SlaveMiniMap/gl.ConfigMiniMap/gl.DrawMiniMap) so it stays visible
+-- in a screen corner instead of vanishing along with the rest of the
+-- hidden UI -- the engine only auto-draws the minimap through hidden UI
+-- in dual-screen mode otherwise. Toggled by the "CAST" pill next to the
+-- "F7" pill in the header; persisted the same LabTracker_* way.
+local castingMode = false
+
+-- Tracks whether THIS widget currently has the engine's minimap in
+-- slave mode -- not the same thing as castingMode itself, since slave
+-- mode must only be engaged for the exact frames the casting overlay
+-- is actually being drawn (UI hidden AND stayVisibleWhenUIHidden AND
+-- castingMode all true this frame). Diffed against that condition
+-- every frame in widget:DrawScreenEffects so the minimap reliably
+-- snaps back to normal engine-drawn behavior the instant any of those
+-- three stop being true -- UI un-hidden, either pill flipped off, or
+-- this widget unloaded (see widget:Shutdown, which force-releases it
+-- as a safety net).
+local minimapSlaved = false
+
+-- 2026-09-10: "AUTO" pill next to CAST/F7/"<>" in DrawDockedHeader --
+-- auto-hides the docked bottom bar the same way the Windows taskbar's
+-- own auto-hide works: while enabled, the bar collapses down to a thin
+-- sliver flush with the very bottom of the screen and only pops back up
+-- to its full size while the mouse is right at that bottom edge (or
+-- already over the bar itself, e.g. reading it or using one of its
+-- pills/menus) -- otherwise it stays out of the way of the game view
+-- underneath. Only meaningful while castingMode (docked) is on; the
+-- normal floating panel is unaffected regardless of this setting.
+--
+-- A single table so doDrawScreen -- already sitting at Lua 5.1's
+-- 60-upvalue-per-function ceiling (see DrawCastPill's own comment above)
+-- -- only spends ONE upvalue slot on this feature no matter how many
+-- fields it needs, same convention as resizeHandleState/dragState/
+-- hoverState/etc. `enabled` is persisted (LabTracker_AutoHideEnabled);
+-- `revealed` (currently showing at full size or collapsed to the sliver)
+-- and `lastBarHeight` (the docked bar's own height as of the last frame
+-- it was fully drawn, used to test "is the mouse still over where the
+-- bar was" before drawHeight is known again for THIS frame) are pure
+-- runtime/session state, recomputed every frame, never saved.
+local autoHideState = { enabled = false, revealed = true, lastBarHeight = 0 }
+
+-- Whether the separate floating stats window (M/s, E/s, MP, EP, AV, DV,
+-- UP, DD, UK per team -- the columns the docked Casting Mode bar no
+-- longer shows inline) is open. Only ever drawn alongside the docked
+-- casting overlay itself (see widget:DrawScreenEffects) -- toggled by
+-- the "STATS" pill in DrawDockedHeader, persisted the same
+-- LabTracker_* way as everything else.
+local statsWindowVisible = false
+
+-- The floating stats window's own position (independent of chartX/
+-- chartY, which belong to the main panel) and drag state -- it's a
+-- separate movable window, not locked to the docked bar.
+local statsWinX, statsWinY = 300, 700
+local statsWinDrag = { active = false, startX = 0, startY = 0, offsetX = 0, offsetY = 0 }
+
+-- The persistent "?" help window (2026-10-01) -- replaces the old
+-- hover-only tooltip, which was anchored at `mouseX + 32` right next to
+-- the "?" pill and regularly ran off the right edge of the screen once
+-- the control list grew past a handful of rows (the "?" pill itself
+-- sits at the header's right edge, so the tooltip had nowhere to grow
+-- but further right, off-screen). This is a real floating window
+-- instead, opened/closed by CLICKING "?" (not shown-while-hovering),
+-- centered on screen the first time it's ever opened, draggable
+-- afterward, and closed only by its own "X" -- same independent
+-- position/drag-state pattern as the floating Stats window just above.
+-- `helpWinX`/`helpWinY` start `nil` (rather than a hardcoded default
+-- like `statsWinX`/`Y`'s 300/700) specifically so DrawHelpWindow can
+-- tell "never positioned yet" apart from "deliberately dragged to
+-- (0,0)" and center it on the real screen size the first time it draws,
+-- instead of guessing a default position up front.
+local helpWindowVisible = false
+local helpWinX, helpWinY = nil, nil
+local helpWinDrag = { active = false, startX = 0, startY = 0, offsetX = 0, offsetY = 0 }
+
+-- Row hitboxes for the floating stats window's own team rows -- kept
+-- separate from the main `rowRects` table (which the docked bar's own
+-- team-row loop keeps using even in Casting Mode, since doDrawScreen's
+-- row loop is shared unconditionally between the normal panel and the
+-- docked bar). Cleared/repopulated every DrawStatsWindow call; lets
+-- clicking/right-clicking a row here reuse the exact same
+-- select+jump/pin behavior as the docked bar's and normal panel's own
+-- rows, via hitStatsWinRow below.
+local statsWinRowRects = {}
 
 local minimized = false
 local leaderboardState = {
@@ -1070,6 +1237,8 @@ local sectionsSwapped = false
 local pressWasOnMinimizedIcon = false
 local teamArmyValue = {}
 local teamDefenseValue = {}
+local teamEconomyValue = {}
+local teamBuildPower = {}
 local teamStats = {}
 local statSortKey = nil
 local statHeaderRects = {
@@ -1082,6 +1251,8 @@ local statHeaderRects = {
   dd  = {x1=0,y1=0,x2=0,y2=0},
   up  = {x1=0,y1=0,x2=0,y2=0},
   uk  = {x1=0,y1=0,x2=0,y2=0},
+  bp  = {x1=0,y1=0,x2=0,y2=0},
+  ev  = {x1=0,y1=0,x2=0,y2=0},
 }
 local activeViewMode = "all"
 -- trackerMode switches the whole widget between tracking structures
@@ -1089,6 +1260,16 @@ local activeViewMode = "all"
 -- selection so switching back and forth doesn't lose either one.
 local trackerMode = "base"
 local activeUnitViewMode = "all"
+
+-- 2026-09-22: down/up state for the Shift-cycles-view-mode-tabs hotkey
+-- (see CheckShiftCycleHotkey, near isMouseOverWidget below). Shift is a
+-- modifier key, not a normal character key like every other hotkey in
+-- this file (U/B/S/E/C), so it's polled once per rendered frame via
+-- Spring.GetModKeyState() instead of read off widget:KeyPress's own
+-- `key` byte -- this remembers last frame's state so the cycle only
+-- fires once on the down-transition (false -> true), not every frame
+-- Shift is held.
+local shiftWasDown = false
 
 -- Returns whichever filter-row column set/state applies to the
 -- current tracker mode, so click handling and drawing share one
@@ -1140,6 +1321,8 @@ local function recountLabs()
   teamLabPositions = {}
   teamArmyValue = {}
   teamDefenseValue = {}
+  teamEconomyValue = {}
+  teamBuildPower = {}
 
   for _, unitID in ipairs(Spring.GetAllUnits()) do
     local unitDefID = Spring.GetUnitDefID(unitID)
@@ -1151,11 +1334,38 @@ local function recountLabs()
       -- Spectator HUD widget defines "army"), plus the commander
       -- explicitly included even though that widget excludes it.
       local hasWeapon = ud.weapons and #ud.weapons > 0
-      if (hasWeapon and ud.canMove) or isCommanderDef[unitDefID] then
+      local isArmyUnit = (hasWeapon and ud.canMove) or isCommanderDef[unitDefID]
+      local isDefenseUnit = hasWeapon and not ud.canMove
+      if isArmyUnit then
         teamArmyValue[teamID] = (teamArmyValue[teamID] or 0) + (ud.metalCost or 0)
       end
-      if hasWeapon and not ud.canMove then
+      if isDefenseUnit then
         teamDefenseValue[teamID] = (teamDefenseValue[teamID] or 0) + (ud.metalCost or 0)
+      end
+
+      -- 2026-09-12: "EV" (economy value) -- the metal-cost value of
+      -- everything a team owns that ISN'T already counted as army or
+      -- defense: mexes, energy plants, storages, converters, radar/
+      -- jammer, labs, unarmed constructors/scouts, etc. Complements
+      -- AV/DV the same way they complement each other -- every unit a
+      -- team owns falls into exactly one of these three buckets, so
+      -- AV+DV+EV is that team's total metal value across everything
+      -- live and finished.
+      if not isArmyUnit and not isDefenseUnit then
+        teamEconomyValue[teamID] = (teamEconomyValue[teamID] or 0) + (ud.metalCost or 0)
+      end
+
+      -- "BP" (total build power) -- the sum of buildSpeed across every
+      -- unit a team currently owns that can build anything at all
+      -- (constructors, factories/labs, the commander), regardless of
+      -- whether that build power happens to be idle or actively in use
+      -- right now. This deliberately does NOT try to distinguish "idle"
+      -- vs "active" build power (the engine doesn't expose a cheap way
+      -- to query that in bulk the way GetTeamResources/
+      -- GetTeamResourceStats do for the income/produced columns above)
+      -- -- it's each team's total available build capacity.
+      if ud.buildSpeed and ud.buildSpeed > 0 then
+        teamBuildPower[teamID] = (teamBuildPower[teamID] or 0) + ud.buildSpeed
       end
 
       local name = ud.name
@@ -1308,10 +1518,12 @@ local function recountLabs()
       teamStats[teamID] = {
         mps = mIncome or 0,
         eps = eIncome or 0,
+        bp  = teamBuildPower[teamID] or 0,
         mp  = mProduced or 0,
         ep  = eProduced or 0,
         av  = teamArmyValue[teamID] or 0,
         dv  = teamDefenseValue[teamID] or 0,
+        ev  = teamEconomyValue[teamID] or 0,
         dd  = getLatestTeamStat(teamID, "damageDealt"),
         up  = getLatestTeamStat(teamID, "unitsProduced"),
         uk  = getLatestTeamStat(teamID, "unitsKilled"),
@@ -1330,6 +1542,108 @@ end
 local function hitHeader(mx,my)
   local r = uiRects.header
   return mx>=r.x1 and mx<=r.x2 and my>=r.y1 and my<=r.y2
+end
+
+-- Shared "is the cursor anywhere over this widget's own panel/docked bar
+-- footprint" check, for the U/B Unit-Tracker/Base-Tracker hotkeys
+-- (2026-09-17) -- reuses the exact same rect and the exact same
+-- auto-hide staleness guard `widget:MouseWheel` already established (see
+-- that function's own 2026-09-12 fix): `leaderboardState.panelRect` is
+-- only refreshed on frames doDrawScreen actually draws the panel/bar, so
+-- while the docked bar is auto-hidden and collapsed it stays frozen at
+-- wherever the bar's footprint was the LAST time it was fully drawn --
+-- without this guard, the hotkeys would fire off that stale, currently
+-- invisible footprint instead of doing nothing while genuinely collapsed.
+-- 2026-09-29: also mirrors MouseWheel's newer `minimized and not
+-- castingMode` guard -- same staleness bug, just for the NORMAL panel's
+-- older `minimized` state instead of the docked bar's auto-hide: while
+-- minimized and not docked, doDrawScreen returns early (to draw the
+-- small minimized button) before ever updating panelRect, so without
+-- this check the U/B/S/E/C/Shift hotkeys would fire off a stale,
+-- currently invisible EXPANDED footprint instead of doing nothing while
+-- genuinely minimized.
+local function isMouseOverWidget(mx, my)
+  if castingMode and autoHideState.enabled and not autoHideState.revealed then
+    return false
+  end
+  if minimized and not castingMode then
+    return false
+  end
+  local r = leaderboardState.panelRect
+  return mx >= r.x1 and mx <= r.x2 and my >= r.y1 and my <= r.y2
+end
+
+-- 2026-09-22: "if hovering over make the shift key go through all the
+-- tabs like minimal, echo, defense, offense, all and also tech 1, tech
+-- 2, tech 3 and all" -- same hover-gated idea as the U/B/S/E/C hotkeys
+-- above, but Shift is a modifier key rather than a plain character key,
+-- so it can't be read the way `key == string.byte("s")` reads those
+-- inside widget:KeyPress. Every other use of Shift anywhere in this
+-- project (Spring.GetModKeyState()'s own `shift` return, or the `mods`
+-- table widget:KeyPress already receives) is only ever a FLAG checked
+-- alongside some other physical action (e.g. drag_copy_builder.lua's
+-- shift-drag select), never a standalone "Shift was just pressed"
+-- event -- gui_drawing_tool.lua's own Ctrl-hold-to-draw-curve gesture is
+-- this project's one precedent for detecting a modifier's own down/up
+-- transition, and it does so by polling Spring.GetModKeyState() once
+-- per rendered frame and firing on the transition, which is exactly
+-- what this does too. Called from doDrawScreen every frame it actually
+-- draws (see the top of that function) -- a plain global, not `local
+-- function`, for the same zero-upvalue-cost reason as
+-- AutoHideShouldCollapse/DrawCastPill/etc. further down: doDrawScreen
+-- is already sitting exactly at Lua 5.1's 60-upvalue-per-function
+-- ceiling, so calling this from there must cost it nothing, and a
+-- global looked up by name at call time (rather than captured as an
+-- upvalue) costs zero either way.
+function CheckShiftCycleHotkey(mx, my)
+  local _, _, _, shiftDown = Spring.GetModKeyState()
+
+  -- Only claim the actual down-transition (false -> true) -- otherwise
+  -- holding Shift down would cycle every single rendered frame instead
+  -- of once per press, the same "isRepeat" concern widget:KeyPress
+  -- guards against for ordinary held keys.
+  if shiftDown and not shiftWasDown and isMouseOverWidget(mx, my) then
+    local cols = currentViewModeColumns()
+    local activeKey = currentActiveViewMode()
+
+    local curIdx = 1
+    for i, col in ipairs(cols) do
+      if col.key == activeKey then
+        curIdx = i
+        break
+      end
+    end
+    -- Wraps from the last tab ("All") back to the first ("Minimal" /
+    -- "Tech 1") via modulo, same as any other next-with-wraparound walk.
+    local nextKey = cols[(curIdx % #cols) + 1].key
+
+    -- Same persistence pattern as every other way of setting these two
+    -- (the click handler in widget:MousePress and the spacebar branch
+    -- in widget:KeyPress): a positional index into the same fixed key
+    -- list widget:Initialize reads back on load, not the column table
+    -- itself, so the save format stays identical everywhere it's
+    -- written.
+    if trackerMode == "unit" then
+      activeUnitViewMode = nextKey
+      for i, k in ipairs({"tech1", "tech2", "tech3", "all"}) do
+        if k == activeUnitViewMode then
+          Spring.SetConfigInt("LabTracker_UnitViewMode", i)
+          break
+        end
+      end
+    else
+      activeViewMode = nextKey
+      for i, k in ipairs({"minimal", "eco", "defense", "offense", "all"}) do
+        if k == activeViewMode then
+          Spring.SetConfigInt("LabTracker_ViewMode", i)
+          break
+        end
+      end
+    end
+    rebuildLayout()
+  end
+
+  shiftWasDown = shiftDown
 end
 
 local function truncateName(name, extraReserved)
@@ -2013,6 +2327,14 @@ function rebuildLayout()
       teamID = t.teamID,
       allyTeam = t.allyTeam,
       displayName = truncateName(t.name, badgeReserve),
+      -- Untruncated name + the same badge-reserve figure used above,
+      -- kept alongside displayName so the docked bar (which has plenty
+      -- of horizontal room and, as of 2026-09-10, widens its own name
+      -- column to fit instead of truncating -- see doDrawScreen's
+      -- effectiveNameColW) can draw the real name without needing to
+      -- redo this badge-reserve lookup at draw time.
+      rawName = t.name,
+      badgeReserve = badgeReserve,
       colorR = r or 1, colorG = g or 1, colorB = b or 1,
       icons = icons,
     }
@@ -2100,7 +2422,9 @@ function rebuildLayout()
   -- caused them to spill into each other and into the stat row.
   -- Reserving both here keeps minWidth wide enough regardless of
   -- iconSize.
-  local hideUiRowWidth = (gl.GetTextWidth("F7") * 15 + 6 * 2) + 6 + (gl.GetTextWidth("<>") * 15 + 6 * 2) + padding * 2
+  local hideUiRowWidth = (gl.GetTextWidth("CAST") * 15 + 6 * 2) + 6
+                        + (gl.GetTextWidth("F7") * 15 + 6 * 2) + 6
+                        + (gl.GetTextWidth("<>") * 15 + 6 * 2) + padding * 2
   local sizeMenuOptW, sizeMenuOptGap = 44, 6
   local sizeMenuWidth = (sizeMenuOptW + sizeMenuOptGap) * #sizeMenu.options - sizeMenuOptGap + padding * 2
 
@@ -2137,6 +2461,19 @@ end
 
 local function hitTeamRow(mx,my)
   for teamID, r in pairs(rowRects) do
+    if mx>=r.x1 and mx<=r.x2 and my>=r.y1 and my<=r.y2 then
+      return teamID
+    end
+  end
+  return nil
+end
+
+-- Same shape as hitTeamRow, checking the floating stats window's own
+-- (separately-tracked) row rects instead of the docked bar/normal
+-- panel's rowRects -- see statsWinRowRects' own comment for why they
+-- can't share one table.
+local function hitStatsWinRow(mx,my)
+  for teamID, r in pairs(statsWinRowRects) do
     if mx>=r.x1 and mx<=r.x2 and my>=r.y1 and my<=r.y2 then
       return teamID
     end
@@ -2280,6 +2617,56 @@ local function jumpToTeamBaseCenter(teamID)
 end
 
 ------------------------------------------------------------
+-- CHAT COMMAND: /basetrackercenter
+------------------------------------------------------------
+
+local function BaseTrackerCenterCommand()
+  local vsx, vsy = Spring.GetViewGeometry()
+  if not vsx then return end
+
+  if minimized then
+    local buttonW, buttonH = 160, 100
+    chartX = vsx * 0.5 - buttonW * 0.5
+    chartY = vsy * 0.5 + buttonH * 0.5
+  else
+    local totalWidth = manualWidth or cachedLayout.autoWidth or 400
+
+    local contentHeight = 0
+    for _, item in ipairs(cachedLayout.items) do
+      local h = rowH
+      if item.itype == "pindivider" then h = pinDividerRowH
+      elseif item.itype ~= "team" then h = dividerRowH end
+      contentHeight = contentHeight + h
+    end
+    local headerRowSpace = math.max(rowH, minHeaderHeight)
+    local height = headerRowSpace + statsRowH + viewModeRowH + contentHeight + padding * 2
+
+    chartX = vsx * 0.5 - totalWidth * 0.5
+    chartY = vsy * 0.5 + height * 0.5 - padding * 0.5
+  end
+
+  Spring.SetConfigInt("LabTracker_X", chartX)
+  Spring.SetConfigInt("LabTracker_Y", chartY)
+
+  -- Also recenter the floating Stats window (Casting Mode item 5) back
+  -- to a safe, empty part of the screen. It's independently draggable
+  -- and its own position is saved separately (LabTracker_StatsWinX/Y),
+  -- so a window that's drifted into a corner some other on-screen
+  -- element is eating clicks in (observed 2026-09-09: a saved position
+  -- in the far top-right corner of an ultrawide screen landed on top of
+  -- whatever else lives there, and every click on the stats window
+  -- -- sort headers, the drag handle, everything -- stopped reaching
+  -- this widget at all) has no other way back, since dragging it away
+  -- requires a working click on the very window that's stuck. This
+  -- command needs no mouse at all, so it's the escape hatch.
+  statsWinX, statsWinY = 300, 700
+  Spring.SetConfigInt("LabTracker_StatsWinX", statsWinX)
+  Spring.SetConfigInt("LabTracker_StatsWinY", statsWinY)
+
+  Spring.Echo("[Base Tracker] /basetrackercenter -- panel and stats window recentered.")
+end
+
+------------------------------------------------------------
 -- ENGINE EVENTS (RECOUNT-BASED)
 ------------------------------------------------------------
 
@@ -2298,7 +2685,39 @@ function widget:Initialize()
   statSortKey = (savedStatSortIdx > 0 and statColumns[savedStatSortIdx] and statColumns[savedStatSortIdx].key) or nil
   leaderboardState.mode = Spring.GetConfigInt("LabTracker_Leaderboard", 0) == 1
   resizeHandleState.enabled = Spring.GetConfigInt("LabTracker_ResizeEnabled", 0) == 1
-  stayVisibleWhenUIHidden = Spring.GetConfigInt("LabTracker_StayVisibleHiddenUI", 1) == 1
+  castingMode = Spring.GetConfigInt("LabTracker_CastingMode", 0) == 1
+  stayVisibleWhenUIHidden = Spring.GetConfigInt("LabTracker_StayVisibleHiddenUI", 0) == 1
+  autoHideState.enabled = Spring.GetConfigInt("LabTracker_AutoHideEnabled", 0) == 1
+  -- 2026-09-10: CAST is now the master switch for hidden-UI persistence
+  -- (see MousePress's castToggle handler, which keeps this pill synced
+  -- to castingMode on every click from here on). This default used to be
+  -- 1 (ON) regardless of castingMode, so a save from before this change
+  -- can still have it stuck ON with CAST off -- realign that stale
+  -- combination once here so "CAST off" reliably means "don't show
+  -- through hidden UI" starting with the very next load, not just after
+  -- an extra click. A deliberately decoupled save (CAST on, this off) is
+  -- left alone.
+  if not castingMode and stayVisibleWhenUIHidden then
+    stayVisibleWhenUIHidden = false
+    Spring.SetConfigInt("LabTracker_StayVisibleHiddenUI", 0)
+  end
+  statsWindowVisible = Spring.GetConfigInt("LabTracker_StatsWindow", 0) == 1
+  statsWinX = Spring.GetConfigInt("LabTracker_StatsWinX", statsWinX)
+  statsWinY = Spring.GetConfigInt("LabTracker_StatsWinY", statsWinY)
+  -- The persistent "?" help window: whether it's open carries over
+  -- across reloads (that's the "make it persistent" ask), and so does
+  -- its dragged position -- but ONLY if it's actually been positioned
+  -- before. `-1` is a safe "never saved" sentinel (a real on-screen
+  -- window position is never negative); leaving helpWinX/Y at their
+  -- `nil` default in that case is what tells DrawHelpWindow to center
+  -- the window on screen the first time it ever draws, rather than
+  -- guessing a hardcoded fallback the way statsWinX/Y's 300/700 do.
+  helpWindowVisible = Spring.GetConfigInt("LabTracker_HelpWinOpen", 0) == 1
+  local savedHelpWinX = Spring.GetConfigInt("LabTracker_HelpWinX", -1)
+  local savedHelpWinY = Spring.GetConfigInt("LabTracker_HelpWinY", -1)
+  if savedHelpWinX >= 0 and savedHelpWinY >= 0 then
+    helpWinX, helpWinY = savedHelpWinX, savedHelpWinY
+  end
   local savedManualWidth = Spring.GetConfigInt("LabTracker_Width", 0)
   manualWidth = (savedManualWidth > 0) and savedManualWidth or nil
   local savedIconSize = Spring.GetConfigInt("LabTracker_IconSize", iconSize)
@@ -2312,6 +2731,22 @@ function widget:Initialize()
     nameColW = iconSize * 2.5
   end
   recountLabs()
+
+  widgetHandler:AddAction("basetrackercenter", BaseTrackerCenterCommand, nil, "t")
+end
+
+function widget:Shutdown()
+  widgetHandler:RemoveAction("basetrackercenter")
+
+  -- Safety net: if this widget is disabled/reloaded mid-cast while the
+  -- minimap is still in slave mode (gl.SlaveMiniMap), release it --
+  -- otherwise the engine's own minimap would stay permanently
+  -- un-drawn (slave mode disables its automatic Draw() entirely) with
+  -- nothing left to ever call gl.DrawMiniMap() again.
+  if minimapSlaved then
+    gl.SlaveMiniMap(false)
+    minimapSlaved = false
+  end
 end
 
 function widget:GameFrame(frame)
@@ -2594,6 +3029,35 @@ end
 function widget:MousePress(mx,my,button)
   if button ~= 1 and button ~= 3 then return false end
 
+  -- The persistent "?" help window floats independently of everything
+  -- else this widget draws, so its own hitboxes are checked FIRST, ahead
+  -- of even the button==3 (right-click) branch below -- a click anywhere
+  -- on it (header, body, or the "X") must never fall through to a team
+  -- row's pin/select/jump handling that happens to sit underneath it on
+  -- screen. Only meaningful while the window is actually open --
+  -- `uiRects.helpWinHeader`/`helpWinClose`/`helpWinBody` are only ever
+  -- populated by DrawHelpWindow while `helpWindowVisible` is true, so
+  -- there's no stale-rect risk the way `leaderboardState.panelRect` has
+  -- elsewhere in this file: when the window is closed, this whole check
+  -- is skipped rather than testing against a leftover rect.
+  if helpWindowVisible then
+    local close, hdr, body = uiRects.helpWinClose, uiRects.helpWinHeader, uiRects.helpWinBody
+    local overClose = mx>=close.x1 and mx<=close.x2 and my>=close.y1 and my<=close.y2
+    local overHeader = mx>=hdr.x1 and mx<=hdr.x2 and my>=hdr.y1 and my<=hdr.y2
+    local overBody = mx>=body.x1 and mx<=body.x2 and my>=body.y1 and my<=body.y2
+    if overClose or overHeader or overBody then
+      if button == 1 and overClose then
+        helpWindowVisible = false
+        Spring.SetConfigInt("LabTracker_HelpWinOpen", 0)
+      elseif button == 1 and overHeader then
+        helpWinDrag.active = true
+        helpWinDrag.startX, helpWinDrag.startY = mx, my
+        helpWinDrag.offsetX, helpWinDrag.offsetY = helpWinX, helpWinY
+      end
+      return true
+    end
+  end
+
   if button == 3 then
     -- Any icon with multiple instances (5 metal extractors, several
     -- factories, multiple commanders, etc.): right-click returns to the
@@ -2616,7 +3080,7 @@ function widget:MousePress(mx,my,button)
       end
     end
 
-    local teamID = hitTeamRow(mx, my)
+    local teamID = hitTeamRow(mx, my) or hitStatsWinRow(mx, my)
     if not teamID then return false end
 
     local t = os.clock()
@@ -2636,7 +3100,7 @@ function widget:MousePress(mx,my,button)
   -- below re-engages it if the clicked icon represents a live unit.
   followState.unitID = nil
 
-  if minimized then
+  if minimized and not castingMode then
     local r = uiRects.minPill
     if mx>=r.x1 and mx<=r.x2 and my>=r.y1 and my<=r.y2 then
       dragState.active = true
@@ -2693,6 +3157,59 @@ function widget:MousePress(mx,my,button)
   if mx>=hur.x1 and mx<=hur.x2 and my>=hur.y1 and my<=hur.y2 then
     stayVisibleWhenUIHidden = not stayVisibleWhenUIHidden
     Spring.SetConfigInt("LabTracker_StayVisibleHiddenUI", stayVisibleWhenUIHidden and 1 or 0)
+    return true
+  end
+
+  local cr = uiRects.castToggle
+  if mx>=cr.x1 and mx<=cr.x2 and my>=cr.y1 and my<=cr.y2 then
+    castingMode = not castingMode
+    -- 2026-09-10: CAST is now the master switch for the docked bottom-bar
+    -- layout AND for surviving Show/Hide UI (F7/Ctrl+F7) -- it applies
+    -- the docked layout any time GUI is visible too, not just while
+    -- hidden (see doDrawScreen's dockedMode source in widget:DrawScreen).
+    -- Keep "F7" (stayVisibleWhenUIHidden) in sync with it in BOTH
+    -- directions on every CAST click, so turning CAST on always also
+    -- means "show through hidden UI" and turning CAST off always also
+    -- means "don't" -- without this, CAST off + F7 still on from an
+    -- earlier click would keep the (now floating, non-docked) panel
+    -- showing through hidden UI, which defeats the point of turning
+    -- CAST off. F7 stays independently clickable right above this for
+    -- anyone who wants to manually decouple them again afterward.
+    stayVisibleWhenUIHidden = castingMode
+    Spring.SetConfigInt("LabTracker_StayVisibleHiddenUI", stayVisibleWhenUIHidden and 1 or 0)
+    Spring.SetConfigInt("LabTracker_CastingMode", castingMode and 1 or 0)
+    return true
+  end
+
+  local ahr = uiRects.autoHideToggle
+  if mx>=ahr.x1 and mx<=ahr.x2 and my>=ahr.y1 and my<=ahr.y2 then
+    autoHideState.enabled = not autoHideState.enabled
+    Spring.SetConfigInt("LabTracker_AutoHideEnabled", autoHideState.enabled and 1 or 0)
+    -- Start revealed so flipping this on doesn't yank the bar out from
+    -- under the very click that just enabled it -- doDrawScreen's own
+    -- reveal-zone/over-bar check takes over again from the next frame.
+    autoHideState.revealed = true
+    return true
+  end
+
+  local swr = uiRects.statsWindowToggle
+  if mx>=swr.x1 and mx<=swr.x2 and my>=swr.y1 and my<=swr.y2 then
+    statsWindowVisible = not statsWindowVisible
+    Spring.SetConfigInt("LabTracker_StatsWindow", statsWindowVisible and 1 or 0)
+    return true
+  end
+
+  -- "?" pill -- used to only ever show a hover tooltip (no click
+  -- behavior of its own at all); now toggles the persistent help
+  -- window instead (see DrawHelpWindow). The window's own click
+  -- handling (close/drag) is checked much earlier in this function,
+  -- before this pill check is ever reached -- this only fires for the
+  -- pill itself, from either the normal header or the docked header
+  -- (both populate the same shared `uiRects.helpToggle`).
+  local hqr = uiRects.helpToggle
+  if mx>=hqr.x1 and mx<=hqr.x2 and my>=hqr.y1 and my<=hqr.y2 then
+    helpWindowVisible = not helpWindowVisible
+    Spring.SetConfigInt("LabTracker_HelpWinOpen", helpWindowVisible and 1 or 0)
     return true
   end
 
@@ -2777,6 +3294,15 @@ function widget:MousePress(mx,my,button)
     local rzr = uiRects.resizeHandle
     if mx>=rzr.x1 and mx<=rzr.x2 and my>=rzr.y1 and my<=rzr.y2 then
       resizeHandlePress = { startX = mx, startY = my }
+      -- 2026-09-09: the docked Casting Mode bar used to hard-block
+      -- resize-dragging here on the theory that its width was always
+      -- the full screen width anyway, so dragging "couldn't do
+      -- anything" -- but doDrawScreen's own width computation now
+      -- honors manualWidth while docked too (see the dockedMode branch
+      -- there), so a drag here does do something: it narrows the bar
+      -- from its left (screen-x=0) edge, same as the normal panel
+      -- narrows from its own left edge. No docked-specific guard
+      -- needed any more.
       if resizeHandleState.enabled then
         resizeDragState.active = true
         resizeDragState.startX = mx
@@ -2786,13 +3312,66 @@ function widget:MousePress(mx,my,button)
     end
   end
 
-  if hitHeader(mx,my) then
-    dragState.active = true
-    dragState.startX = mx
-    dragState.startY = my
-    dragState.offsetX = chartX
-    dragState.offsetY = chartY
-    return true
+  -- The floating stats window's own header, for dragging it around --
+  -- only reachable while it's actually showing (docked casting overlay
+  -- + statsWindowVisible both true). Checked here, AFTER the sort-click
+  -- loop above (and every other specific click target) has already had
+  -- its chance to claim the click -- this hitbox spans the window's
+  -- FULL header width, same as the sort column cells living inside that
+  -- same row, so the two regions overlap on purpose. Disambiguation is
+  -- by ORDER, not by geometry (mirroring exactly how hitHeader/dragState
+  -- below already resolves the normal panel's own header-vs-controls
+  -- overlap): a click on a sort cell is caught by the loop above and
+  -- never reaches here; anything else in the header falls through to
+  -- this drag-start check. (A 2026-09-09 fix tried disambiguating by
+  -- shrinking this hitbox to exclude the sort cells instead -- that
+  -- technically fixed the overlap but made the draggable area a tiny
+  -- sliver next to the "Stats" title, which broke dragging in practice.
+  -- Reordering instead keeps the whole header draggable, like before.)
+  --
+  -- 2026-09-10: gated on `castingMode` alone now, not also
+  -- `stayVisibleWhenUIHidden and Spring.IsGUIHidden()` -- the docked bar
+  -- (and its stats window) now show any time CAST is on, whether GUI is
+  -- hidden or not (see widget:DrawScreen), so this window's own rects
+  -- are live and clickable in both states too.
+  if statsWindowVisible and castingMode then
+    local swhr = uiRects.statsWinHeader
+    if swhr and mx>=swhr.x1 and mx<=swhr.x2 and my>=swhr.y1 and my<=swhr.y2 then
+      statsWinDrag.active = true
+      statsWinDrag.startX = mx
+      statsWinDrag.startY = my
+      statsWinDrag.offsetX = statsWinX
+      statsWinDrag.offsetY = statsWinY
+      return true
+    end
+  end
+
+  -- Same "not draggable" rule for the docked bar's own header/background:
+  -- swallow the click (so it doesn't fall through to the team-row hit
+  -- tests below) without starting a panel drag.
+  --
+  -- 2026-09-10: gated on `castingMode` alone -- the docked layout (and
+  -- this "it's pinned, don't drag it" rule) now applies any time CAST is
+  -- on, whether GUI is hidden or not, not only while hidden. Previously
+  -- this also required `stayVisibleWhenUIHidden and Spring.IsGUIHidden()`,
+  -- which meant a click on the docked bar's background while CAST was on
+  -- but GUI still visible fell into the `else` branch below and started
+  -- a NORMAL PANEL drag using chartX/chartY -- silently corrupting the
+  -- floating panel's saved position with coordinates that were actually
+  -- a click on the (unrelated, full-width, bottom-anchored) docked bar.
+  if castingMode then
+    if hitHeader(mx,my) then
+      return true
+    end
+  else
+    if hitHeader(mx,my) then
+      dragState.active = true
+      dragState.startX = mx
+      dragState.startY = my
+      dragState.offsetX = chartX
+      dragState.offsetY = chartY
+      return true
+    end
   end
 
   local iconRect = hitIcon(mx,my)
@@ -2802,7 +3381,7 @@ function widget:MousePress(mx,my,button)
     return true
   end
 
-  local teamID = hitTeamRow(mx,my)
+  local teamID = hitTeamRow(mx,my) or hitStatsWinRow(mx,my)
   if not teamID then return false end
 
   selectedTeamID = teamID
@@ -2822,6 +3401,20 @@ end
 ------------------------------------------------------------
 
 function widget:MouseRelease(mx, my, button)
+  if button == 1 and helpWinDrag.active then
+    helpWinDrag.active = false
+    Spring.SetConfigInt("LabTracker_HelpWinX", math.floor(helpWinX))
+    Spring.SetConfigInt("LabTracker_HelpWinY", math.floor(helpWinY))
+    return true
+  end
+
+  if button == 1 and statsWinDrag.active then
+    statsWinDrag.active = false
+    Spring.SetConfigInt("LabTracker_StatsWinX", math.floor(statsWinX))
+    Spring.SetConfigInt("LabTracker_StatsWinY", math.floor(statsWinY))
+    return true
+  end
+
   if button == 1 and dragState.active then
     dragState.active = false
 
@@ -2865,6 +3458,79 @@ end
 
 function widget:KeyPress(key, mods, isRepeat)
   if isRepeat then return false end
+
+  -- 2026-09-17: "if i'm hovering over the widget, pressing U will change
+  -- to Unit Tracker, pressing B will change to Base tracker" -- then,
+  -- same day, revised to "just make U and B toggle to both modes so
+  -- using U will toggle to base or unit and B does the same": both keys
+  -- now do the exact same thing (flip trackerMode between the two,
+  -- mirroring `hoverState.titleToggle`'s own click handler further down
+  -- exactly, including its recountLabs/rebuildLayout/
+  -- Spring.SetConfigInt("LabTracker_Mode", ...) persistence) -- there's
+  -- no more "direct-set to a specific mode" behavior, so U and B are
+  -- fully interchangeable, both while hovering. Only claimed while the
+  -- cursor is actually over this widget's own panel/docked bar
+  -- (isMouseOverWidget, above), so U/B still do whatever they're
+  -- normally bound to everywhere else on screen. Checks both the lower-
+  -- and upper-case byte values for each key, matching the same
+  -- defensive both-cases pattern this project's other widgets already
+  -- use for their own letter-key hotkeys (e.g. gui_eco_graph.lua's
+  -- Ctrl+L).
+  if key == string.byte("u") or key == string.byte("U")
+    or key == string.byte("b") or key == string.byte("B") then
+    local mx, my = Spring.GetMouseState()
+    if isMouseOverWidget(mx, my) then
+      trackerMode = (trackerMode == "unit") and "base" or "unit"
+      Spring.SetConfigInt("LabTracker_Mode", trackerMode == "unit" and 1 or 0)
+      recountLabs()
+      rebuildLayout()
+      return true
+    end
+    return false
+  end
+
+  -- 2026-09-18: "pressing S will swap teams up top" -- same hover-gated
+  -- pattern as U/B above, mirroring the "swap" icon's own MousePress
+  -- handler (`uiRects.swapToggle`) exactly: a single toggle, flipping
+  -- which allyteam section sorts first (see `sectionsSwapped`'s use
+  -- inside `getSortedTeams`'s comparator). Only `rebuildLayout()` is
+  -- needed here (not `recountLabs()`) -- same as the click handler --
+  -- since this only changes sort/section order, not the underlying
+  -- game data.
+  if key == string.byte("s") or key == string.byte("S") then
+    local mx, my = Spring.GetMouseState()
+    if isMouseOverWidget(mx, my) then
+      sectionsSwapped = not sectionsSwapped
+      Spring.SetConfigInt("LabTracker_Swapped", sectionsSwapped and 1 or 0)
+      rebuildLayout()
+      return true
+    end
+    return false
+  end
+
+  -- 2026-09-18: "pressing E or C while over the widget will expand or
+  -- collapse the tracker" -- originally implemented as two distinct,
+  -- direct-set actions (E always expands, C always collapses). 2026-10-01
+  -- revision: "make E and C toggle like U and B does" -- same shared-
+  -- toggle design U/B were revised to the same day they were added:
+  -- E and C are now fully interchangeable, both flipping the same
+  -- `sectionsExpanded` boolean back and forth (mirroring the "Expand"/
+  -- "Collapse" divider row's own `uiRects.expandToggle` MousePress
+  -- handler, which has always been a toggle), rather than each being
+  -- pinned to one direction. Checks both keys' lower/upper-case byte
+  -- values in a single combined branch, same as U/B's own merged check.
+  if key == string.byte("e") or key == string.byte("E")
+    or key == string.byte("c") or key == string.byte("C") then
+    local mx, my = Spring.GetMouseState()
+    if isMouseOverWidget(mx, my) then
+      sectionsExpanded = not sectionsExpanded
+      Spring.SetConfigInt("LabTracker_Expanded", sectionsExpanded and 1 or 0)
+      rebuildLayout()
+      return true
+    end
+    return false
+  end
+
   if key == string.byte(" ") then
     if hoverState.icon then
       cycleAndJumpToIcon(hoverState.icon.teamID, hoverState.icon.labName)
@@ -2960,6 +3626,43 @@ function widget:KeyPress(key, mods, isRepeat)
 end
 
 function widget:MouseWheel(up, value)
+  -- 2026-09-12: while the docked bar is auto-hidden (collapsed),
+  -- doDrawScreen returns early -- before it ever reaches the point
+  -- further down that updates leaderboardState.panelRect for this frame
+  -- -- so that rect stays frozen wherever the bar's footprint was the
+  -- LAST time it was actually drawn expanded. Without this check, moving
+  -- the mouse over that now-stale (and currently invisible) footprint
+  -- still read as "over panel" below and swallowed the wheel, blocking
+  -- camera zoom over that whole area even though nothing is actually
+  -- being drawn there any more ("even when it's auto hidden... i cant
+  -- use the mousehwheel"). `castingMode`/`autoHideState` are both
+  -- module-level locals already referenced all over this file outside
+  -- doDrawScreen -- safe to read directly here too, this function isn't
+  -- anywhere near Lua 5.1's upvalue ceiling the way doDrawScreen is.
+  if castingMode and autoHideState.enabled and not autoHideState.revealed then
+    return false
+  end
+
+  -- 2026-09-29: same staleness problem as the auto-hide case just above,
+  -- but for the older, separate `minimized` state on the NORMAL
+  -- (non-docked) panel. While minimized and not docked, doDrawScreen
+  -- returns early -- to draw the small 160x100 minimized button --
+  -- before it ever reaches the point further down that updates
+  -- leaderboardState.panelRect, so that rect stays frozen wherever the
+  -- panel's last EXPANDED footprint was. That's normally a much bigger
+  -- area than the tiny minimized button, so hovering that stale (and
+  -- almost entirely invisible) area still read as "over panel" below and
+  -- swallowed the wheel -- blocking camera zoom over most of the screen
+  -- even with the panel minimized and undocked ("the mousewheel stops
+  -- working on the game even when the base unit tracker is not even
+  -- stretched across the screen (in undocked mode)"). `minimized` is a
+  -- module-level local already referenced all over this file outside
+  -- doDrawScreen -- safe to read directly here too, same as
+  -- castingMode/autoHideState above.
+  if minimized and not castingMode then
+    return false
+  end
+
   local mx, my = Spring.GetMouseState()
   local overPanel = mx >= leaderboardState.panelRect.x1 and mx <= leaderboardState.panelRect.x2
                 and my >= leaderboardState.panelRect.y1 and my <= leaderboardState.panelRect.y2
@@ -3166,16 +3869,437 @@ local function drawCommanderResurrectEffect(r, resurrectFrame)
   return true
 end
 
+-- "CAST" pill (Casting Mode toggle) -- deliberately NOT `local
+-- function`, but a genuine Lua global instead (no `local` keyword
+-- below). doDrawScreen is already sitting exactly at Lua 5.1's
+-- 60-upvalue-per-function ceiling -- confirmed empirically via
+-- `luac5.1 -p`, the same constraint hit (and fixed the same way) in
+-- gui_drawing_tool.lua's DrawPanel this session, see that widget's
+-- own dev notes for the full story -- so even the one extra upvalue a
+-- `local function` reference to this would have cost doDrawScreen was
+-- one too many. A plain global is looked up by name at call time
+-- (through the widget's environment table) rather than captured as an
+-- upvalue, so calling it from doDrawScreen costs zero upvalue slots.
+-- Every other helper in this file stays `local` on purpose (upvalues
+-- are cheaper/faster and keep the module's names out of the global
+-- table) -- this function and CastTooltipLines right below it are the
+-- sole, deliberate exceptions, purely to dodge the ceiling.
+function DrawCastPill(anchorX1, headerY1)
+  local castLabel = "CAST"
+  local castFontSize = 15
+  local castPad = 6
+  local castTW = gl.GetTextWidth(castLabel) * castFontSize
+  local castPillW = castTW + castPad * 2
+  local castPillH = castFontSize + castPad * 2
+
+  local castx2 = anchorX1 - 6
+  local castx1 = castx2 - castPillW
+  local casty1 = headerY1 + 4
+  local casty2 = casty1 + castPillH
+  local castcy = (casty1 + casty2) / 2
+
+  uiRects.castToggle.x1, uiRects.castToggle.y1, uiRects.castToggle.x2, uiRects.castToggle.y2 =
+    castx1, casty1, castx2, casty2
+
+  if castingMode then
+    gl.Color(1, 0.85, 0.2, 0.9)
+    gl.Rect(castx1, casty1, castx2, casty2)
+    gl.Color(0, 0, 0, 1)
+  elseif hoverState.castToggle then
+    gl.Color(1, 0.3, 0.3, 0.3)
+    gl.Rect(castx1, casty1, castx2, casty2)
+    gl.Color(1, 0.3, 0.3, 1)
+  else
+    gl.Color(1, 1, 1, 0.12)
+    gl.Rect(castx1, casty1, castx2, casty2)
+    gl.Color(1, 0.3, 0.3, 0.9)
+  end
+  gl.Text(castLabel, (castx1 + castx2) / 2, castcy - castFontSize * 0.35, castFontSize, "oc")
+  gl.Color(1, 1, 1, 1)
+end
+
+-- Same global-not-local exception, same reason -- called from the
+-- castToggle tooltip branch inside doDrawScreen's own tooltip block so
+-- that block doesn't have to capture `castingMode` as an upvalue.
+function CastTooltipLines()
+  local titleLine = "Casting Mode:"
+  local bodyLine = castingMode
+    and "Docked bottom bar now, and through hidden UI too (F7 synced)."
+    or  "Normal floating panel; hides along with hidden UI."
+  return titleLine, bodyLine
+end
+
+-- Casting Mode's consolidated single-row header (item 3 from the
+-- 2026-09-09 redesign: CAST/F7/"<>" and Icon/Leaderboard/Size/?/STATS
+-- all on the SAME line, instead of doDrawScreen's normal two-tier
+-- header -- one tall row's worth of vertical space saved) plus the
+-- floating "tab" title (item 4) that pokes up above the docked panel's
+-- own top edge instead of taking a row inside it. Deliberately a
+-- global, not local, function -- same upvalue-ceiling reason as
+-- DrawCastPill/CastTooltipLines above: doDrawScreen is already sitting
+-- exactly at Lua 5.1's 60-upvalue limit, so calling this from there
+-- must cost it zero upvalue slots.
+--
+-- `headerY2` is the docked panel's own top edge (the header band is
+-- [headerY2 - headerH, headerY2]); `totalWidth` is the full screen
+-- width the docked panel spans (item 1: "span all the way across").
+-- Deliberately does NOT call the existing DrawCastPill -- that one's
+-- sizing/anchor math assumes the normal header's taller pill row, and
+-- every pill here (CAST included) needs to share this row's own
+-- compact `pill()` helper instead for a consistent look. Downstream
+-- code (hover, tooltips, click handling) doesn't care which function
+-- populated uiRects.castToggle/hoverState.castToggle, so this is a
+-- safe, independent redraw of the same toggle.
+function DrawDockedHeader(x, headerY2, totalWidth, headerH)
+  local headerY1 = headerY2 - headerH
+  local pad = 6
+
+  gl.Color(0.1, 0.1, 0.1, 0.85)
+  gl.Rect(x, headerY1, x + totalWidth, headerY2)
+
+  -- Right-aligned pill row. Each call anchors off wherever the
+  -- previous one's left edge ended up (via the shared `cursorX`
+  -- upvalue), same chaining pattern the normal header already uses
+  -- pill-to-pill, just generalized into one helper instead of
+  -- repeating the same ~20 lines eight times.
+  local cursorX = x + totalWidth - pad
+  local function pill(label, rectTable, active, hover, fontSize)
+    fontSize = fontSize or 13
+    local tw = gl.GetTextWidth(label) * fontSize
+    local pillW = tw + pad * 2
+    local pillH = headerH - 8
+    local y1 = headerY1 + (headerH - pillH) / 2
+    local y2 = y1 + pillH
+    local x2 = cursorX
+    local x1 = x2 - pillW
+
+    rectTable.x1, rectTable.y1, rectTable.x2, rectTable.y2 = x1, y1, x2, y2
+
+    if active then
+      gl.Color(1, 0.85, 0.2, 0.9)
+      gl.Rect(x1, y1, x2, y2)
+      gl.Color(0, 0, 0, 1)
+    elseif hover then
+      gl.Color(1, 0.3, 0.3, 0.3)
+      gl.Rect(x1, y1, x2, y2)
+      gl.Color(1, 0.3, 0.3, 1)
+    else
+      gl.Color(1, 1, 1, 0.15)
+      gl.Rect(x1, y1, x2, y2)
+      gl.Color(1, 1, 1, 0.9)
+    end
+    gl.Text(label, (x1 + x2) / 2, (y1 + y2) / 2 - fontSize * 0.3, fontSize, "oc")
+    gl.Color(1, 1, 1, 1)
+
+    cursorX = x1 - pad
+  end
+
+  pill("<>", uiRects.resizeHandle, resizeHandleState.enabled, hoverState.resizeHandle, 14)
+  pill("F7", uiRects.hideUiToggle, stayVisibleWhenUIHidden, hoverState.hideUiToggle, 14)
+  pill("CAST", uiRects.castToggle, castingMode, hoverState.castToggle, 14)
+  pill("AUTO", uiRects.autoHideToggle, autoHideState.enabled, hoverState.autoHideToggle, 14)
+  pill("STATS", uiRects.statsWindowToggle, statsWindowVisible, hoverState.statsWindowToggle, 14)
+  pill("?", uiRects.helpToggle, false, hoverState.helpToggle, 13)
+  pill("Size", sizeMenu.toggleRect, sizeMenu.open, hoverState.sizeToggle, 13)
+  pill("Leaderboard", leaderboardState.rect, leaderboardState.mode, hoverState.leaderboardToggle, 13)
+  pill("_", uiRects.iconToggle, false, hoverState.iconToggle, 14)
+
+  -- Minimal/Eco/Defense/Offense/All (Tech 1/2/3/All in Unit Tracker
+  -- mode): this was previously only available in the normal panel as
+  -- its own dedicated full-width row; docked mode has no spare row for
+  -- it (that's the whole point of docking), so it shares this header
+  -- row with the other controls instead -- left side, opposite the
+  -- right-aligned pills. Deliberately NOT shrunk into small text-fit
+  -- pills: this reuses the SAME evenly-divided, full-height segmented
+  -- layout (and the same yellow "you already own units in this hidden
+  -- tier" corner-triangle flag) as the normal panel's own view-mode
+  -- row further below -- just narrower (only the leftover width left
+  -- of `cursorX`, the right-aligned pill row's own left edge, instead
+  -- of the full panel width) and drawn on this row's y-band instead of
+  -- its own. Uses the exact same currentViewModeColumns()/
+  -- currentActiveViewMode()/viewModeRects/cachedLayout.myOwnedUnitTiers
+  -- machinery the normal panel's row and MousePress's click handler
+  -- (which iterates currentViewModeColumns() unconditionally, not
+  -- gated on dockedMode) already share, so clicking a segment filters
+  -- the docked bar's own team list exactly like the normal panel's row
+  -- always has -- no separate click-handling needed.
+  do
+    local vmCols = currentViewModeColumns()
+    local vmActive = currentActiveViewMode()
+    local vmAreaX2 = cursorX -- right edge: wherever the right-aligned pills left off, gap included
+    local vmColW = (vmAreaX2 - x) / #vmCols
+    local vmFontSize = 12
+
+    gl.Color(0.15, 0.15, 0.15, 0.75)
+    gl.Rect(x, headerY1, vmAreaX2, headerY2)
+
+    local vmCy = (headerY1 + headerY2) / 2
+    for i, col in ipairs(vmCols) do
+      local cx1 = x + (i - 1) * vmColW
+      local cx2 = x + i * vmColW
+      local ccx = (cx1 + cx2) / 2
+
+      local hr = viewModeRects[col.key]
+      hr.x1, hr.y1, hr.x2, hr.y2 = cx1, headerY1, cx2, headerY2
+
+      if vmActive == col.key then
+        gl.Color(1, 0.85, 0.2, 0.9)
+        gl.Rect(cx1, headerY1, cx2, headerY2)
+        gl.Color(0, 0, 0, 1)
+      else
+        gl.Color(1, 1, 1, 0.85)
+      end
+
+      -- Same "you already own units in this tier" flag as the normal
+      -- panel's row. Shown on any non-active tier button -- including
+      -- while "All" is the active filter (2026-09-09 fix: this used to
+      -- also require vmActive ~= "all", which suppressed the flag
+      -- entirely whenever All was selected. But the flag isn't really
+      -- "this tier is hidden, and you have units in it" -- it's "you
+      -- have units in this tier, click here to filter down to just
+      -- them" -- and that's just as true, and arguably more useful,
+      -- while looking at the unfiltered All view, where a freshly
+      -- unlocked tier's handful of units can get lost in the noise of
+      -- everything else. Only the CURRENTLY ACTIVE button is still
+      -- exempt, since flagging "you have units in the tier you're
+      -- already looking at" is redundant.
+      if col.key ~= vmActive and cachedLayout.myOwnedUnitTiers[col.key] then
+        local triSize = 10
+        gl.Color(1, 0.85, 0.2, 1)
+        gl.BeginEnd(GL.TRIANGLES, function()
+          gl.Vertex(cx1, headerY1)
+          gl.Vertex(cx1, headerY1 + triSize)
+          gl.Vertex(cx1 + triSize, headerY1)
+        end)
+        gl.Color(1, 1, 1, 0.85)
+      end
+
+      gl.Text(col.label, ccx, vmCy - vmFontSize * 0.3, vmFontSize, "oc")
+    end
+
+    gl.Color(1, 1, 1, 1)
+  end
+
+  -- Floating tab title (item 4): pokes up above the docked panel's own
+  -- top edge, so it costs the panel itself zero vertical space -- just
+  -- a small rectangular tab, not the angled shape sketched in the
+  -- reference screenshot (kept simple for this first pass; easy to
+  -- reshape later once the overall layout is confirmed). Same
+  -- click-to-switch-Base/Unit-Tracker behavior as the normal panel's
+  -- inline title, since MousePress's title-click handler keys off
+  -- uiRects.title regardless of which draw path set it.
+  local titleText = trackerTitle()
+  local titleFontSize = 15
+  local titleTW = gl.GetTextWidth(titleText) * titleFontSize
+  local tabPadX, tabPadY = 10, 6
+  local tabH = titleFontSize + tabPadY * 2
+  local tabX1 = x + pad
+  local tabX2 = tabX1 + titleTW + tabPadX * 2
+  local tabY1 = headerY2
+  local tabY2 = headerY2 + tabH
+
+  uiRects.title.x1, uiRects.title.y1, uiRects.title.x2, uiRects.title.y2 = tabX1, tabY1, tabX2, tabY2
+
+  gl.Color(0.1, 0.1, 0.1, 0.9)
+  gl.Rect(tabX1, tabY1, tabX2, tabY2)
+  gl.Color(1, 1, 1, hoverState.titleToggle and 0.9 or 0.35)
+  gl.LineWidth(1.5)
+  gl.BeginEnd(GL.LINE_STRIP, function()
+    gl.Vertex(tabX1, tabY1)
+    gl.Vertex(tabX1, tabY2)
+    gl.Vertex(tabX2, tabY2)
+    gl.Vertex(tabX2, tabY1)
+  end)
+  gl.LineWidth(1)
+  gl.Color(1, 1, 1, 1)
+  gl.Text(titleText, (tabX1 + tabX2) / 2, tabY1 + tabPadY - 3, titleFontSize, "oc")
+end
+
+-- The docked bar's collapsed state (AUTO pill on, mouse away from the
+-- bottom edge) -- just a thin, low-key strip flush with the very bottom
+-- of the screen so there's still SOMETHING on screen hinting the bar is
+-- there and where to put the mouse to bring it back, same idea as the
+-- Windows taskbar's own auto-hidden sliver. Deliberately a plain global,
+-- not `local function` -- same upvalue-ceiling reason as DrawCastPill/
+-- CastTooltipLines/DrawDockedHeader above: doDrawScreen is already
+-- sitting exactly at Lua 5.1's 60-upvalue limit, so calling this from
+-- there must cost it zero upvalue slots. Takes `vsx` as a parameter
+-- (doDrawScreen already has it) rather than needing its own upvalue.
+function AutoHideStrip(vsx)
+  local h = 3
+  gl.Color(1, 1, 1, 0.2)
+  gl.Rect(0, 0, vsx, h)
+
+  -- A brighter little centered grip mark -- purely cosmetic, mirrors the
+  -- "there's a handle here" affordance the resize handle/pills already
+  -- use elsewhere in this header.
+  local gripW = 60
+  local cx = vsx / 2
+  gl.Color(1, 1, 1, 0.45)
+  gl.Rect(cx - gripW / 2, 0, cx + gripW / 2, h)
+  gl.Color(1, 1, 1, 1)
+end
+
+-- Owns every read/write of autoHideState on doDrawScreen's behalf.
+-- Deliberately a plain global (same upvalue-ceiling reason as
+-- AutoHideStrip above): doDrawScreen hands it plain values it already
+-- has for free (dockedMode, mx, my, and whether a menu/drag belonging to
+-- the bar is currently active) as ordinary function ARGUMENTS -- which
+-- cost nothing upvalue-wise, unlike referencing autoHideState itself
+-- would -- and gets back a plain boolean.
+--
+-- 2026-09-10: uses two DIFFERENT thresholds depending on whether the bar
+-- is already showing -- plain "my <= X" hysteresis, not a single shared
+-- zone. Without this split (the original implementation, before the
+-- user's two follow-up requests to shrink the reveal trigger down), the
+-- SAME small zone also decided whether an already-revealed bar stayed up
+-- -- and the header/pill row sits at the TOP of the bar, not the bottom,
+-- so the instant the mouse moved up to actually click CAST/F7/STATS/etc.
+-- it fell outside that tiny zone and the bar yanked itself away out from
+-- under the click, making the pills completely unreachable ("when it
+-- auto shows i will never access the pill buttons again"). Now:
+-- - To REVEAL from hidden: the mouse has to be within a strip at the
+--   bottom edge sized as ONE PLAYER ROW's own height (`rowH`, the exact
+--   same module-level constant every team row in the panel is drawn at,
+--   floored to `AUTOHIDE_REVEAL_ZONE_MIN_PX` purely as a defensive
+--   minimum) -- or `keepOpen`. History: this used to be a FRACTION of
+--   the bar's own last-known TOTAL height (100% -> 50% -> 25% across
+--   three user requests, briefly a flat 6px in a same-day hysteresis
+--   rewrite that fought with BAR's own edge-of-screen camera pan, then
+--   restored height-relative at 25%, then back to 100%) -- but a
+--   fraction of TOTAL height scales with how many players/teams are in
+--   the game, so a big 16-player match with a much taller bar ended up
+--   with a much BIGGER reveal zone too, reaching disruptively far up the
+--   screen. The user asked for the trigger to instead always match
+--   hovering "the very first player on the list from the bottom" --
+--   i.e. exactly one row's worth of screen space, regardless of how many
+--   total rows the bar has -- so a big game never makes the trigger any
+--   more sensitive than a small one.
+-- - To STAY revealed once showing: the mouse just has to be anywhere
+--   over the bar's own last-known FULL height (`lastBarHeight`, not a
+--   fraction of it) -- covering the header/pills at the top all the way
+--   down to the bottom -- or `keepOpen`. It only collapses again once the
+--   mouse leaves the bar's entire footprint, matching "it should
+--   disappear when the mouse is off the base unit tracker." This part is
+--   unaffected by the reveal-zone change above -- once revealed, the
+--   whole bar (not just the last row) keeps it up.
+function AutoHideShouldCollapse(dockedMode, mx, my, keepOpen)
+  if not dockedMode then
+    return false
+  end
+  if not autoHideState.enabled then
+    autoHideState.revealed = true
+    return false
+  end
+
+  -- 2026-09-10: never collapse before a real bar height has ever been
+  -- recorded. AutoHideRecordHeight (below) only runs on frames where the
+  -- bar actually draws -- which this very function gates, by returning
+  -- early on a collapse -- so on the very first frame after the widget
+  -- loads (or any time lastBarHeight is still its startup default of 0),
+  -- collapsing here would mean the bar NEVER gets a chance to learn its
+  -- real height. That was the actual cause of "the first time i ever
+  -- move mouse down to trigger the autoshow it's really low, then the
+  -- following ones are higher" from back when the reveal zone was itself
+  -- derived from lastBarHeight. 2026-09-12: the reveal zone below no
+  -- longer depends on lastBarHeight at all (it's just `rowH` now), but
+  -- this guard still matters for the "stay revealed" check just below,
+  -- which does -- an unrecorded lastBarHeight of 0 would make literally
+  -- every mouse position outside the tiny reveal zone read as "off the
+  -- bar" and collapse it right back down the instant it's revealed.
+  if autoHideState.lastBarHeight <= 0 then
+    autoHideState.revealed = true
+    return false
+  end
+
+  -- 2026-09-12: the floating Base/Unit Tracker title tab (drawn by
+  -- DrawDockedHeader, right after this comment block's sibling code)
+  -- deliberately pokes up ABOVE the docked bar's own top edge -- "costs
+  -- the panel itself zero vertical space" -- which means its rect
+  -- (uiRects.title) sits just outside the [0, lastBarHeight] footprint
+  -- every check below is otherwise based on. Moving the mouse up to
+  -- click it (to switch Base Tracker / Unit Tracker) therefore read as
+  -- "off the bar" and collapsed the widget out from under the cursor
+  -- before the click could land -- the same class of bug as the
+  -- original CAST/AUTO/etc. pill-row hiccup, just for this one small
+  -- protruding tab instead of the whole header. `uiRects` is a
+  -- module-level local already captured by plenty of OTHER global
+  -- functions in this file (safe here too -- this doesn't cost
+  -- doDrawScreen anything, since doDrawScreen never references uiRects
+  -- from inside its own body any differently than it already does for
+  -- every other pill/toggle rect). Treat being over the tab as
+  -- equivalent to being over the bar itself, on both the reveal and
+  -- stay-revealed checks below.
+  local tab = uiRects.title
+  local overTitleTab = mx >= tab.x1 and mx <= tab.x2 and my >= tab.y1 and my <= tab.y2
+
+  local AUTOHIDE_REVEAL_ZONE_MIN_PX = 6
+  local revealZonePx = math.max(rowH, AUTOHIDE_REVEAL_ZONE_MIN_PX)
+  local inZone = my <= revealZonePx or overTitleTab
+
+  if autoHideState.revealed then
+    local overBar = my <= autoHideState.lastBarHeight or overTitleTab
+    autoHideState.revealed = inZone or overBar or keepOpen
+  else
+    autoHideState.revealed = inZone or keepOpen
+  end
+
+  return not autoHideState.revealed
+end
+
+-- Records the docked bar's real height for AutoHideShouldCollapse's own
+-- "is the mouse still over the bar" check next frame. Same
+-- zero-upvalue-cost reason as the function above -- `dockedMode` and
+-- `drawHeight` are plain arguments doDrawScreen already has, not
+-- upvalues it would otherwise need to capture.
+function AutoHideRecordHeight(dockedMode, drawHeight)
+  if dockedMode then
+    autoHideState.lastBarHeight = drawHeight
+  end
+end
+
+-- Same global-not-local exception, same reason -- called from the
+-- autoHideToggle tooltip branch inside doDrawScreen's own tooltip block,
+-- mirroring CastTooltipLines right above.
+function AutoHideTooltipLines()
+  local titleLine = "Auto-Hide Status:"
+  local bodyLine = autoHideState.enabled
+    and "On -- bar tucks away like the Windows taskbar; hover the very bottom edge of the screen to bring it back."
+    or  "Off -- docked bar always stays visible."
+  return titleLine, bodyLine
+end
+
 -- Renamed from `function widget:DrawScreen()` to a plain local so both
 -- the normal DrawScreen callin and the DrawScreenEffects fallback
 -- further below (used to survive BAR's Show/Hide UI toggle) can share
 -- this one body instead of duplicating it. Doesn't reference `self`
 -- anywhere, so dropping the `widget:` method form changes nothing.
-local function doDrawScreen()
+--
+-- `dockedMode` (new): when true, this draws Casting Mode's docked
+-- bottom bar instead of the normal draggable panel -- full width,
+-- anchored to the bottom of the screen, non-draggable, with a compact
+-- single-row header (DrawDockedHeader) instead of the tall two-tier
+-- one and the stat/view-mode rows omitted entirely (they move to the
+-- separate floating DrawStatsWindow instead). Everything below that --
+-- every team row, icon, tombstone, hover effect -- is the SAME code
+-- either way; only the position/width source and which header function
+-- runs actually branch on it. `vsx, vsy` (screen size) are only needed
+-- when dockedMode is true (widget:DrawScreenEffects already has them
+-- from the engine callin; widget:DrawScreen doesn't need them at all
+-- since dockedMode is always false there).
+local function doDrawScreen(dockedMode, vsx, vsy)
   gl.Blending(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA)
 
   local mx, my = Spring.GetMouseState()
   mouseX, mouseY = mx, my
+
+  -- 2026-09-22: Shift-cycles-view-mode-tabs hotkey -- polled once per
+  -- rendered frame (see CheckShiftCycleHotkey's own comment, next to
+  -- isMouseOverWidget, for why this can't just be a widget:KeyPress
+  -- branch like U/B/S/E/C above it). A plain global call costs
+  -- doDrawScreen zero upvalue slots, same as every other global helper
+  -- (DrawCastPill, AutoHideShouldCollapse, etc.) it already calls.
+  CheckShiftCycleHotkey(mx, my)
 
   if dragState.active then
     chartX = dragState.offsetX + (mx - dragState.startX)
@@ -3184,7 +4308,14 @@ local function doDrawScreen()
     local newWidth = resizeDragState.startWidth + (mx - resizeDragState.startX)
     local minW = cachedLayout.minWidth
     local vsx = select(1, Spring.GetViewGeometry())
-    local maxW = (vsx and (vsx - chartX - 20)) or math.huge
+    -- Docked mode is always left-anchored at screen-x=0 (see `x` just
+    -- below), not chartX (that's the normal panel's own dragged
+    -- position, meaningless while docked) -- so the "how wide can this
+    -- get before it runs off the right edge of the screen" clamp has
+    -- to measure from 0 while docked, or it'd let the bar get dragged
+    -- wider than the screen itself.
+    local leftEdge = dockedMode and 0 or chartX
+    local maxW = (vsx and (vsx - leftEdge - 20)) or math.huge
     maxW = math.max(maxW, minW)
     manualWidth = math.max(minW, math.min(newWidth, maxW))
   else
@@ -3205,6 +4336,9 @@ local function doDrawScreen()
     hoverState.resizeHandle = ptIn(uiRects.resizeHandle)
     hoverState.helpToggle = ptIn(uiRects.helpToggle)
     hoverState.hideUiToggle = ptIn(uiRects.hideUiToggle)
+    hoverState.castToggle = ptIn(uiRects.castToggle)
+    hoverState.autoHideToggle = ptIn(uiRects.autoHideToggle)
+    hoverState.statsWindowToggle = ptIn(uiRects.statsWindowToggle)
     hoverState.sizeOption = nil
     if sizeMenu.open then
       for _, r in ipairs(sizeMenu.optionRects) do
@@ -3236,7 +4370,43 @@ local function doDrawScreen()
     followState.camPos = nil
   end
 
-  if minimized then
+  -- 2026-09-10: "AUTO" pill -- Windows-taskbar-style auto-hide for the
+  -- docked bar. AutoHideShouldCollapse (global, see its own comment near
+  -- AutoHideStrip below) owns all the autoHideState reads/writes itself
+  -- -- doDrawScreen only ever hands it plain values it already has as
+  -- locals/upvalues-it-already-pays-for (mx, my, and whether a menu/drag
+  -- that belongs to the bar is active) and gets a plain boolean back, so
+  -- this costs doDrawScreen zero NEW upvalue slots. That matters here:
+  -- this function is already sitting exactly at Lua 5.1's 60-upvalue
+  -- ceiling (see DrawCastPill's own comment above) -- referencing
+  -- autoHideState directly from here (instead of through this helper)
+  -- was tried first and pushed it to 61, confirmed by `luac5.1 -p`
+  -- itself refusing to compile ("function ... has more than 60
+  -- upvalues"). When collapsed, skip the entire rest of this draw
+  -- (header, rows, everything) in favor of a thin AutoHideStrip so it
+  -- stays out of the way of the game view, same as the real taskbar
+  -- collapsing down to a sliver.
+  if dockedMode then
+    -- 2026-09-17: leaderboardState.mode used to be OR'd in here directly,
+    -- but it's a PERSISTED display-mode toggle (stays true indefinitely
+    -- once turned on), not a transient interaction like the other three --
+    -- so including it meant keepOpen was permanently true, and the bar
+    -- could never auto-hide at all, the whole time Leaderboard mode was
+    -- on ("if i have it docked at the bottom (cast) and leaderboard
+    -- enabled, it doesn't auto-hide"). Dropped: Leaderboard mode no
+    -- longer suppresses auto-hide by itself -- only an actual in-progress
+    -- interaction (Size menu open, or an active resize/drag) does.
+    local keepOpen = sizeMenu.open or resizeDragState.active or dragState.active
+    if AutoHideShouldCollapse(dockedMode, mx, my, keepOpen) then
+      for k in pairs(rowRects) do rowRects[k] = nil end
+      for i = #iconRects, 1, -1 do iconRects[i] = nil end
+      uiRects.header.x1, uiRects.header.y1, uiRects.header.x2, uiRects.header.y2 = 0, 0, 0, 0
+      AutoHideStrip(vsx)
+      return
+    end
+  end
+
+  if minimized and not dockedMode then
     -- Clear in place (not `= {}`) so this doesn't allocate a fresh
     -- table every single rendered frame -- rowRects is keyed by
     -- teamID, iconRects is a plain array.
@@ -3282,11 +4452,33 @@ local function doDrawScreen()
 
   local maxIcons = cachedLayout.maxIcons
   local headerFontSize = cachedLayout.headerFontSize
-  local totalWidth = getEffectiveTotalWidth(chartX)
+  -- 2026-09-09: docked mode used to always be exactly `vsx` (the full
+  -- screen width), full stop -- resizing it was blocked in MousePress
+  -- specifically because this line ignored manualWidth entirely, so a
+  -- drag genuinely couldn't do anything. Now that the resize handle is
+  -- allowed to engage while docked (see the resizeHandle press block
+  -- above), this has to actually consult it: same clamped-width helper
+  -- the normal panel uses (getEffectiveTotalWidth), just anchored at
+  -- screen-x=0 instead of chartX, and only while the "<>" toggle is on
+  -- -- otherwise the bar stays full width exactly like before.
+  local totalWidth
+  if dockedMode then
+    totalWidth = resizeHandleState.enabled and getEffectiveTotalWidth(0) or vsx
+  else
+    totalWidth = getEffectiveTotalWidth(chartX)
+  end
   currentTotalWidth = totalWidth
 
-  local x = chartX
-  local y = chartY
+  local x = dockedMode and 0 or chartX
+  -- `y` is the panel's top-reference throughout the rest of this
+  -- function (content draws from `y - drawHeight` up to `y + padding`).
+  -- Docked mode is bottom-anchored (bottom edge flush with screen
+  -- y=0) instead of chartY-anchored, but drawHeight isn't known yet at
+  -- this point -- it depends on content height, computed just below --
+  -- so `yOverflowRef` stands in for `y` in the overflow/scroll-clamp
+  -- math only. The real `y` is set right after drawHeight is final
+  -- (search this function for "local y = " further down).
+  local yOverflowRef = dockedMode and vsy or chartY
 
   -- Icons only overflow their column (and become horizontally
   -- scrollable) once the resize handle is enabled and dragged narrower
@@ -3309,23 +4501,47 @@ local function doDrawScreen()
   -- definition up top), not raw rowH, so this must match whatever
   -- headerHeight actually draws as further down or the header and the
   -- first content row would disagree about where the header ends.
-  local headerRowSpace = math.max(rowH, minHeaderHeight)
-  local height = headerRowSpace + statsRowH + viewModeRowH + contentHeight + padding * 2
+  -- Docked mode uses a small fixed-height single-row header
+  -- (DrawDockedHeader) instead of the normal tall two-tier one, and
+  -- skips the stat/view-mode rows entirely -- they live in the
+  -- separate floating DrawStatsWindow instead (see doDrawCastingMode-
+  -- level comment above). Both are what actually removes the extra
+  -- vertical space Casting Mode is after.
+  local DOCKED_HEADER_H = 30
+  local headerRowSpace = dockedMode and DOCKED_HEADER_H or math.max(rowH, minHeaderHeight)
+  local statsRowSpace = dockedMode and 0 or statsRowH
+  local viewModeRowSpace = dockedMode and 0 or viewModeRowH
+  local edgePadding = dockedMode and 0 or padding
+  local height = headerRowSpace + statsRowSpace + viewModeRowSpace + contentHeight + edgePadding * 2
 
-  local fixedHeaderHeight = headerRowSpace + statsRowH + viewModeRowH
+  local fixedHeaderHeight = headerRowSpace + statsRowSpace + viewModeRowSpace
   local viewportHeightUnclamped = contentHeight
   -- Same scroll mechanism as before, now triggered by overflow in
   -- ANY mode (Leaderboard or normal grouped/expanded), not just
   -- Leaderboard specifically -- the underlying field names still say
   -- "leaderboardState" from when this was first built, but the logic
-  -- itself is generic.
-  leaderboardState.scrollActive = (y - height) < 0
+  -- itself is generic. Docked mode compares against the full screen
+  -- height (yOverflowRef = vsy) instead of chartY -- i.e. "does this
+  -- team list even fit on screen at all", since the docked bar has no
+  -- draggable position to make room by moving.
+  leaderboardState.scrollActive = (yOverflowRef - height) < 0
 
   local drawHeight = height
   local viewportHeight = viewportHeightUnclamped
   if leaderboardState.scrollActive then
-    drawHeight = math.min(height, y)
-    viewportHeight = drawHeight - fixedHeaderHeight - padding * 2
+    -- `yOverflowRef` can end up 0/negative for the normal panel if it
+    -- was ever dragged (or its saved config landed) off the bottom of
+    -- the screen -- in that case `math.min(height, yOverflowRef)`
+    -- would go non-positive and the derived viewportHeight would go
+    -- negative, which gl.Scissor rejects outright ("<height> must be
+    -- greater than or equal zero"), erroring every DrawScreen call.
+    -- Floor both at 0 so a badly-positioned panel just draws
+    -- collapsed/empty instead of crashing -- /basetrackercenter (or a
+    -- manual drag) can then bring it back on screen. Docked mode can't
+    -- go negative here (vsy is always positive), but flooring is
+    -- harmless either way.
+    drawHeight = math.max(0, math.min(height, yOverflowRef))
+    viewportHeight = math.max(0, drawHeight - fixedHeaderHeight - edgePadding * 2)
     leaderboardState.scrollMaxOffset = math.max(0, contentHeight - viewportHeight)
     leaderboardState.scrollOffset = math.max(0, math.min(leaderboardState.scrollOffset, leaderboardState.scrollMaxOffset))
   else
@@ -3333,16 +4549,47 @@ local function doDrawScreen()
     leaderboardState.scrollMaxOffset = 0
   end
 
-  gl.Color(0,0,0,backgroundOpacity)
-  gl.Rect(x, y - drawHeight, x + totalWidth, y + padding)
-  leaderboardState.panelRect.x1, leaderboardState.panelRect.y1, leaderboardState.panelRect.x2, leaderboardState.panelRect.y2 = x, y - drawHeight, x + totalWidth, y + padding
+  -- Real render anchor, now that drawHeight is final: chartY as always
+  -- for the normal panel, or the bottom of the screen for docked mode
+  -- -- its top edge sits at exactly `drawHeight`, flush against y=0
+  -- with no bottom padding (edgePadding is already 0 above, so the
+  -- panelRect below naturally has none either).
+  local y = dockedMode and drawHeight or chartY
 
-  local headerHeight = math.max(rowH, minHeaderHeight)
+  -- Feeds next frame's auto-hide "is the mouse still over the bar"
+  -- check (see AutoHideShouldCollapse near AutoHideStrip below) -- only
+  -- meaningful/updated while the bar is actually drawn at full size
+  -- (docked AND, if auto-hide is on, revealed; collapsed frames return
+  -- before ever reaching this point, so they correctly leave the last
+  -- REAL height in place instead of stomping it with 0). Routed through
+  -- a global function, same zero-upvalue-cost reason as
+  -- AutoHideShouldCollapse itself -- `dockedMode` and `drawHeight` are
+  -- passed as plain arguments (already locals/params here, not
+  -- upvalues), so this doesn't touch autoHideState from inside
+  -- doDrawScreen directly.
+  AutoHideRecordHeight(dockedMode, drawHeight)
+
+  gl.Color(0,0,0,backgroundOpacity)
+  gl.Rect(x, y - drawHeight, x + totalWidth, y + edgePadding)
+  leaderboardState.panelRect.x1, leaderboardState.panelRect.y1, leaderboardState.panelRect.x2, leaderboardState.panelRect.y2 = x, y - drawHeight, x + totalWidth, y + edgePadding
+
+  local headerHeight = headerRowSpace
   uiRects.header.x1 = x
   uiRects.header.y1 = y - headerHeight
   uiRects.header.x2 = x + totalWidth
   uiRects.header.y2 = y
 
+  -- Docked mode's header is a completely different, compact layout
+  -- (DrawDockedHeader, declared as a global just above doDrawScreen for
+  -- the same upvalue-ceiling reason as DrawCastPill/CastTooltipLines --
+  -- doDrawScreen is already sitting exactly at Lua 5.1's 60-upvalue
+  -- limit) -- the normal tall header below is skipped entirely rather
+  -- than adapted in place, since the two share almost nothing visually
+  -- (single consolidated pill row + a floating tab title, vs. the
+  -- title-inline-plus-two-pill-rows layout below).
+  if dockedMode then
+    DrawDockedHeader(x, y, totalWidth, DOCKED_HEADER_H)
+  else
   gl.Color(0.1,0.1,0.1,0.8)
   gl.Rect(uiRects.header.x1, uiRects.header.y1, uiRects.header.x2, uiRects.header.y2)
 
@@ -3562,6 +4809,14 @@ local function doDrawScreen()
     gl.Color(1, 1, 1, 1)
   end
 
+  -- "Casting Mode" toggle -- same red/gold pill as "F7" and "<>",
+  -- sitting one further left. Click flips whether widget:DrawScreenEffects
+  -- swaps the normal panel out for the broadcast bar + slaved minimap
+  -- while UI is hidden (see castingMode's own module-level comment).
+  -- Drawn via the global DrawCastPill (declared just above doDrawScreen)
+  -- rather than inline -- see that function's own comment for why.
+  DrawCastPill(uiRects.hideUiToggle.x1, uiRects.header.y1)
+
   do
     local vmDescriptions = (trackerMode == "unit") and unitViewModeDescriptions or viewModeDescriptions
     -- hideUiToggle now gets its own floating cursor tooltip (see the
@@ -3585,6 +4840,7 @@ local function doDrawScreen()
       gl.Text(descText, (x + x + totalWidth) / 2, descY, descFontSize, "oc")
     end
   end
+  end -- if dockedMode ... else ... end (normal tall header)
 
   -- Must match uiRects.header.y1 (the header's actual bottom edge,
   -- floored at minHeaderHeight) -- this used to just be y - rowH,
@@ -3594,6 +4850,12 @@ local function doDrawScreen()
   local headerY = uiRects.header.y1
   local rowY = headerY
 
+  -- Docked mode skips the stat row and view-mode row entirely -- they
+  -- live in the separate floating DrawStatsWindow instead (item 5:
+  -- "removes two rows in the docked panel"). rowY simply isn't
+  -- decremented for them, so the team-row loop below starts right
+  -- under the compact header with nothing in between.
+  if not dockedMode then
   do
     local statsTop = rowY
     local statsBottom = rowY - statsRowH
@@ -3664,11 +4926,16 @@ local function doDrawScreen()
         gl.Color(1, 1, 1, 0.85)
       end
 
-      -- "You already have units in this tier but the filter is
-      -- hiding them" flag -- a small yellow corner triangle, same
-      -- yellow as the active-filter highlight, bottom-left of any
-      -- tier button that isn't the active one.
-      if col.key ~= vmActive and vmActive ~= "all" and cachedLayout.myOwnedUnitTiers[col.key] then
+      -- "You already have units in this tier" flag -- a small yellow
+      -- corner triangle, same yellow as the active-filter highlight,
+      -- bottom-left of any tier button that isn't the active one.
+      -- Shown even while "All" is the active filter (2026-09-09 fix --
+      -- see DrawDockedHeader's copy of this same check for why): it's
+      -- not just an "this is hidden" notice, it's a "you have units
+      -- here, filter down to see just them" pointer, which is just as
+      -- useful -- more, really -- while looking at the unfiltered All
+      -- view. Only the currently active button stays exempt.
+      if col.key ~= vmActive and cachedLayout.myOwnedUnitTiers[col.key] then
         local triSize = 10
         gl.Color(1, 0.85, 0.2, 1)
         gl.BeginEnd(GL.TRIANGLES, function()
@@ -3687,6 +4954,7 @@ local function doDrawScreen()
     gl.Color(1, 1, 1, 1)
     rowY = rowY - viewModeRowH
   end
+  end -- if not dockedMode (stat row + view-mode row)
 
   uiRects.expandToggle.x1, uiRects.expandToggle.y1, uiRects.expandToggle.x2, uiRects.expandToggle.y2 = 0, 0, 0, 0
   uiRects.swapToggle.x1, uiRects.swapToggle.y1, uiRects.swapToggle.x2, uiRects.swapToggle.y2 = 0, 0, 0, 0
@@ -3695,6 +4963,32 @@ local function doDrawScreen()
     rowY = rowY + leaderboardState.scrollOffset
     gl.Scissor(true)
     gl.Scissor(x, y - drawHeight + padding, totalWidth, viewportHeight)
+  end
+
+  -- 2026-09-10: the docked bar has plenty of spare horizontal room (full
+  -- screen width by default, or a generously resized one -- see the
+  -- "<>" resize handle), so team names there widen their own column to
+  -- fit instead of getting truncated with "..." the way the (narrower,
+  -- user-positioned) normal panel's fixed nameColW always has to. Only
+  -- widens, never narrows (math.max with the normal nameColW), and is
+  -- capped at 60% of the bar's own current width so one extreme
+  -- name/resize combination can't push icons completely off -- the
+  -- existing horizontal icon-scroll safety net (hScrollState, already
+  -- active whenever the resize handle is on) takes over gracefully from
+  -- there, same as it already does for a narrow manual resize with lots
+  -- of icons. The normal (non-docked) panel is untouched: it keeps using
+  -- plain `nameColW` and the already-truncated `item.displayName`.
+  local effectiveNameColW = nameColW
+  if dockedMode then
+    local maxNameW = 0
+    for _, item in ipairs(layoutItems) do
+      if item.itype == "team" then
+        local w = gl.GetTextWidth(item.rawName) * nameFontSize + (item.badgeReserve or 0)
+        if w > maxNameW then maxNameW = w end
+      end
+    end
+    local desired = maxNameW + padding * 2
+    effectiveNameColW = math.max(nameColW, math.min(desired, totalWidth * 0.6))
   end
 
   for _, item in ipairs(layoutItems) do
@@ -3771,7 +5065,10 @@ local function doDrawScreen()
 
     else
     local teamID = item.teamID
-    local name   = item.displayName
+    -- Docked mode draws the real, untruncated name (the name column
+    -- widened to fit it -- see effectiveNameColW above); the normal
+    -- panel keeps using the pre-truncated displayName as always.
+    local name   = dockedMode and item.rawName or item.displayName
 
     rowRects[teamID] = {
       x1 = x,
@@ -3837,7 +5134,7 @@ local function doDrawScreen()
       local scale = bothBadges and BOTH_BADGES_SCALE or 1
       local badgeY = rowY - (26 - (1 - scale) * 12)
       local badgeGap = 6 - (1 - scale) * 6
-      local badgeRightEdge = x + padding + nameColW - 4
+      local badgeRightEdge = x + padding + effectiveNameColW - 4
       gl.Color(1, 0.85, 0.2, 1)
 
       local function drawBadge(label)
@@ -3993,15 +5290,15 @@ local function doDrawScreen()
     local iy = rowY - (rowH - iconSize)/2 - iconSize
 
     if hasCommander then
-      local cix = x + padding + nameColW
+      local cix = x + padding + effectiveNameColW
       drawOneIcon(item.icons[1], cix, iy, nil, nil)
     end
 
     local scrollStartIdx = hasCommander and 2 or 1
     local scrollableCount = #item.icons - scrollStartIdx + 1
 
-    local scrollAreaX1 = x + padding + nameColW + frozenW
-    local scrollAreaWidth = math.max(0, totalWidth - nameColW - padding * 2 - frozenW)
+    local scrollAreaX1 = x + padding + effectiveNameColW + frozenW
+    local scrollAreaWidth = math.max(0, totalWidth - effectiveNameColW - padding * 2 - frozenW)
     local rowContentWidth = math.max(0, scrollableCount) * iconSize
     local rowMaxOffset = math.max(0, rowContentWidth - scrollAreaWidth)
     local rowActive = hScrollState.enabled and (rowMaxOffset > 0.5)
@@ -4295,44 +5592,25 @@ local function doDrawScreen()
     cursorY = cursorY - bodyLineH
     gl.Text(bodyLine, tx + padX, cursorY, tooltipFontSize, "")
 
-  elseif hoverState.helpToggle then
-    -- Two-column layout: left column is the action, right column is
-    -- what it does. Columns are two separate gl.Text calls at fixed
-    -- x-offsets (not padded with spaces) since the font is
-    -- proportional -- padding with spaces wouldn't actually line up.
-    local titleLine = trackerTitle() .. " Controls:"
-    local rows = {
-      {"Click or Spacebar on an icon:",        "cycle & zoom/follow that unit"},
-      {"Click or Spacebar on a player row:",   "jump to their base center"},
-      {"Double right-click a player row:",     "pin/unpin (up to 3)"},
-      {"Click a stat column (M/s, E/s, ...):", "sort teams by that stat"},
-      {"Click the title:",                     "switch Base Tracker / Unit Tracker"},
-      {"<> enabled + mousewheel:",              "scroll overflowing icon rows (Ctrl = all rows)"},
-      {"Tombstone icon:",                      "commander died -- click to jump, click again to return; gone once reclaimed"},
-      {"Icon with multiple instances:",         "click/spacebar cycles through them; right-click returns to your view from before you started cycling"},
-      {"Multiple commanders:",                 "cycling also works here -- dead ones show a small tombstone badge"},
-      {"White row flash:",                     "a commander was resurrected"},
-    }
+  elseif hoverState.castToggle then
+    -- Same titled single-status-line layout as the "F7" tooltip above.
+    -- titleLine/bodyLine come from the global CastTooltipLines (right
+    -- above doDrawScreen) rather than reading castingMode directly
+    -- here -- see that function's own comment for why.
+    local titleLine, bodyLine = CastTooltipLines()
 
     local tooltipFontSize = 14
     local titleFontSize = 15
     local padX, padY = 8, 6
-    local lineGap = 4
     local titleGap = 8
-    local colGap = 20
 
-    local labelColW, descColW = 0, 0
-    for _, row in ipairs(rows) do
-      labelColW = math.max(labelColW, gl.GetTextWidth(row[1]) * tooltipFontSize)
-      descColW  = math.max(descColW,  gl.GetTextWidth(row[2]) * tooltipFontSize)
-    end
-    local bodyWidth  = labelColW + colGap + descColW
     local titleWidth = gl.GetTextWidth(titleLine) * titleFontSize
-    local tw = math.max(bodyWidth, titleWidth)
+    local bodyWidth = gl.GetTextWidth(bodyLine) * tooltipFontSize
+    local tw = math.max(titleWidth, bodyWidth)
 
     local titleLineH = titleFontSize * 1.2
-    local rowLineH   = tooltipFontSize * 1.2
-    local th = titleLineH + titleGap + rowLineH * #rows + lineGap * (#rows - 1)
+    local bodyLineH = tooltipFontSize * 1.2
+    local th = titleLineH + titleGap + bodyLineH
 
     local tx = mouseX + 32
     local ty = mouseY - (th + padY * 2) - 10
@@ -4340,9 +5618,6 @@ local function doDrawScreen()
     gl.Color(0,0,0,0.85)
     gl.Rect(tx, ty, tx + tw + padX * 2, ty + th + padY * 2)
 
-    -- Walk top-down: cursorY tracks each line's text baseline, starting
-    -- just under the box's top inner edge and stepping downward by
-    -- each line's own height as it's drawn.
     local cursorY = ty + padY + th - titleLineH
 
     gl.Color(1, 0.85, 0.2, 1)
@@ -4350,13 +5625,53 @@ local function doDrawScreen()
     cursorY = cursorY - titleGap
 
     gl.Color(1,1,1,1)
-    for _, row in ipairs(rows) do
-      cursorY = cursorY - rowLineH
-      gl.Text(row[1], tx + padX, cursorY, tooltipFontSize, "")
-      gl.Text(row[2], tx + padX + labelColW + colGap, cursorY, tooltipFontSize, "")
-      cursorY = cursorY - lineGap
-    end
+    cursorY = cursorY - bodyLineH
+    gl.Text(bodyLine, tx + padX, cursorY, tooltipFontSize, "")
+
+  elseif hoverState.autoHideToggle then
+    -- Same titled single-status-line layout as the "F7"/"CAST" tooltips
+    -- above. titleLine/bodyLine come from the global AutoHideTooltipLines
+    -- (next to AutoHideStrip/AutoHideShouldCollapse below), same reason
+    -- CastTooltipLines exists instead of reading castingMode directly
+    -- here: doDrawScreen is already at Lua 5.1's 60-upvalue ceiling, so
+    -- this must cost it zero new upvalue slots.
+    local titleLine, bodyLine = AutoHideTooltipLines()
+
+    local tooltipFontSize = 14
+    local titleFontSize = 15
+    local padX, padY = 8, 6
+    local titleGap = 8
+
+    local titleWidth = gl.GetTextWidth(titleLine) * titleFontSize
+    local bodyWidth = gl.GetTextWidth(bodyLine) * tooltipFontSize
+    local tw = math.max(titleWidth, bodyWidth)
+
+    local titleLineH = titleFontSize * 1.2
+    local bodyLineH = tooltipFontSize * 1.2
+    local th = titleLineH + titleGap + bodyLineH
+
+    local tx = mouseX + 32
+    local ty = mouseY - (th + padY * 2) - 10
+
+    gl.Color(0,0,0,0.85)
+    gl.Rect(tx, ty, tx + tw + padX * 2, ty + th + padY * 2)
+
+    local cursorY = ty + padY + th - titleLineH
+
+    gl.Color(1, 0.85, 0.2, 1)
+    gl.Text(titleLine, tx + padX, cursorY, titleFontSize, "")
+    cursorY = cursorY - titleGap
+
+    gl.Color(1,1,1,1)
+    cursorY = cursorY - bodyLineH
+    gl.Text(bodyLine, tx + padX, cursorY, tooltipFontSize, "")
+
   end
+  -- The "?" help popup used to live here as an `elseif hoverState.
+  -- helpToggle then` hover-tooltip branch (anchored at `mouseX + 32`,
+  -- same as every other hover tooltip in this if-chain). Replaced
+  -- 2026-10-01 by the persistent, draggable DrawHelpWindow() -- see
+  -- that function's own comment for why.
 
   if sizeMenu.open then
     local szFontSize = 12
@@ -4406,8 +5721,608 @@ local function doDrawScreen()
   gl.Color(1,1,1,1)
 end
 
+------------------------------------------------------------
+-- CASTING MODE: minimap placement + the floating stats window
+------------------------------------------------------------
+-- The docked team-row panel itself is now just doDrawScreen(true, ...)
+-- -- see that function's own comment. What's left here is the built-in
+-- minimap's takeover (gl.SlaveMiniMap survives UI-hidden the same way
+-- explained there) and the separate floating window that holds the
+-- stat columns (M/s, E/s, MP, EP, AV, DV, UP, DD, UK) doDrawScreen no
+-- longer draws inline while docked -- item 5 from the 2026-09-09
+-- redesign, toggled by the "STATS" pill in DrawDockedHeader.
+
+local function formatCastStat(v)
+  v = v or 0
+  if v >= 10000 then
+    return string.format("%.0fk", v / 1000)
+  elseif v >= 1000 then
+    return string.format("%.1fk", v / 1000)
+  end
+  return tostring(math.floor(v + 0.5))
+end
+
+-- Top-left corner (item 6: "put the map right at the top left like it
+-- is originally"), sized as a fixed fraction of the smaller screen
+-- dimension. Note this is the actual engine minimap, slaved into place
+-- via gl.SlaveMiniMap -- not a redraw -- so it keeps every bit of its
+-- normal functionality (box-select, right-click orders, ctrl+click
+-- ping, everything CMiniMap.cpp's own input handling already does),
+-- just repositioned; see the engine-research note in this widget's own
+-- dev notes for why that's possible (IsAbove/IsInside don't check
+-- slave mode, only drawing does).
+local function updateMinimapCastGeometry(vsx, vsy)
+  local size = math.floor(math.min(vsx, vsy) * 0.28)
+  local marginX, marginY = 12, 12
+  local px = marginX
+  local py = vsy - size - marginY
+  gl.ConfigMiniMap(px, py, size, size)
+end
+
+-- Same fairness gate rebuildLayout already applies to the normal
+-- panel's stat leaderboard: while actively playing (not spectating),
+-- this widget must never expose another allyteam's stats -- that's
+-- hidden information the game doesn't otherwise give a player access
+-- to. Casting mode is meant for spectators, but this keeps the
+-- guarantee even if a live player flips the pill on by accident.
+-- Shared by the floating stats window; kept as its own function so a
+-- future second caller doesn't have to duplicate it.
+local function visibleCastTeams()
+  local spectating = Spring.GetSpectatingState()
+  local myAllyTeam = Spring.GetMyAllyTeamID()
+  local teams = {}
+  for _, t in ipairs(getSortedTeams()) do
+    if spectating or t.allyTeam == myAllyTeam then
+      teams[#teams+1] = t
+    end
+  end
+  return teams
+end
+
+-- The persistent "?" help window (2026-10-01). Replaces the old
+-- hover-only tooltip that used to live inline in doDrawScreen's own
+-- hover-tooltip if-chain (`elseif hoverState.helpToggle then ...`): that
+-- tooltip was anchored at `mouseX + 32`, right next to the "?" pill --
+-- which itself sits at the far right edge of the header -- so once the
+-- control list grew past a handful of rows (the U/B/S/E/C/Shift hotkeys
+-- added over the past week pushed it to 15), the box had nowhere to
+-- grow but further right and regularly ran off the edge of the screen,
+-- clipping the longer description text.
+--
+-- A real floating window fixes that by not being tied to the mouse or
+-- the "?" pill's own screen position at all: opened/closed by CLICKING
+-- "?" (not shown only while hovering it -- that's what makes it
+-- "persistent", per the user's own request, rather than vanishing the
+-- instant the cursor leaves), centered on screen the first time it's
+-- ever opened ("maybe in the middle"), freely draggable by its header
+-- afterward, and closed only by its own "X" in the header's upper-right
+-- corner. Both the open/closed state and the dragged position persist
+-- across reloads via `Spring.SetConfigInt`, same as every other
+-- toggle/position in this widget.
+--
+-- Deliberately a standalone top-level function, same reasoning as
+-- `DrawStatsWindow` right below it: `doDrawScreen` is already sitting
+-- exactly at Lua 5.1's 60-upvalue ceiling (see the many notes throughout
+-- this file), and this needs several of its own new upvalues
+-- (`helpWindowVisible`/`helpWinX`/`helpWinY`/`helpWinDrag`) that
+-- `doDrawScreen` has no room left to capture. Called directly from
+-- `widget:DrawScreen` and the hidden-UI branch of
+-- `widget:DrawScreenEffects` -- NOT from inside `doDrawScreen` itself --
+-- specifically so it keeps drawing regardless of `doDrawScreen`'s own
+-- early-return paths (minimized, an empty team list, the docked bar
+-- auto-hidden and collapsed): a help window that's supposed to be
+-- "persistent" shouldn't disappear just because the main tracker panel
+-- happens to be in one of those states.
+function DrawHelpWindow()
+  if not helpWindowVisible then return end
+
+  local vsx, vsy = Spring.GetViewGeometry()
+  if not vsx then return end
+
+  local titleLine = trackerTitle() .. " Controls:"
+  local rows = {
+    {"Click or Spacebar on an icon:",        "cycle & zoom/follow that unit"},
+    {"Click or Spacebar on a player row:",   "jump to their base center"},
+    {"Double right-click a player row:",     "pin/unpin (up to 3)"},
+    {"Click a stat column (M/s, E/s, ...):", "sort teams by that stat"},
+    {"Click the title:",                     "switch Base Tracker / Unit Tracker"},
+    {"U or B (while hovering):",             "same as clicking the title -- toggle Base Tracker / Unit Tracker"},
+    {"S (while hovering):",                  "swap teams up top (same as the swap icon)"},
+    {"E (while hovering):",                  "expand -- show every team, not just your own side"},
+    {"C (while hovering):",                  "collapse back to just your own side"},
+    {"Shift (while hovering):",              "cycle the view-mode tabs (Minimal/Eco/Defense/Offense/All, or Tech 1/2/3/All)"},
+    {"<> enabled + mousewheel:",              "scroll overflowing icon rows (Ctrl = all rows)"},
+    {"Tombstone icon:",                      "commander died -- click to jump, click again to return; gone once reclaimed"},
+    {"Icon with multiple instances:",         "click/spacebar cycles through them; right-click returns to your view from before you started cycling"},
+    {"Multiple commanders:",                 "cycling also works here -- dead ones show a small tombstone badge"},
+    {"White row flash:",                     "a commander was resurrected"},
+  }
+
+  local tooltipFontSize = 14
+  local titleFontSize = 15
+  local padX, padY = 10, 8
+  local lineGap = 4
+  local colGap = 20
+  local closeBtnW = 22
+  local headerH = closeBtnW + 8
+
+  local labelColW, descColW = 0, 0
+  for _, row in ipairs(rows) do
+    labelColW = math.max(labelColW, gl.GetTextWidth(row[1]) * tooltipFontSize)
+    descColW  = math.max(descColW,  gl.GetTextWidth(row[2]) * tooltipFontSize)
+  end
+  local bodyWidth = labelColW + colGap + descColW
+  local titleWidth = gl.GetTextWidth(titleLine) * titleFontSize
+  -- The header has to fit the title AND the close button side by side,
+  -- with a little breathing room between them -- unlike the old
+  -- tooltip's title line, which never had to share its row with
+  -- anything else.
+  local tw = math.max(bodyWidth, titleWidth + closeBtnW + 24)
+
+  local rowLineH = tooltipFontSize * 1.2
+  local bodyH = rowLineH * #rows + lineGap * (#rows - 1)
+
+  local width = tw + padX * 2
+  local height = headerH + bodyH + padY * 2
+
+  -- First time ever opened (no saved/dragged position on record):
+  -- center it on screen, per the user's own request ("maybe in the
+  -- middle") -- every open after that remembers wherever it was last
+  -- dragged to instead (see widget:Initialize's own read of
+  -- LabTracker_HelpWinX/Y).
+  if not helpWinX then
+    helpWinX = (vsx - width) * 0.5
+    helpWinY = vsy * 0.5 + height * 0.5
+  end
+
+  -- Live drag tracking, same pattern as the floating Stats window's own
+  -- statsWinDrag just below.
+  if helpWinDrag.active then
+    helpWinX = helpWinDrag.offsetX + (mouseX - helpWinDrag.startX)
+    helpWinY = helpWinDrag.offsetY + (mouseY - helpWinDrag.startY)
+  end
+
+  -- Keep it fully on-screen regardless of a stale saved position (e.g.
+  -- after a resolution change) or a drag released past an edge -- same
+  -- clamp spirit as statsWinX/Y's own clamp in DrawStatsWindow.
+  helpWinX = math.max(0, math.min(helpWinX, vsx - width))
+  helpWinY = math.max(height, math.min(helpWinY, vsy))
+
+  local x1, y2 = helpWinX, helpWinY
+  local x2, y1 = x1 + width, y2 - height
+  local headerY1 = y2 - headerH
+
+  gl.Color(0, 0, 0, 0.92)
+  gl.Rect(x1, y1, x2, y2)
+
+  gl.Color(0.15, 0.15, 0.15, 0.97)
+  gl.Rect(x1, headerY1, x2, y2)
+
+  -- Populated every frame the window is open (never stale, since the
+  -- whole function returns above when `helpWindowVisible` is false --
+  -- unlike `leaderboardState.panelRect` elsewhere in this file, there's
+  -- no frame where this window is "closed but these rects still claim
+  -- clicks").
+  uiRects.helpWinHeader.x1, uiRects.helpWinHeader.y1, uiRects.helpWinHeader.x2, uiRects.helpWinHeader.y2 =
+    x1, headerY1, x2, y2
+  uiRects.helpWinBody.x1, uiRects.helpWinBody.y1, uiRects.helpWinBody.x2, uiRects.helpWinBody.y2 =
+    x1, y1, x2, headerY1
+
+  gl.Color(1, 0.85, 0.2, 1)
+  gl.Text(titleLine, x1 + padX, headerY1 + (headerH - titleFontSize) * 0.5, titleFontSize, "o")
+
+  -- "X" close button, upper-right corner of the header.
+  local closeX2 = x2 - 6
+  local closeX1 = closeX2 - closeBtnW
+  local closeY1 = headerY1 + (headerH - closeBtnW) * 0.5
+  local closeY2 = closeY1 + closeBtnW
+  uiRects.helpWinClose.x1, uiRects.helpWinClose.y1, uiRects.helpWinClose.x2, uiRects.helpWinClose.y2 =
+    closeX1, closeY1, closeX2, closeY2
+
+  gl.Color(1, 0.3, 0.3, 0.85)
+  gl.Rect(closeX1, closeY1, closeX2, closeY2)
+  gl.Color(1, 1, 1, 1)
+  gl.Text("X", (closeX1 + closeX2) * 0.5, (closeY1 + closeY2) * 0.5 - titleFontSize * 0.35, titleFontSize, "oc")
+
+  -- Same top-down cursorY walk as every other two-column tooltip in this
+  -- file: decrement BEFORE drawing each row, so the first row lands
+  -- just under the header instead of flush against it.
+  local cursorY = headerY1 - padY
+  gl.Color(1, 1, 1, 1)
+  for _, row in ipairs(rows) do
+    cursorY = cursorY - rowLineH
+    gl.Text(row[1], x1 + padX, cursorY, tooltipFontSize, "")
+    gl.Text(row[2], x1 + padX + labelColW + colGap, cursorY, tooltipFontSize, "")
+    cursorY = cursorY - lineGap
+  end
+
+  gl.Color(1, 1, 1, 1)
+end
+
+-- The floating stats window itself -- a small standalone, independently
+-- draggable panel (own position/drag state: statsWinX/Y, statsWinDrag),
+-- not attached to the docked bar. Only ever drawn alongside it (see
+-- widget:DrawScreenEffects), so it doesn't need its own UI-hidden
+-- gating logic.
+--
+-- 2026-09-09 rewrite: brought this up to feature parity with the
+-- normal (non-cast) panel's own stat row/leaderboard system instead of
+-- being a simplified read-only table -- sortable columns (reuses the
+-- exact same statHeaderRects/statSortKey MousePress handler the normal
+-- panel's stat row already has, just populates those shared rects with
+-- this window's own geometry instead), the same Leaderboard-mode split
+-- (grouped by allyteam with thin dividers when off, one flat
+-- ranked list when on -- both still sortable), the same trophy (🏆) /
+-- pin (📌) badges and double-right-click-to-pin interaction the normal
+-- rows have (via the new statsWinRowRects/hitStatsWinRow -- kept
+-- separate from rowRects since the docked bar's own rows are still
+-- using that table simultaneously), the same per-column leader-color
+-- highlight bar, and clicking a row now selects/spectates/jumps to
+-- that team's base same as any other row in this widget. Every column
+-- (and the name column) is now sized to its own actual content instead
+-- of fixed widths, so the window's footprint tracks whatever's
+-- actually on screen rather than reserving space nothing needs.
+local function DrawStatsWindow(vsx, vsy)
+  if statsWinDrag.active then
+    statsWinX = statsWinDrag.offsetX + (mouseX - statsWinDrag.startX)
+    statsWinY = statsWinDrag.offsetY + (mouseY - statsWinDrag.startY)
+  end
+
+  local teams = visibleCastTeams()
+  if #teams == 0 then return end
+
+  -- Per-column leader color: which INDIVIDUAL team currently has the
+  -- best value in each column, among the teams actually shown as rows
+  -- here -- deliberately NOT the same thing as cachedLayout.statLeaders
+  -- (which the normal panel's stat row uses), because that one sums
+  -- everyone on the same allyteam together before comparing sides. That
+  -- makes sense for the normal panel's grouped/pooled framing, but in
+  -- this window (always one row per team) it produces a misleading
+  -- result: a whole side can light up under a column just because their
+  -- COMBINED total edges out the other side's, even when a specific
+  -- teammate on the OTHER side individually has the single highest
+  -- number in that column (2026-09-09 bug report: "look at the sorting
+  -- where it's all green" -- one ally's color was winning almost every
+  -- column purely from summing two rows against one). Computed fresh
+  -- from `teams` (already fairness-gated by visibleCastTeams()) every
+  -- draw, so it never needs its own separate fairness check.
+  local winLeaders = {}
+  for _, col in ipairs(statColumns) do
+    local bestVal, bestColor, tied = nil, nil, false
+    for _, t in ipairs(teams) do
+      local ts = teamStats[t.teamID] or {}
+      local v = ts[col.key] or 0
+      if bestVal == nil or v > bestVal then
+        bestVal = v
+        local r, g, b = Spring.GetTeamColor(t.teamID)
+        bestColor = { r or 1, g or 1, b or 1 }
+        tied = false
+      elseif v == bestVal then
+        tied = true
+      end
+    end
+    if bestVal ~= nil and not tied then
+      winLeaders[col.key] = bestColor
+    end
+  end
+
+  local rowH2 = 24
+  local headerH2 = 28
+  local dividerH2 = 8
+  local padX, padY = 8, 6
+  local nameFontSize = 13
+  local statFontSize = 12
+  local colHeaderFontSize = 12
+  local badgeFontSize = 14
+  local NAME_MAX_W = 200 -- cap so one absurd clan-tag name can't blow the window up; shrinks per-row beyond this instead
+  local colorBarW, colorBarGap = 6, 6
+  local rightPad = 10
+
+  -- Does ANY currently-visible row actually need trophy/pin badge
+  -- space? Only reserve the gutter for whichever of the two are
+  -- actually in play right now -- an all-pinned-nobody-leading game (or
+  -- vice versa) shouldn't pay for a badge slot nothing uses.
+  local needsTrophyBadge, needsPinBadge = false, false
+  for _, t in ipairs(teams) do
+    if t.teamID == cachedTopTeamID then needsTrophyBadge = true end
+    if isPinned(t.teamID) then needsPinBadge = true end
+  end
+  local badgeGutter = 0
+  if needsTrophyBadge then badgeGutter = badgeGutter + gl.GetTextWidth("🏆") * badgeFontSize + 4 end
+  if needsPinBadge then badgeGutter = badgeGutter + gl.GetTextWidth("📌") * badgeFontSize + 4 end
+
+  -- Name column: sized to the longest actual name on screen right now
+  -- (capped at NAME_MAX_W -- per-row shrink below is the safety net
+  -- past that cap), not a fixed guess.
+  local longestNameW = 0
+  for _, t in ipairs(teams) do
+    longestNameW = math.max(longestNameW, gl.GetTextWidth(t.name) * nameFontSize)
+  end
+  longestNameW = math.min(longestNameW, NAME_MAX_W)
+  local nameColW2 = colorBarW + colorBarGap + longestNameW + badgeGutter + rightPad
+  local nameTextAreaW = nameColW2 - colorBarW - colorBarGap - badgeGutter - rightPad
+
+  -- Each stat column: sized to whichever is wider, its own header
+  -- label or the widest value currently in it -- not a fixed guess
+  -- either. colX[i] caches the resulting x-range so the header and row
+  -- loops below don't each recompute it.
+  local colPad = 16
+  local colX = {}
+  local statsAreaW = 0
+  for i, col in ipairs(statColumns) do
+    local w = gl.GetTextWidth(col.label) * colHeaderFontSize
+    for _, t in ipairs(teams) do
+      local ts = teamStats[t.teamID] or {}
+      w = math.max(w, gl.GetTextWidth(formatCastStat(ts[col.key])) * statFontSize)
+    end
+    w = math.max(w + colPad, 36)
+    colX[i] = { w = w, offset = statsAreaW }
+    statsAreaW = statsAreaW + w
+  end
+
+  -- Leaderboard mode (shared with the rest of the widget -- same
+  -- "Leaderboard" pill on the docked header, and the "L" hotkey)
+  -- splits into ranked/flat vs grouped-by-allyteam here too: getSortedTeams()
+  -- (which visibleCastTeams() wraps) already orders `teams` correctly
+  -- for either case -- this just decides whether to draw a divider
+  -- between consecutive different-allyteam blocks or not. Only counted/
+  -- drawn when NOT in Leaderboard mode; a flat ranked list has nothing
+  -- to separate.
+  local dividerCount = 0
+  if not leaderboardState.mode then
+    for i = 2, #teams do
+      if teams[i].allyTeam ~= teams[i-1].allyTeam then
+        dividerCount = dividerCount + 1
+      end
+    end
+  end
+
+  local width = nameColW2 + statsAreaW + padX * 2
+  local height = headerH2 + rowH2 * #teams + dividerH2 * dividerCount + padY * 2
+
+  -- Clamp so a saved/dragged position can't push the whole window
+  -- off-screen (same spirit as the main panel's own /basetrackercenter
+  -- off-screen recovery, just simpler since this window auto-sizes
+  -- instead of scrolling).
+  statsWinX = math.max(0, math.min(statsWinX, vsx - width))
+  statsWinY = math.max(height, math.min(statsWinY, vsy))
+
+  local x1, y2 = statsWinX, statsWinY
+  local x2, y1 = x1 + width, y2 - height
+  local nameColX2 = x1 + nameColW2
+
+  gl.Color(0, 0, 0, 0.75)
+  gl.Rect(x1, y1, x2, y2)
+
+  local headerY1 = y2 - headerH2
+  gl.Color(0.15, 0.15, 0.15, 0.95)
+  gl.Rect(x1, headerY1, x2, y2)
+  -- Drag-handle hitbox: the WHOLE header row (x1..x2), same as the
+  -- visual background above -- intentionally overlapping the sortable
+  -- column-header cells drawn into this same row below (nameColX2..x2).
+  -- MousePress resolves the overlap by CHECK ORDER, not by geometry: the
+  -- statColumns/statHeaderRects sort-click loop runs before this rect's
+  -- own drag-start check, so a click on a sort cell is always claimed
+  -- there first and never reaches here, while a click anywhere else in
+  -- the header still starts a drag. (A same-day earlier fix instead
+  -- shrunk this hitbox to exclude the sort cells -- that avoided the
+  -- overlap but left only a thin sliver of the header actually
+  -- draggable, which read as "dragging is broken." Reordering keeps the
+  -- whole header draggable, like the window originally was.)
+  uiRects.statsWinHeader.x1, uiRects.statsWinHeader.y1, uiRects.statsWinHeader.x2, uiRects.statsWinHeader.y2 =
+    x1, headerY1, x2, y2
+
+  gl.Color(1, 1, 1, 1)
+  gl.Text("Stats", x1 + padX, headerY1 + (headerH2 - 14) / 2, 14, "o")
+
+  -- Sortable column headers: same click-to-sort semantics as the
+  -- normal panel's own stat row (shared statHeaderRects/statSortKey --
+  -- MousePress's existing handler doesn't care which draw call
+  -- populated the rects), plus a per-column leader-color highlight bar
+  -- (winLeaders, computed above from the individual teams actually
+  -- shown here -- see its own comment for why this window uses that
+  -- instead of the normal panel's ally-summed cachedLayout.statLeaders)
+  -- and a hover tint this window adds on top since these are now
+  -- genuinely clickable controls.
+  -- Tracks whichever column (if any) is currently hovered, so the
+  -- tooltip drawn right after this loop knows where to center itself --
+  -- see the "hoverState.statKey" tooltip block below.
+  local hoveredHeaderCx1, hoveredHeaderCx2
+
+  for i, col in ipairs(statColumns) do
+    local cx1 = nameColX2 + colX[i].offset
+    local cx2 = cx1 + colX[i].w
+    local hr = statHeaderRects[col.key]
+    hr.x1, hr.y1, hr.x2, hr.y2 = cx1, headerY1, cx2, y2
+
+    if statSortKey == col.key then
+      gl.Color(1, 0.85, 0.2, 0.9)
+      gl.Rect(cx1, headerY1, cx2, y2)
+      gl.Color(0, 0, 0, 1)
+    elseif hoverState.statKey == col.key then
+      gl.Color(1, 1, 1, 0.12)
+      gl.Rect(cx1, headerY1, cx2, y2)
+      gl.Color(0.8, 0.85, 1, 0.95)
+    else
+      gl.Color(0.8, 0.85, 1, 0.95)
+    end
+    gl.Text(col.label, (cx1 + cx2) / 2, headerY1 + (headerH2 - colHeaderFontSize) / 2, colHeaderFontSize, "oc")
+
+    local leaderColor = winLeaders[col.key]
+    if leaderColor then
+      local boost = 1.6
+      local br = math.min(1, leaderColor[1] * boost)
+      local bg = math.min(1, leaderColor[2] * boost)
+      local bb = math.min(1, leaderColor[3] * boost)
+      gl.Color(br, bg, bb, 1)
+      gl.Rect(cx1, headerY1, cx2 - 1, headerY1 + 4)
+    end
+
+    if hoverState.statKey == col.key then
+      hoveredHeaderCx1, hoveredHeaderCx2 = cx1, cx2
+    end
+  end
+  gl.Color(1, 1, 1, 1)
+
+  -- Per-stat hover tooltip ("if i hover over M/s it will say Metal per
+  -- Second"). Anchored ABOVE the window's own top edge (y2) rather than
+  -- following the mouse like the CAST/AUTO/F7/help tooltips elsewhere in
+  -- this file -- per the user's explicit request, and it also means the
+  -- tooltip never overlaps the very header row it's explaining.
+  -- Horizontally centered over whichever column is actually hovered
+  -- (hoveredHeaderCx1/2, captured in the loop above) so it's still
+  -- clearly tied to the right one. DrawStatsWindow is its own separate
+  -- function -- not nested inside doDrawScreen, which is already sitting
+  -- at Lua 5.1's 60-upvalue ceiling -- so referencing statFullNames here
+  -- directly is safe with no upvalue-budget workaround needed.
+  if hoveredHeaderCx1 and statFullNames[hoverState.statKey] then
+    local label = statFullNames[hoverState.statKey]
+    local ttFontSize = 13
+    local ttPadX, ttPadY = 8, 5
+    local ttGap = 6
+
+    local ttW = gl.GetTextWidth(label) * ttFontSize + ttPadX * 2
+    local ttH = ttFontSize * 1.2 + ttPadY * 2
+
+    local ttCx = (hoveredHeaderCx1 + hoveredHeaderCx2) / 2
+    local ttx1 = ttCx - ttW / 2
+    local ttx2 = ttx1 + ttW
+    -- Keep it on-screen horizontally even for a column near either edge.
+    if ttx1 < 4 then
+      local shift = 4 - ttx1
+      ttx1, ttx2 = ttx1 + shift, ttx2 + shift
+    elseif ttx2 > vsx - 4 then
+      local shift = ttx2 - (vsx - 4)
+      ttx1, ttx2 = ttx1 - shift, ttx2 - shift
+    end
+
+    local tty1 = y2 + ttGap
+    local tty2 = tty1 + ttH
+    -- The window itself can be dragged flush against the very top of
+    -- the screen (statsWinY is clamped to at most vsy), leaving no real
+    -- room above it -- clamp so the tooltip stays on-screen rather than
+    -- drawing off the top edge entirely in that rare case.
+    if tty2 > vsy - 2 then
+      tty2 = vsy - 2
+      tty1 = tty2 - ttH
+    end
+
+    gl.Color(0, 0, 0, 0.85)
+    gl.Rect(ttx1, tty1, ttx2, tty2)
+    gl.Color(1, 1, 1, 1)
+    gl.Text(label, ttCx, (tty1 + tty2) / 2 - ttFontSize * 0.35, ttFontSize, "oc")
+  end
+
+  for k in pairs(statsWinRowRects) do statsWinRowRects[k] = nil end
+
+  local rowY = headerY1
+  local prevAllyTeam = nil
+  for idx, t in ipairs(teams) do
+    if not leaderboardState.mode and prevAllyTeam ~= nil and t.allyTeam ~= prevAllyTeam then
+      local lineY = rowY - dividerH2 / 2
+      gl.Color(1, 1, 1, 0.25)
+      gl.Rect(x1, lineY - 1, x2, lineY + 1)
+      gl.Color(1, 1, 1, 1)
+      rowY = rowY - dividerH2
+    end
+    prevAllyTeam = t.allyTeam
+
+    local rowTop = rowY
+    local rowBottom = rowY - rowH2
+
+    statsWinRowRects[t.teamID] = { x1 = x1, y1 = rowBottom, x2 = x2, y2 = rowTop }
+    local rowHover = mouseX and mouseX >= x1 and mouseX <= x2 and mouseY >= rowBottom and mouseY <= rowTop
+    if rowHover then
+      gl.Color(1, 1, 1, 0.06)
+      gl.Rect(x1, rowBottom, x2, rowTop)
+    end
+
+    local r, g, b = Spring.GetTeamColor(t.teamID)
+    r, g, b = r or 1, g or 1, b or 1
+
+    gl.Color(r, g, b, 1)
+    gl.Rect(x1 + 2, rowBottom + 2, x1 + 2 + colorBarW, rowTop - 2)
+
+    -- Same crowding rule as the normal panel's own badges: shrink both
+    -- if this row has both at once.
+    local isTop = (t.teamID == cachedTopTeamID)
+    local isPin = isPinned(t.teamID)
+    local bothBadges = isTop and isPin
+    local badgeScale = bothBadges and 0.7 or 1
+    local badgeRightEdge = nameColX2 - rightPad + 2
+    local badgeCy = (rowTop + rowBottom) / 2
+    gl.Color(1, 0.85, 0.2, 1)
+    local function drawBadge(label)
+      local w = gl.GetTextWidth(label) * badgeFontSize * badgeScale
+      gl.PushMatrix()
+      gl.Translate(badgeRightEdge - w, badgeCy - (badgeFontSize * badgeScale) * 0.35, 0)
+      gl.Scale(badgeScale, badgeScale, 1)
+      gl.Text(label, 0, 0, badgeFontSize, "o")
+      gl.PopMatrix()
+      badgeRightEdge = badgeRightEdge - w - (4 * badgeScale)
+    end
+    if isTop then drawBadge("🏆") end
+    if isPin then drawBadge("📌") end
+
+    local rowNameFontSize = nameFontSize
+    while rowNameFontSize > 8 and gl.GetTextWidth(t.name) * rowNameFontSize > nameTextAreaW do
+      rowNameFontSize = rowNameFontSize - 0.5
+    end
+    gl.Color(1, 1, 1, 0.95)
+    gl.Text(t.name, x1 + colorBarW + colorBarGap + 2, (rowTop + rowBottom) / 2 - rowNameFontSize * 0.35, rowNameFontSize, "o")
+
+    local ts = teamStats[t.teamID] or {}
+    for i, col in ipairs(statColumns) do
+      local cx1 = nameColX2 + colX[i].offset
+      local cx2 = cx1 + colX[i].w
+      gl.Color(0.9, 0.9, 0.9, 0.95)
+      gl.Text(formatCastStat(ts[col.key]), (cx1 + cx2) / 2, (rowTop + rowBottom) / 2 - statFontSize * 0.35, statFontSize, "oc")
+    end
+
+    rowY = rowY - rowH2
+  end
+
+  gl.Color(1, 1, 1, 1)
+end
+
+-- The docked bottom bar plus its optional floating Stats window --
+-- shared by both widget:DrawScreen (GUI visible) and
+-- widget:DrawScreenEffects (GUI hidden) now that CAST/dockedMode is no
+-- longer tied to hidden-UI state at all (2026-09-10: CAST alone decides
+-- the layout, in both visible and hidden UI -- see widget:DrawScreen
+-- below). Doesn't touch the engine minimap (gl.SlaveMiniMap/DrawMiniMap)
+-- -- that's only ever needed while GUI is actually hidden, since the
+-- engine already draws its own minimap normally otherwise, so that stays
+-- inside widget:DrawScreenEffects's own hidden-only branch.
+local function drawDockedOverlay(vsx, vsy)
+  doDrawScreen(true, vsx, vsy)
+  if statsWindowVisible then
+    DrawStatsWindow(vsx, vsy)
+  end
+end
+
+-- 2026-09-10: CAST is now the single switch for which layout draws, full
+-- stop -- docked bottom bar while CAST is on, normal floating panel
+-- while it's off -- regardless of whether GUI is currently hidden. Only
+-- fires while GUI is visible (see the comment above
+-- widget:DrawScreenEffects for why); the hidden-UI case is handled
+-- there, using the exact same drawDockedOverlay helper so the two states
+-- (docked-and-visible vs. docked-and-hidden) look and behave identically
+-- apart from the engine minimap, which only needs special handling while
+-- hidden.
 function widget:DrawScreen()
-  doDrawScreen()
+  if castingMode then
+    local vsx, vsy = Spring.GetViewGeometry()
+    drawDockedOverlay(vsx, vsy)
+  else
+    doDrawScreen(false)
+  end
+  -- The persistent "?" help window draws independently of whichever
+  -- layout just ran above -- it has its own early-return on
+  -- `helpWindowVisible` and reads the screen size itself, so it isn't
+  -- affected by either branch's own early returns (minimized, empty
+  -- team list, auto-hidden docked bar).
+  DrawHelpWindow()
 end
 
 -- BAR's widgetHandler:DrawScreen() (luaui/barwidgets.lua) wraps every
@@ -4416,18 +6331,53 @@ end
 -- for ALL widgets, this one included -- that's a BAR-wide behavior,
 -- not something any individual widget's own code controls.
 -- DrawScreenEffects(vsx, vsy), however, is NOT gated the same way --
--- it fires every frame regardless of UI-hidden state. So redraw the
--- exact same panel from here specifically when the UI is hidden,
--- keeping Base/Unit Tracker visible during cinematic/screenshot mode.
--- Guarded so it only fires when DrawScreen itself is being skipped --
--- otherwise the panel would render twice (double-drawn, doubled
--- alpha) every frame the UI is visible normally. Also gated behind
--- the "F7" toggle pill (stayVisibleWhenUIHidden) so this is opt-out:
--- turn it off to go back to the old behavior of hiding along with
--- everything else.
+-- it fires every frame regardless of UI-hidden state. So redraw
+-- something from here specifically when the UI is hidden, keeping
+-- Base/Unit Tracker visible during cinematic/screenshot mode -- either
+-- the exact same panel (doDrawScreen(false)) as always, or, when
+-- Casting Mode is also on, the docked full-width bar plus the slaved
+-- minimap and, if toggled on, the floating stats window (both via
+-- drawDockedOverlay, same as widget:DrawScreen above). Guarded so it
+-- only fires when DrawScreen itself is being skipped -- otherwise the
+-- panel would render twice (double-drawn, doubled alpha) every frame
+-- the UI is visible normally. Also gated behind the "F7" toggle pill
+-- (stayVisibleWhenUIHidden) so this is opt-out: turn it off to go back
+-- to the old behavior of hiding along with everything else. As of
+-- 2026-09-10, clicking CAST keeps this pill in sync automatically (see
+-- MousePress's castToggle handler), so in practice this only ever
+-- matters if you've manually decoupled the two after the fact.
+--
+-- The minimap slave/un-slave call is deliberately diffed against
+-- minimapSlaved rather than fired unconditionally every frame: this
+-- callin runs regardless of hidden-UI state, so without the diff it'd
+-- call gl.SlaveMiniMap(false) every single frame the overlay isn't
+-- showing, which is harmless but wasteful, and more importantly this
+-- is what makes the minimap reliably snap back to normal the instant
+-- any of the three gating conditions stops being true (UI shown again,
+-- either pill flipped off) -- see minimapSlaved's own comment above.
 function widget:DrawScreenEffects(vsx, vsy)
+  local showCastingOverlay = stayVisibleWhenUIHidden and castingMode and Spring.IsGUIHidden()
+  if showCastingOverlay ~= minimapSlaved then
+    gl.SlaveMiniMap(showCastingOverlay)
+    minimapSlaved = showCastingOverlay
+  end
+
   if stayVisibleWhenUIHidden and Spring.IsGUIHidden() then
-    doDrawScreen()
+    if castingMode then
+      updateMinimapCastGeometry(vsx, vsy)
+      gl.DrawMiniMap()
+      drawDockedOverlay(vsx, vsy)
+    else
+      doDrawScreen(false)
+    end
+    -- Same "F7" opt-in the rest of this widget already uses to persist
+    -- through hidden UI -- the help window follows that existing
+    -- convention rather than introducing its own always-on-top special
+    -- case (which would also risk double-drawing it on top of
+    -- widget:DrawScreen's own call, since that callin is skipped
+    -- entirely by the engine while the UI is hidden -- see this
+    -- function's own comment above for why DrawScreenEffects exists).
+    DrawHelpWindow()
   end
 end
 
