@@ -7,7 +7,14 @@ function widget:GetInfo()
         date      = "2026",
         license   = "GPLv2",
         layer     = 0,
-        enabled   = true
+        enabled   = true,
+        control   = true -- This widget issues Spring.GiveOrderToUnit (helper-assist orders
+        -- and the actual build order), so BAR's engine treats it as a "unit control"
+        -- widget (PR #5430). In a lobby whose allowunitcontrolwidgets modoption
+        -- disallows user unit-control widgets, declaring control = true lets the
+        -- engine gracefully skip loading this widget there instead of loading it
+        -- with GiveOrderToUnit silently stubbed out (UI draws, nothing happens).
+        -- Same fix as gui_info_teamcolor.lua / gui_gridmenu_teamcolor.lua (2026-10-01).
     }
 end
 
