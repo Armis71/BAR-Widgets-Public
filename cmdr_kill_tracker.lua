@@ -23,6 +23,7 @@ local cfg = {
     y = 0.70,
     w = 0.24,
     h = 0.30,
+    barSkinUi = true,
 }
 
 local recentCommanderSpawn = {}
@@ -374,6 +375,22 @@ end
 function widget:Initialize()
     DetectCommanderDefs()
     AssignCustomAINames()
+
+    widgetHandler:AddAction("cmdrkillbarui", function()
+        cfg.barSkinUi = not cfg.barSkinUi
+        Spring.Echo("[Commander Kill Tracker] Top Bar-style skin: " .. (cfg.barSkinUi and "ON" or "OFF"))
+        return true
+    end, nil, "t")
+    widgetHandler:AddAction("cmdrkillorig", function()
+        cfg.barSkinUi = false
+        Spring.Echo("[Commander Kill Tracker] Reverted to the original flat panel.")
+        return true
+    end, nil, "t")
+end
+
+function widget:Shutdown()
+    widgetHandler:RemoveAction("cmdrkillbarui")
+    widgetHandler:RemoveAction("cmdrkillorig")
 end
 
 function widget:GameFrame(frame)
@@ -740,6 +757,10 @@ local function DrawPanel()
     local spectating = spGetSpectatingState()
     local myAllyTeam = (not spectating) and spGetMyAllyTeamID() or nil
 
+    if cfg.barSkinUi and WG.FlowUI and WG.FlowUI.Draw and WG.FlowUI.Draw.Element then
+        glColor(1, 1, 1, 1)
+        WG.FlowUI.Draw.Element(x1, y1, x1+w, y1+h, 0, 0, 1, 1, nil, nil, nil, nil, nil, nil, nil, nil)
+    else
     glColor(0,0,0,0.65)
     glRect(x1, y1, x1+w, y1+h)
 	
@@ -763,6 +784,7 @@ glRect(x1+1, y1+1, x1+2, y1+h-1)         -- left inner
 glRect(x1+w-2, y1+1, x1+w-1, y1+h-1)     -- right inner
 
 glColor(1,1,1,1)
+    end
 	
 
     glColor(1,1,1,1)
@@ -782,8 +804,13 @@ glColor(1,1,1,1)
     local headerBottomY = headerRowTopY - HEADER_ROW_HEIGHT
 
     -- Header row background band
+    if cfg.barSkinUi and WG.FlowUI and WG.FlowUI.Draw and WG.FlowUI.Draw.Element then
+        glColor(1, 1, 1, 0.5)
+        WG.FlowUI.Draw.Element(x1, headerBottomY, x1+w, headerRowTopY, 0, 0, 1, 1, nil, nil, nil, nil, nil, nil, nil, nil)
+    else
     glColor(1,1,1,0.06)
     glRect(x1, headerBottomY, x1+w, headerRowTopY)
+    end
     -- Divider line separating the header row from the list
     glColor(1,1,1,0.35)
     glRect(x1, headerBottomY, x1+w, headerBottomY+1)
@@ -1073,6 +1100,8 @@ local HELP_TOOLTIP_ROWS = {
     { type="kv", key="Tombstone:",     value="Click to jump there; gone once reclaimed" },
     { type="divider" },
     { type="text", text="Drag to move, corner to resize, wheel to scroll." },
+    { type="kv", key="/cmdrkillbarui:", value="Toggle Top Bar-style skin" },
+    { type="kv", key="/cmdrkillorig:",  value="Revert to the original flat panel" },
 }
 
 -- Same look as the built-in Eco Graph tooltip: cream/off-white panel,
@@ -1363,6 +1392,7 @@ function widget:GetConfigData()
         y = cfg.y,
         w = cfg.w,
         h = cfg.h,
+        barSkinUi = cfg.barSkinUi,
         -- Tag the saved kill data with the current match's gameID so it
         -- only gets restored on a same-game /luaui reload, never carried
         -- over into a different game/spectate session.
@@ -1378,6 +1408,13 @@ function widget:SetConfigData(data)
         cfg.y = data.y or cfg.y
         cfg.w = data.w or cfg.w
         cfg.h = data.h or cfg.h
+        -- Only overwrite the table's own `true` default when a real
+        -- saved choice is present -- a save from before this round
+        -- (no `barSkinUi` key at all) leaves the default on, same as
+        -- a genuinely fresh install.
+        if type(data.barSkinUi) == "boolean" then
+            cfg.barSkinUi = data.barSkinUi
+        end
 
         -- If the game frame is already ticking, this is unambiguously a
         -- reload of the same running match. Otherwise fall back to
