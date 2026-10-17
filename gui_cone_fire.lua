@@ -15,6 +15,13 @@ function widget:GetInfo()
         license = "GNU GPL, v2 or later",
         layer   = 0,
         enabled = true,
+        control = true, -- This widget issues Spring.GiveOrderToUnit (CMD.ATTACK / CMD.STOP /
+        -- CMD.FIRE_STATE), so BAR's engine treats it as a "unit control" widget (PR #5430).
+        -- In a lobby whose allowunitcontrolwidgets modoption disallows user unit-control
+        -- widgets, declaring control = true lets the engine gracefully skip loading this
+        -- widget there instead of loading it with GiveOrderToUnit silently stubbed out
+        -- (UI draws, nothing happens on click). Same fix as gui_info_teamcolor.lua /
+        -- gui_gridmenu_teamcolor.lua / drag_copy_builder.lua.
     }
 end
 
