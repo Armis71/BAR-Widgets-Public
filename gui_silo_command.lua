@@ -39,6 +39,10 @@ end
 --------------------------------------------------------------------
 local UI = {
   x = nil, y = nil,          -- nil until first draw, then bottom-centre
+  barSkinUi = true,          -- real-FlowUI ("Top Bar") panel skin, on by
+                              -- default for a fresh install (see
+                              -- SetConfigData: only overwritten when a
+                              -- saved choice actually exists)
   W = 330,                   -- MINIMUM width; the silo grid can widen it
   -- One cylinder per silo, in two fixed rows. The cylinder size never
   -- changes -- the PANEL grows sideways instead -- so a silo always
@@ -861,8 +865,13 @@ local function raisedPanel(x1, y1, x2, y2)
   local s = 4
   box(x1 + s, y1 - s, x2 + s, y2 - s, 0, 0, 0, 0.50)
 
+  if UI.barSkinUi and WG.FlowUI and WG.FlowUI.Draw and WG.FlowUI.Draw.Element then
+      glColor(1, 1, 1, 1)
+      WG.FlowUI.Draw.Element(x1, y1, x2, y2, 0, 0, 1, 1, nil, nil, nil, nil, nil, nil, nil, nil)
+  else
   box(x1, y1, x2, y2, 0.93, 0.95, 0.98, 0.97)          -- border
   box(x1 + 1, y1 + 1, x2 - 1, y2 - 1, 0.04, 0.05, 0.06, 0.95)
+  end
 end
 
 -- Buttons get the same treatment at a smaller scale, so they read as
@@ -1548,10 +1557,26 @@ function widget:Initialize()
   end
   myTeamID = spGetMyTeamID()
   rescan()
+
+  widgetHandler:AddAction("silocommandbarui", function()
+    UI.barSkinUi = not UI.barSkinUi
+    Spring.Echo("[Silo Command] Top Bar-style skin: " .. (UI.barSkinUi and "ON" or "OFF"))
+    return true
+  end, nil, "t")
+  widgetHandler:AddAction("silocommandorig", function()
+    UI.barSkinUi = false
+    Spring.Echo("[Silo Command] Reverted to the original panel.")
+    return true
+  end, nil, "t")
+end
+
+function widget:Shutdown()
+  widgetHandler:RemoveAction("silocommandbarui")
+  widgetHandler:RemoveAction("silocommandorig")
 end
 
 function widget:GetConfigData()
-  return { x = UI.x, y = UI.y }
+  return { x = UI.x, y = UI.y, barSkinUi = UI.barSkinUi }
 end
 
 function widget:SetConfigData(data)
@@ -1565,5 +1590,12 @@ function widget:SetConfigData(data)
   end
   if type(data.y) == "number" then
     UI.y = clamp(data.y, 0, (vsy or 1080) - h)
+  end
+  -- Only overwrite the table's own `true` default when a real saved
+  -- choice is present -- a save from before this round (no `barSkinUi`
+  -- key at all) leaves the default on, same as a genuinely fresh
+  -- install.
+  if type(data.barSkinUi) == "boolean" then
+    UI.barSkinUi = data.barSkinUi
   end
 end
