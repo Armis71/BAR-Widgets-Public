@@ -31,7 +31,7 @@ end
 -- This is a plain global (not "local") on purpose -- this file is already at
 -- Lua's 200-local-variable ceiling, and globals don't count against it.
 --------------------------------------------------------------------------------
-DISABLE_TOPBAR_TOGGLE = 1   -- 1 = ON (locked, default) | 0 = OFF (unlocked)
+DISABLE_TOPBAR_TOGGLE = 0   -- 1 = ON (locked, default) | 0 = OFF (unlocked)
 
 
 -- GLOBAL FONT SCALE (shrink everything proportionally)
@@ -659,7 +659,7 @@ do
         local x2 = x1 + BUTTON_W
         local y2 = y1 + totalH
 
-        EcoToggleMenu.menuRect = {x1 = x1, y1 = y1, x2 = x2, y2 = y2}
+        EcoToggleMenu.menuRect = widget._setRect(EcoToggleMenu.menuRect, x1, y1, x2, y2)
 
         -- TOP BAR BUTTON
         DrawButton(
@@ -999,6 +999,176 @@ end
 
 local GL_LINES      = GL.LINES
 local GL_LINE_STRIP = GL.LINE_STRIP
+
+--------------------------------------------------------------------------------
+-- SHARED CLOSURE-FREE VERTEX FUNCTIONS (named, not inline) -----------------
+-- These replace per-frame `function() ... end` literals passed to
+-- gl.BeginEnd(). Each `function() end` literal allocates a new Lua closure
+-- every time it's evaluated; gl.BeginEnd(mode, fn, ...) forwards any extra
+-- arguments straight into fn via lua_pcall, so a single persistent function
+-- reused across call sites produces zero per-frame allocation instead of
+-- one closure per call. Hung off the global `widget` table rather than a
+-- new `local` because this file is already at Lua 5.1's 200-local-per-
+-- chunk ceiling (see gui-eco-graph-notes.md) and a global field resolves
+-- at call time, so it needs no particular lexical position in the file.
+--------------------------------------------------------------------------------
+
+function widget._rectBorderVerts(x1, y1, x2, y2)
+    glVertex(x1,y1); glVertex(x2,y1)
+    glVertex(x2,y1); glVertex(x2,y2)
+    glVertex(x2,y2); glVertex(x1,y2)
+    glVertex(x1,y2); glVertex(x1,y1)
+end
+
+function widget._zeroLineVerts(x1, y, x2)
+    glVertex(x1, y)
+    glVertex(x2, y)
+end
+
+function widget._curveVerts(data, gx1, gw, gy1, gh, minT, rangeT, minV, rangeV, useIncome)
+    for i = 1, #data, 2 do
+        local s = data[i]
+        local tf = (s.t - minT) / rangeT
+        local v = useIncome and s.income or s.usage
+        local vf = (v - minV) / rangeV
+        glVertex(gx1 + gw * tf, gy1 + gh * vf)
+    end
+end
+
+function widget._windBackplateFillVerts(bx1, bevel, by1, bx2, midY)
+    glVertex(bx1 + bevel, by1)
+    glVertex(bx2 - bevel, by1)
+    glVertex(bx2, midY)
+    glVertex(bx1, midY)
+end
+
+function widget._windBackplateBorderVerts(bx1, midY, bevel, by1, bx2)
+    glVertex(bx1, midY)
+    glVertex(bx1 + bevel, by1)
+    glVertex(bx2 - bevel, by1)
+    glVertex(bx2, midY)
+end
+
+--------------------------------------------------------------------------------
+-- "TOP BAR"-STYLE PANEL SKIN -- chamfered-corner panel with a vertical
+-- gradient fill, approximating the look of BAR's own top resource bar
+-- (dark warm-brown panel, angle-cut outer corners, muted bronze border).
+-- Toggled by /ecographbar -- ONLY the panel's background/border is
+-- swapped; everything drawn on top (title, stats, graphs, tooltips) is
+-- completely unchanged. `c` is the chamfer size in pixels.
+--------------------------------------------------------------------------------
+function widget._barSkinPanelVerts(x1, y1, x2, y2, c, tr, tg, tb, ta, br, bg, bb, ba)
+    local h = y2 - y1
+    local f = (h > 0) and (c / h) or 0
+
+    -- Color at y1+c and at y2-c (symmetric chamfer, so these differ
+    -- unless f == 0.5) and at the vertical center (fan origin).
+    local m1r, m1g, m1b, m1a = tr + (br-tr)*f,     tg + (bg-tg)*f,     tb + (bb-tb)*f,     ta + (ba-ta)*f
+    local m2r, m2g, m2b, m2a = tr + (br-tr)*(1-f), tg + (bg-tg)*(1-f), tb + (bb-tb)*(1-f), ta + (ba-ta)*(1-f)
+    local cr, cg, cb, ca     = (tr+br)*0.5, (tg+bg)*0.5, (tb+bb)*0.5, (ta+ba)*0.5
+
+    glColor(cr, cg, cb, ca);     glVertex((x1+x2)*0.5, (y1+y2)*0.5)  -- fan origin
+
+    glColor(tr, tg, tb, ta);     glVertex(x1+c, y1)
+    glColor(tr, tg, tb, ta);     glVertex(x2-c, y1)
+    glColor(m1r, m1g, m1b, m1a); glVertex(x2,   y1+c)
+    glColor(m2r, m2g, m2b, m2a); glVertex(x2,   y2-c)
+    glColor(br, bg, bb, ba);     glVertex(x2-c, y2)
+    glColor(br, bg, bb, ba);     glVertex(x1+c, y2)
+    glColor(m2r, m2g, m2b, m2a); glVertex(x1,   y2-c)
+    glColor(m1r, m1g, m1b, m1a); glVertex(x1,   y1+c)
+    glColor(tr, tg, tb, ta);     glVertex(x1+c, y1)    -- close the fan
+end
+
+function widget._barSkinBorderVerts(x1, y1, x2, y2, c)
+    glVertex(x1+c, y1);   glVertex(x2-c, y1)
+    glVertex(x2-c, y1);   glVertex(x2,   y1+c)
+    glVertex(x2,   y1+c); glVertex(x2,   y2-c)
+    glVertex(x2,   y2-c); glVertex(x2-c, y2)
+    glVertex(x2-c, y2);   glVertex(x1+c, y2)
+    glVertex(x1+c, y2);   glVertex(x1,   y2-c)
+    glVertex(x1,   y2-c); glVertex(x1,   y1+c)
+    glVertex(x1,   y1+c); glVertex(x1+c, y1)
+end
+
+--------------------------------------------------------------------------------
+-- RECT-MUTATION HELPER -- avoids reallocating a fresh {x1,y1,x2,y2} hitbox
+-- table every single frame for UI elements whose POSITION is recomputed
+-- every frame but whose IDENTITY (the table object other code holds a
+-- reference to, e.g. for mouse hit-testing) doesn't need to change. Every
+-- `someRect = { x1 = ..., y1 = ..., x2 = ..., y2 = ... }` in this file is a
+-- real Lua table allocation each time it runs, even when the numbers end up
+-- identical to last frame -- unlike short strings, table constructors are
+-- never interned/deduplicated by Lua. Reusing the existing table and just
+-- overwriting its fields removes that per-frame allocation entirely, with
+-- no behavior change: everything that reads these rects only reads their
+-- x1/y1/x2/y2 fields.
+--------------------------------------------------------------------------------
+function widget._setRect(t, x1, y1, x2, y2)
+    if not t then
+        t = {}
+    end
+    t.x1, t.y1, t.x2, t.y2 = x1, y1, x2, y2
+    return t
+end
+
+--------------------------------------------------------------------------------
+-- M:E TOOLTIP "METAL CONTEXT" HINT -- HOLD-BASED ANTI-FLICKER
+--------------------------------------------------------------------------------
+-- mNet (smoothed income - smoothed usage) can dip slightly negative for a
+-- moment on an otherwise healthy economy -- e.g. a build queue briefly
+-- outspending income right when a factory/nano starts a new order -- which
+-- used to flip this hint straight to "Stalling metal" and back again a
+-- frame or two later. Same fix as GetEcoStatus's own STATUS_HOLD_TIME
+-- (2-second hold before the main "Status: X" label changes): require the
+-- new tier to persist for METAL_HINT_HOLD_TIME before actually switching
+-- the displayed hint, instead of reacting to every instantaneous value.
+-- State is hung off `widget` for the same 200-local-ceiling reason as
+-- everything else in this file -- including the hold-time constant
+-- itself: a `local METAL_HINT_HOLD_TIME = 2` here would be one more
+-- chunk-level local, and this file's main chunk is already AT the
+-- 200-local ceiling (confirmed: adding one more fails to compile).
+function widget._getMetalHint(mNet, mInc)
+    local METAL_HINT_HOLD_TIME = 2  -- seconds, matches STATUS_HOLD_TIME's hold
+    local raw
+    if mNet < 0 then
+        raw = "stalling"
+    elseif mInc < 5 then
+        raw = "verylow"
+    elseif mInc < 12 then
+        raw = "low"
+    elseif mInc < 25 then
+        raw = "normal"
+    else
+        raw = "high"
+    end
+
+    local current = widget._metalHintTier or raw
+
+    if raw == current then
+        widget._metalHintPending = nil
+    elseif widget._metalHintPending ~= raw then
+        widget._metalHintPending      = raw
+        widget._metalHintPendingStart = spGetTimer()
+    elseif spDiffTimers(spGetTimer(), widget._metalHintPendingStart) >= METAL_HINT_HOLD_TIME then
+        current = raw
+        widget._metalHintPending = nil
+    end
+
+    widget._metalHintTier = current
+
+    if current == "stalling" then
+        return "Stalling metal", {1, 0.2, 0.2, 1}, "⚠️ "
+    elseif current == "verylow" then
+        return "Metal income very low", {1, 0.2, 0.2, 1}, "⚠️ "
+    elseif current == "low" then
+        return "Metal income low.", {1, 0.7, 0.1, 1}, "⚠️ "
+    elseif current == "normal" then
+        return "Metal income normal.", {0, 0, 0, 1}, "✔️ "
+    else
+        return "Metal income high — strong eco potential.", {0.2, 1, 0.2, 1}, "⬆️ "
+    end
+end
 
 local vsx, vsy = 0, 0
 local box      = { x1 = 0, y1 = 0, x2 = 0, y2 = 0 }
@@ -1710,14 +1880,36 @@ function DrawPanelStats(label, income, usage, xCenter, yTop, incomeColor, usageC
     ------------------------------------------------------------
     local net = income - usage
 
-    -- Build strings (patched with K/M formatting)
-    local useStr = "Use: " .. FormatIncome(usage)
-    local incStr = "Income: " .. FormatIncome(income)
-    local netStr = "Net: " .. FormatIncome(net)
+    -- Cache the formatted strings (and their measured widths) per label
+    -- (Metal/Energy), keyed on the raw income/usage values. SampleEco()
+    -- only updates these at ~20Hz, so between economy ticks they're
+    -- bit-identical across many render frames -- skip rebuilding the
+    -- strings and re-measuring their width when nothing actually changed.
+    widget._statsCache = widget._statsCache or {}
+    local cache = widget._statsCache[label]
+    if not cache then
+        cache = {}
+        widget._statsCache[label] = cache
+    end
 
-    local useW = glGetTextWidth(useStr) * fontSize
-    local incW = glGetTextWidth(incStr) * fontSize
-    local netW = glGetTextWidth(netStr) * fontSize
+    local useStr, incStr, netStr, useW, incW, netW
+    if cache.income == income and cache.usage == usage then
+        useStr, incStr, netStr = cache.useStr, cache.incStr, cache.netStr
+        useW, incW, netW = cache.useW, cache.incW, cache.netW
+    else
+        -- Build strings (patched with K/M formatting)
+        useStr = "Use: " .. FormatIncome(usage)
+        incStr = "Income: " .. FormatIncome(income)
+        netStr = "Net: " .. FormatIncome(net)
+
+        useW = glGetTextWidth(useStr) * fontSize
+        incW = glGetTextWidth(incStr) * fontSize
+        netW = glGetTextWidth(netStr) * fontSize
+
+        cache.income, cache.usage = income, usage
+        cache.useStr, cache.incStr, cache.netStr = useStr, incStr, netStr
+        cache.useW, cache.incW, cache.netW = useW, incW, netW
+    end
 
     local pad = 10
     local totalW = useW + pad + incW + pad + netW
@@ -1733,9 +1925,9 @@ function DrawPanelStats(label, income, usage, xCenter, yTop, incomeColor, usageC
     local lineY2 = y + fontSize
 
     if label == "Energy" then
-        energyIncRect = { x1 = lineX1, y1 = lineY1, x2 = lineX2, y2 = lineY2 }
+        energyIncRect = widget._setRect(energyIncRect, lineX1, lineY1, lineX2, lineY2)
     elseif label == "Metal" then
-        metalIncRect = { x1 = lineX1, y1 = lineY1, x2 = lineX2, y2 = lineY2 }
+        metalIncRect = widget._setRect(metalIncRect, lineX1, lineY1, lineX2, lineY2)
     end
 
     -- DRAW: Use
@@ -3151,6 +3343,55 @@ local function UpdateConverterStats()
     end
 end
 
+------------------------------------------------------------------------
+-- TOP BAR OVERLAP DETECTION
+--
+-- The engine's "Top Bar" widget (gui_top_bar_reference.lua) publishes its
+-- own screen rect for other widgets to query: WG['topbar'].GetPosition()
+-- returns { x1, y1, x2, y2, widgetScale }. The common placement for this
+-- widget is "top center", directly over Top Bar, and with the FlowUI-
+-- skinned background (/ecographbarui, widget._barSkinUi) that background
+-- comes from WG.FlowUI.Draw.Element's own theme opacity rather than
+-- cfg.bgColor, so Top Bar's resource bars/wind icon can still show
+-- through underneath. Declared as a bare global function (not a new
+-- chunk-level local) since this file sits at Lua 5.1's 200-local-per-
+-- chunk ceiling -- same convention as DrawPanelStats above.
+--
+-- Round 21 fix: WG['topbar'] alone is NOT a reliable "is Top Bar on"
+-- signal -- confirmed via /ecographtopbardebug that in at least one
+-- real setup, disabling/removing Top Bar left WG['topbar'] populated
+-- with its last-known rect (nothing drawn, but the table and
+-- GetPosition() both stuck around), which made this darken everywhere
+-- Eco Graph sat near the top of the screen even with Top Bar fully off.
+-- So check the SAME on/off signal the in-widget "Top Bar ON/OFF" toggle
+-- button (EcoToggleMenu, below) already reads and displays first --
+-- Spring.GetConfigInt("widget_Top Bar", 1) -- and only fall through to
+-- the WG['topbar'] rect/overlap check when that says Top Bar is on.
+-- Defaults to "on" (1) when unset, matching WidgetEnabled()'s own
+-- default, so this still applies out of the box for players who've
+-- never touched that toggle.
+------------------------------------------------------------------------
+function GetTopBarOverlap(x1, y1, x2, y2)
+    if Spring.GetConfigInt("widget_Top Bar", 1) == 0 then
+        return false
+    end
+
+    local topbar = WG['topbar']
+    if not topbar or not topbar.GetPosition then
+        return false
+    end
+
+    local tb = topbar.GetPosition()
+    if not tb then
+        return false
+    end
+
+    local tx1, ty1, tx2, ty2 = tb[1], tb[2], tb[3], tb[4]
+
+    -- Standard axis-aligned bounding box overlap test.
+    return x1 < tx2 and x2 > tx1 and y1 < ty2 and y2 > ty1
+end
+
 -- DRAW OVERLAY (COMPACT MODE)
 local function DrawCompactOverlay()
 
@@ -3186,17 +3427,73 @@ UpdateConverterStats()
     )
 
     local compactBgCol = widget._transparentMode and cfg.bgColorTransparent or cfg.bgColor
-    glColor(compactBgCol)
-    glRect(box.x1, box.y1, box.x2, box.y2)
 
-    glColor(cfg.borderColor)
-    glLineWidth(1.5)
-    glBeginEnd(GL_LINES, function()
-        glVertex(box.x1,box.y1); glVertex(box.x2,box.y1)
-        glVertex(box.x2,box.y1); glVertex(box.x2,box.y2)
-        glVertex(box.x2,box.y2); glVertex(box.x1,box.y2)
-        glVertex(box.x1,box.y2); glVertex(box.x1,box.y1)
-    end)
+    if widget._barSkinUi and not widget._transparentMode and WG.FlowUI and WG.FlowUI.Draw and WG.FlowUI.Draw.Element then
+        -- FlowUI's own theme opacity (not cfg.bgColor) governs this skin's
+        -- background, and it's translucent enough that Top Bar still shows
+        -- through when this panel sits on top of it (the common "top
+        -- center" placement). Since Top Bar draws at layer -999999
+        -- (essentially first/furthest back) and this widget draws after
+        -- it, an opaque rect here hides Top Bar wherever this panel
+        -- covers it -- no need to touch Top Bar's own file or its locked
+        -- enable/disable switch at all.
+        --
+        -- Round 23: draw that opaque backing FIRST, BEHIND FlowUI's own
+        -- panel, not on top of it. Round 22 drew it on top (after
+        -- WG.FlowUI.Draw.Element), which hid Top Bar but also blotted out
+        -- FlowUI's own gradient/texture with flat black -- per the user,
+        -- that "basically looking like the original" lost the whole point
+        -- of the Top Bar-style skin (matching BAR's own UI look). Drawing
+        -- it first means FlowUI's translucent panel still renders visibly
+        -- on top of it afterward, same as always -- it's just opaque
+        -- black underneath instead of Top Bar.
+        if GetTopBarOverlap(box.x1, box.y1, box.x2, box.y2) then
+            -- Round 27: switched from fully opaque to genuinely
+            -- translucent, per the user's explicit choice -- Round 26's
+            -- color fix (warm brown over gray) still read "the same dark
+            -- as before" because alpha was still 1 the whole time; color
+            -- alone couldn't get it looking as light/airy as the natural
+            -- uncovered panel. Asked the user directly whether they'd
+            -- rather keep Top Bar 100% hidden (lighter color, still
+            -- opaque) or accept real alpha transparency closer to the
+            -- natural look -- they chose transparency. This WILL let a
+            -- faint hint of Top Bar show through again in bright areas
+            -- (that's the explicit tradeoff), unlike every round from 21
+            -- through 26 which guaranteed zero bleed-through.
+            --
+            -- Round 28: nudged up a bit per the user (0.5 let resource
+            -- numbers like "1000" show through too clearly) -- still
+            -- meaningfully translucent, just a bit less bleed-through.
+            --
+            -- Round 29: user iterated locally in their own editor and
+            -- landed on 0.80 as the final opacity -- "keep it this way."
+            -- Round 31: user bumped opacity to 0.90 themselves and asked
+            -- for an even lighter color on top of that. Same hue ratio,
+            -- brighter again.
+            -- Round 32: user said "when over top bar darken it again" --
+            -- stepped the color back down (opacity stays at 0.90).
+            glColor(0.30, 0.25, 0.19, 0.90)
+            glRect(box.x1, box.y1, box.x2, box.y2)
+        end
+
+        glColor(1, 1, 1, 1)
+        WG.FlowUI.Draw.Element(box.x1, box.y1, box.x2, box.y2, 0, 0, 1, 1, nil, nil, nil, nil, nil, nil, nil, nil)
+    elseif widget._barSkin and not widget._transparentMode then
+        glBeginEnd(GL.TRIANGLE_FAN, widget._barSkinPanelVerts, box.x1, box.y1, box.x2, box.y2, 10,
+            0.22, 0.07, 0.05, compactBgCol[4],
+            0.04, 0.02, 0.02, compactBgCol[4])
+
+        glColor(0.55, 0.32, 0.16, 0.75)
+        glLineWidth(1.5)
+        glBeginEnd(GL_LINES, widget._barSkinBorderVerts, box.x1, box.y1, box.x2, box.y2, 10)
+    else
+        glColor(compactBgCol)
+        glRect(box.x1, box.y1, box.x2, box.y2)
+
+        glColor(cfg.borderColor)
+        glLineWidth(1.5)
+        glBeginEnd(GL_LINES, widget._rectBorderVerts, box.x1, box.y1, box.x2, box.y2)
+    end
 
     ----------------------------------------------------------------
     -- WIND BACKPLATE (moved here so it draws BEHIND the window)
@@ -3211,7 +3508,7 @@ UpdateConverterStats()
 
     -- Position Wind directly under Status
     local textY = box.y2 - 40
-    local barY  = textY - 16
+    local barY  = textY - 20
 
     -- X anchor (centered)
     local centerX = (box.x1 + box.x2) * 0.5
@@ -3235,24 +3532,34 @@ UpdateConverterStats()
     local midY = (by1 + by2) * 0.5
 
 
-    -- BACKPLATE FILL
-    glColor(0, 0, 0, compactBgCol[4])
-    glBeginEnd(GL.TRIANGLE_FAN, function()
-        glVertex(bx1 + bevel, by1)
-        glVertex(bx2 - bevel, by1)
-        glVertex(bx2, midY)
-        glVertex(bx1, midY)
-    end)
+    if widget._barSkinUi and not widget._transparentMode and WG.FlowUI and WG.FlowUI.Draw and WG.FlowUI.Draw.Element then
+        -- /ecographbarui only: no separate backplate rect at all here --
+        -- Metal/Energy don't have one either. The off-color tint behind
+        -- the bar is drawn directly at the bar's own size, further down
+        -- where the fill itself is drawn (see the inner-bar-background
+        -- block below), instead of this separate, differently-sized
+        -- outer rect.
+    elseif widget._barSkin and not widget._transparentMode then
+        -- Round 10's chamfer skin, scaled down to this smaller backplate
+        -- (6px chamfer vs. the main panel's 10px), same gradient/border
+        -- colors as the main panel for visual consistency.
+        glBeginEnd(GL.TRIANGLE_FAN, widget._barSkinPanelVerts, bx1, by1, bx2, by2, 6,
+            0.22, 0.07, 0.05, compactBgCol[4],
+            0.04, 0.02, 0.02, compactBgCol[4])
 
-    -- BACKPLATE BORDER
-    glColor(cfg.borderColor)
-    glLineWidth(1.3)
-    glBeginEnd(GL.LINE_STRIP, function()
-        glVertex(bx1, midY)
-        glVertex(bx1 + bevel, by1)
-        glVertex(bx2 - bevel, by1)
-        glVertex(bx2, midY)
-    end)
+        glColor(0.55, 0.32, 0.16, 0.75)
+        glLineWidth(1.3)
+        glBeginEnd(GL_LINES, widget._barSkinBorderVerts, bx1, by1, bx2, by2, 6)
+    else
+        -- BACKPLATE FILL
+        glColor(0, 0, 0, compactBgCol[4])
+        glBeginEnd(GL.TRIANGLE_FAN, widget._windBackplateFillVerts, bx1, bevel, by1, bx2, midY)
+
+        -- BACKPLATE BORDER
+        glColor(cfg.borderColor)
+        glLineWidth(1.3)
+        glBeginEnd(GL.LINE_STRIP, widget._windBackplateBorderVerts, bx1, midY, bevel, by1, bx2)
+    end
 
     
 -- Title + Player Name (single row, Compact View)
@@ -3270,8 +3577,14 @@ local teamID = viewedTeamID or Spring.GetMyTeamID()
 local r, g, b = Spring.GetTeamColor(teamID)
 glColor(r, g, b, 1)
 
--- ⭐ NEW: shorten the name
-local shortName = ShortenPlayerName(playerName)
+-- Cache the shortened name -- playerName essentially never changes
+-- mid-match, so rebuilding it (and its "..." concatenation) every frame
+-- was pure waste.
+if widget._cache_playerName ~= playerName then
+    widget._cache_playerName = playerName
+    widget._cache_shortName = ShortenPlayerName(playerName)
+end
+local shortName = widget._cache_shortName
 
 glText(shortName, box.x1 + 6 + titleW, box.y2 - 20, titleFont, "o")
 
@@ -3284,44 +3597,67 @@ local energyStatsX = (mid + box.x2) * 0.5
 
 local statsY = box.y2 - 20
 
--- Metal stats
-local mInc = smoothMetalIncome or 0
-local mUse = smoothMetalUsage or 0
+if widget._detachedVisible then
+    -- Redundant with the detached dual-line window's own stats row --
+    -- skip entirely (not just visually) so no string/width work or
+    -- rect updates happen here while the detached window is showing
+    -- the same Use/Income/Net numbers. Clear the hitboxes too so a
+    -- stale hover tooltip doesn't linger where this text used to be.
+    metalIncRect = nil
+    energyIncRect = nil
+else
+    -- Metal stats
+    local mInc = smoothMetalIncome or 0
+    local mUse = smoothMetalUsage or 0
 
-DrawPanelStats(
-    "Metal",
-    mInc,
-    mUse,
-    metalStatsX,
-    statsY,
-    cfg.metalIncomeColor,
-    cfg.metalUsageColor
-)
+    DrawPanelStats(
+        "Metal",
+        mInc,
+        mUse,
+        metalStatsX,
+        statsY,
+        cfg.metalIncomeColor,
+        cfg.metalUsageColor
+    )
 
--- Energy stats
-local eInc = smoothEnergyIncome or 0
-local eUse = smoothEnergyUsage or 0
+    -- Energy stats
+    local eInc = smoothEnergyIncome or 0
+    local eUse = smoothEnergyUsage or 0
 
-DrawPanelStats(
-    "Energy",
-    eInc,
-    eUse,
-    energyStatsX,
-    statsY,
-    cfg.energyIncomeColor,
-    cfg.energyUsageColor
-)
+    DrawPanelStats(
+        "Energy",
+        eInc,
+        eUse,
+        energyStatsX,
+        statsY,
+        cfg.energyIncomeColor,
+        cfg.energyUsageColor
+    )
+end
 
     local centerX = (box.x1 + box.x2) * 0.5
 
     -- Status color (compact mode)
     local col = statusColors[status] or {1,1,1,1}
     glColor(col)
-    glText(string.format("Status: %s", status),
+    -- status only changes after GetEcoStatus()'s own hold-timer settles,
+    -- so it's stable across many frames -- cache the formatted string
+    -- once per status change and reuse it for both the display line and
+    -- the tooltip measurement below instead of rebuilding it twice a frame.
+    if widget._cache_status ~= status then
+        widget._cache_status = status
+        widget._cache_statusText = "Status: " .. status
+    end
+    glText(widget._cache_statusText,
         centerX + 35, box.y2 - 20, (fontSize + 4 * FONT_SCALE), "oc")
 
--- STATUS TOOLTIP (50% larger hover box)
-local statusText = string.format("Status: %s", status)
+-- STATUS TOOLTIP (hover area is exactly the "Status: ..." text itself --
+-- per the user's own ask, no padding/expansion, and specifically no
+-- reach up into the wind stats/bar above it. Previously this expanded
+-- upward by 55px to deliberately cover the wind text + wind bar, then
+-- grew the whole box by another 50% -- removed both so hovering the
+-- wind status/bar no longer triggers this tooltip at all.)
+local statusText = widget._cache_statusText
 local fontH = (fontSize + 4 * FONT_SCALE)
 
 -- Measure text width
@@ -3331,24 +3667,21 @@ local textWidth = gl.GetTextWidth(statusText) * fontH
 local sx = (centerX + 35) - (textWidth * 0.5)
 local sy = box.y2 - 20
 
--- Base bounding box
+-- Hover box is exactly the text's own bounding box.
+--
+-- glText(..., "o") anchors the BASELINE at the given y, with the glyphs
+-- drawn upward from there (same convention as every other "o"/"oc" call
+-- in this file, e.g. the button labels at `by1 + 6`) -- not downward.
+-- Round 18 had this backwards: it put most of the box (0.8*fontH) BELOW
+-- the baseline, reaching down into the wind stats/bar beneath the status
+-- line, and only a sliver (0.2*fontH) above it, which is why only the
+-- very bottom of the "Status: ..." glyphs registered and the box still
+-- reached the wind row. Flipped so the box extends mostly upward
+-- (ascent) from the baseline and only slightly downward (descent).
 local x1 = sx
 local x2 = sx + textWidth
-local y1 = sy - fontH * 0.8
-local y2 = sy + fontH * 0.2
-
--- Expand upward to include wind stats + wind bar
-y2 = y2 + 55   -- covers wind text + wind bar
-
--- Expand hover box by 50%
-local expandX = (x2 - x1) * 0.25
-local expandY = (y2 - y1) * 0.25
-
-x1 = x1 - expandX
-x2 = x2 + expandX
-y1 = y1 - expandY
-y2 = y2 + expandY
-
+local y1 = sy - fontH * 0.2
+local y2 = sy + fontH * 0.8
 
 local mx, my = Spring.GetMouseState()
 
@@ -3416,23 +3749,39 @@ do
     -- Horizontal spacing for the numbers
     local offset = 18
 
-    local coldColor = {0.2, 1.0, 0.2, 1.0}
-    local warmColor = {1.0, 0.35, 0.2, 1.0}
+    -- Persistent color tables instead of a fresh {r,g,b,a} table literal
+    -- every frame -- the colors never change, only the table used to
+    -- hold them kept getting reallocated.
+    widget._commanderColdColor = widget._commanderColdColor or {0.2, 1.0, 0.2, 1.0}
+    widget._commanderWarmColor = widget._commanderWarmColor or {1.0, 0.35, 0.2, 1.0}
+    local coldColor = widget._commanderColdColor
+    local warmColor = widget._commanderWarmColor
 
     -- Label
     glColor(cfg.titleColor)
     glText("Commanders:   ", commandersX, commandersLabelY, fontSize + 3, "oc")
 	
 
-    -- Numbers (same column, centered around commandersX)
+    -- Numbers (same column, centered around commandersX). commanderC1/C2
+    -- only update every 15 game frames, so cache the formatted digit
+    -- strings instead of rebuilding them every render frame.
+    if widget._cache_c1 ~= c1 then
+        widget._cache_c1 = c1
+        widget._cache_c1Str = string.format("%d", c1)
+    end
+    if widget._cache_c2 ~= c2 then
+        widget._cache_c2 = c2
+        widget._cache_c2Str = string.format("%d", c2)
+    end
+
     glColor(coldColor)
-    glText(string.format("%d", c1), baseX - offset, countY, (fontSize + 7 * FONT_SCALE), "oc")
+    glText(widget._cache_c1Str, baseX - offset, countY, (fontSize + 7 * FONT_SCALE), "oc")
 
     glColor(1, 1, 1, 1)
     glText("vs", baseX, countY, fontSize, "oc")
 
     glColor(warmColor)
-    glText(string.format("%d", c2), baseX + offset, countY, (fontSize + 7 * FONT_SCALE), "oc")
+    glText(widget._cache_c2Str, baseX + offset, countY, (fontSize + 7 * FONT_SCALE), "oc")
 
 end
 
@@ -3462,7 +3811,7 @@ local frac = math.max(0, math.min(1, curWind / maxW))
 
 -- Position Wind directly under Status
 local textY = box.y2 - 40
-local barY  = textY - 16
+local barY  = textY - 20
 
 -- X anchor (centered)
 local centerX = (box.x1 + box.x2) * 0.5
@@ -3508,17 +3857,27 @@ local barX = statusCenterX - barW * 0.5
 --- here is the place for the slandted backplate
 
 -- inner bar background
-local innerPadX = 6
-local innerPadY = 1
+-- /ecographbarui: match Metal/Energy's own storage-bar background
+-- exactly -- a single rect at the bar's own full size (no inset) tinted
+-- with a dim, off-color version of the bar's own fill hue, instead of a
+-- separate padded black box. Every other skin keeps the original black
+-- 0.65 inset box unchanged.
+local useWindBarTint = widget._barSkinUi and not widget._transparentMode and WG.FlowUI and WG.FlowUI.Draw and WG.FlowUI.Draw.Element
+local innerPadX = useWindBarTint and 0 or 6
+local innerPadY = useWindBarTint and 0 or 1
 local innerX1 = barX + innerPadX
 local innerX2 = barX + barW - innerPadX
 local innerY1 = barY + innerPadY
 local innerY2 = barY + barH - innerPadY
 
--- Follows the Default/Transparent toggle, same as the graph panels and
--- window backdrop -- this was a flat 0.65 regardless of mode, which is
--- why it stayed dark after everything else went transparent.
-glColor(0, 0, 0, widget._transparentMode and 0 or 0.65)
+if useWindBarTint then
+    glColor(0.6, 0.8, 1.0, 0.20)
+else
+    -- Follows the Default/Transparent toggle, same as the graph panels and
+    -- window backdrop -- this was a flat 0.65 regardless of mode, which is
+    -- why it stayed dark after everything else went transparent.
+    glColor(0, 0, 0, widget._transparentMode and 0 or 0.65)
+end
 glRect(innerX1, innerY1, innerX2, innerY2)
 
 -- fill
@@ -3543,21 +3902,24 @@ do
     -- Same Y as Energy Inc (top row)
     local tidalY = statsY
 
-    local tidalText = string.format("Tidal: %.1f", tidal)
+    -- Game.tidal is a fixed per-map constant -- never changes mid-match --
+    -- so the formatted string only needs to be built once, not every frame.
+    if widget._cache_tidal ~= tidal then
+        widget._cache_tidal = tidal
+        widget._cache_tidalText = string.format("Tidal: %.1f", tidal)
+    end
 
     glColor(1, 1, 1, 1)
-    glText(tidalText, tidalX, tidalY, fontSize, "oc")
+    glText(widget._cache_tidalText, tidalX, tidalY, fontSize, "oc")
 end
 
 			
 -- METAL INCOME/USAGE GRAPH (Compact Mode, full auto-scaling)
+-- Fully skipped (data scan, background, zero line, curves) when
+-- hideGraphs is true -- previously only the curves themselves were
+-- gated, while the scan/background/zero-line ran every frame regardless.
 do
-if hideGraphs then
-    -- Skip ONLY the graph drawing, not the rest of the overlay
-else
-    -- draw the dual-line graph here
-end
-
+if not hideGraphs then
 
     local data = history.metal
     if #data < 2 then return end
@@ -3573,7 +3935,7 @@ end
     local gx2 = centerX - (box.x2 - box.x1) * 0.07
 
     -- Vertical: stretch from top of storage bar to just below Net: line
-    local storageBarTop = box.y1 + 18      -- was + 30
+    local storageBarTop = box.y1 + 28      -- was + 30 (Round 16: +10 for bottom-row spacing)
     local graphTopLimit = box.y2 - 22   -- leave 60px buffer below Net: line. Top ceiling of the Metal Dual Graph
 
     local gy1 = storageBarTop
@@ -3621,39 +3983,21 @@ end
     local zeroY = gy1 + gh * ((0 - minV) / rangeV)
     glColor(cfg.gridColor)
     glLineWidth(1.0)
-    glBeginEnd(GL_LINES, function()
-        glVertex(gx1, zeroY)
-        glVertex(gx2, zeroY)
-    end)
+    glBeginEnd(GL_LINES, widget._zeroLineVerts, gx1, zeroY, gx2)
 
-if not hideGraphs then
     -- INCOME CURVE
     glColor(cfg.metalIncomeColor)
     glLineWidth(2.0)
-    glBeginEnd(GL_LINE_STRIP, function()
-        for i = 1, #data, 2 do
-            local s  = data[i]
-            local tf = (s.t - minT) / rangeT
-            local vf = (s.income - minV) / rangeV
-            glVertex(gx1 + gw * tf, gy1 + gh * vf)
-        end
-    end)
+    glBeginEnd(GL_LINE_STRIP, widget._curveVerts, data, gx1, gw, gy1, gh, minT, rangeT, minV, rangeV, true)
 
     -- USAGE CURVE
     glColor(cfg.metalUsageColor)
     glLineWidth(2.0)
-    glBeginEnd(GL_LINE_STRIP, function()
-        for i = 1, #data, 2 do
-            local s  = data[i]
-            local tf = (s.t - minT) / rangeT
-            local vf = (s.usage - minV) / rangeV
-            glVertex(gx1 + gw * tf, gy1 + gh * vf)
-        end
-    end)
-end
+    glBeginEnd(GL_LINE_STRIP, widget._curveVerts, data, gx1, gw, gy1, gh, minT, rangeT, minV, rangeV, false)
 
     -- EXPOSE BOTTOM FOR STORAGE BAR
     compactGraphBottom = gy1
+end
 end
 
 -- HISTORY SECONDS SELECTOR (Compact Mode, right side)
@@ -3675,6 +4019,11 @@ if not hideGraphs then
     local count = #opts
     local w = (hx2 - hx1) / count
 
+    -- cfg.historyOptions never changes at runtime, so the "Ns" labels are
+    -- built once per option value and cached, instead of concatenating a
+    -- fresh string for each of the 5 options every single frame.
+    widget._historyLabels = widget._historyLabels or {}
+
     for i = 1, count do
         local x1 = hx1 + (i-1)*w
         local x2 = x1 + w
@@ -3686,20 +4035,23 @@ if not hideGraphs then
             glRect(x1, hy1, x2, hy2)
         end
 
+        local label = widget._historyLabels[sec]
+        if not label then
+            label = sec.."s"
+            widget._historyLabels[sec] = label
+        end
+
         -- Text
         glColor(1,1,1,1)
-        glText(sec.."s", x1 + w*0.5, hy1 + 3, 11, "oc")
+        glText(label, x1 + w*0.5, hy1 + 3, 11, "oc")
     end
 end -- End of the if not hideGraphs check
 
 -- ENERGY INCOME/USAGE GRAPH (Compact Mode, full auto-scaling)
+-- Fully skipped (data scan, background, zero line, curves) when
+-- hideGraphs is true -- see the matching comment on the Metal graph above.
 do
-if hideGraphs then
-    -- Skip ONLY the graph drawing, not the rest of the overlay
-else
-    -- draw the dual-line graph here
-end
-
+if not hideGraphs then
 
     local data = history.energy
     if #data < 2 then return end
@@ -3714,7 +4066,7 @@ end
     local gx2 = box.x2 - (box.x2 - box.x1) * 0.03
 
     -- Vertical: stretch from top of storage bar to just below Net: line
-    local storageBarTop = box.y1 + 30
+    local storageBarTop = box.y1 + 40  -- Round 16: +10 for bottom-row spacing
     local graphTopLimit = box.y2 - 24   -- buffer below Net: line  Top ceiling for the Energy dual graph
 
     local gy1 = storageBarTop
@@ -3759,39 +4111,21 @@ end
     local zeroY = gy1 + gh * ((0 - minV) / rangeV)
     glColor(cfg.gridColor)
     glLineWidth(1.0)
-    glBeginEnd(GL_LINES, function()
-        glVertex(gx1, zeroY)
-        glVertex(gx2, zeroY)
-    end)
+    glBeginEnd(GL_LINES, widget._zeroLineVerts, gx1, zeroY, gx2)
 
-if not hideGraphs then
     -- INCOME CURVE
     glColor(cfg.energyIncomeColor)
     glLineWidth(2.0)
-    glBeginEnd(GL_LINE_STRIP, function()
-        for i = 1, #data, 2 do
-            local s  = data[i]
-            local tf = (s.t - minT) / rangeT
-            local vf = (s.income - minV) / rangeV
-            glVertex(gx1 + gw * tf, gy1 + gh * vf)
-        end
-    end)
+    glBeginEnd(GL_LINE_STRIP, widget._curveVerts, data, gx1, gw, gy1, gh, minT, rangeT, minV, rangeV, true)
 
     -- USAGE CURVE
     glColor(cfg.energyUsageColor)
     glLineWidth(2.0)
-    glBeginEnd(GL_LINE_STRIP, function()
-        for i = 1, #data, 2 do
-            local s  = data[i]
-            local tf = (s.t - minT) / rangeT
-            local vf = (s.usage - minV) / rangeV
-            glVertex(gx1 + gw * tf, gy1 + gh * vf)
-        end
-    end)
-end
+    glBeginEnd(GL_LINE_STRIP, widget._curveVerts, data, gx1, gw, gy1, gh, minT, rangeT, minV, rangeV, false)
 
     -- EXPOSE BOTTOM FOR FUTURE ELEMENTS
     compactEnergyGraphBottom = gy1
+end
 end
 
 -- METAL STORAGE BAR (Compact Mode, bottom-anchored, layered)
@@ -3801,7 +4135,7 @@ do
     local barX2 = centerX - 270 + metalOffset
     local barH  = 12
 	-- Nudge the Storage bar up or down.
-    local barY1 = box.y1 + 5
+    local barY1 = box.y1 + 15  -- Round 16: +10 for bottom-row spacing
     local barY2 = barY1 + barH
 
     -- Values
@@ -3906,9 +4240,15 @@ end
 
 -- Storage total (aligned with PP: No)
 glColor(1, 1, 1, 1)
-local text = string.format("[%.1fK]", max/1000)
+-- Storage capacity only changes when a storage building finishes/dies,
+-- not every frame -- cache the formatted string on that value.
+if widget._cache_metalStorage ~= max then
+    widget._cache_metalStorage = max
+    widget._cache_metalStorageText = string.format("[%.1fK]", max/1000)
+end
+local text = widget._cache_metalStorageText
 
-local textY = box.y1 + 8   -- EXACT same Y as PP: No
+local textY = box.y1 + 18   -- EXACT same Y as PP: No (Round 16: +10 for bottom-row spacing)
 glText(text, barX2 + 65, textY, fontSize, "or")   -- + 60  This moves the Metal Storage total stat. Higher goes right
 
 end
@@ -3927,7 +4267,7 @@ do
     local barX2 = box.x2 - 150 + energyOffset
 
     local barH  = 12
-    local barY1 = box.y1 + 5
+    local barY1 = box.y1 + 15  -- Round 16: +10 for bottom-row spacing
     local barY2 = barY1 + barH
 
     -- BAR BACKGROUND
@@ -4058,8 +4398,14 @@ do
 
     -- STORAGE TOTAL TEXT
     glColor(1, 1, 1, 1)
-    local text = string.format("[%.1fK]", max / 1000)
-    local textY = box.y1 + 8
+    -- Storage capacity only changes when a storage building finishes/dies,
+    -- not every frame -- cache the formatted string on that value.
+    if widget._cache_energyStorage ~= max then
+        widget._cache_energyStorage = max
+        widget._cache_energyStorageText = string.format("[%.1fK]", max / 1000)
+    end
+    local text = widget._cache_energyStorageText
+    local textY = box.y1 + 18  -- Round 16: +10 for bottom-row spacing
     glText(text, barX2 + 60, textY, fontSize, "or")   -- + 55 original  moving Energy Total Storage Stat left or right. Higher goes right
 end
 
@@ -4079,7 +4425,7 @@ do
         -- Recompute bar geometry
         local barX1 = box.x1 + 170   -- Match this with the left side of the Metal Storage bar
         local barX2 = centerX - 250
-        local barY1 = box.y1 + 5
+        local barY1 = box.y1 + 15  -- Round 16: +10 for bottom-row spacing
 
         -- Position: nicely to the right of the storage bar
         local metalTextX = barX2 + 25     -- ← 90 adjust this if needed Metal Available left to right
@@ -4122,7 +4468,7 @@ do
         -- Recompute Energy bar geometry (must match your actual bar)
         local barX1 = centerX + 410 -- 390  This is the Energy Available stat just below and right of Wind Bar
         local barX2 = box.x2 - 150
-        local barY1 = box.y1 + 5
+        local barY1 = box.y1 + 15  -- Round 16: +10 for bottom-row spacing
 
         -- Mirror Metal placement:
         -- Metal uses: barX2 + 90
@@ -4151,36 +4497,48 @@ do
 
     -- Rounded ratio for display
     local ratioRounded = math.floor(ratio + 0.5)
-    local ratioStr = string.format("1:%d", ratioRounded)
 
     ------------------------------------------------------------
     -- Position: right of [Intel]
     ------------------------------------------------------------
     local intelX = box.x1 + 8
-    local intelY = box.y1 + 8
+    local intelY = box.y1 + 18  -- Round 16: +10 for bottom-row spacing
 
     -- VERY TIGHT spacing
     local ratioX = intelX + 50
     local ratioY = intelY
 
     ------------------------------------------------------------
-    -- Color coding
+    -- Color coding -- 4 persistent color tables instead of a fresh
+    -- table literal every frame; which one applies still depends on the
+    -- live ratio, only the table objects themselves are no longer
+    -- reallocated each time.
     ------------------------------------------------------------
+    widget._meRatioColorLow    = widget._meRatioColorLow    or {1, 0.2, 0.2, 1}
+    widget._meRatioColorLowMid = widget._meRatioColorLowMid or {1, 1, 0.2, 1}
+    widget._meRatioColorGood   = widget._meRatioColorGood   or {0.2, 1, 0.2, 1}
+    widget._meRatioColorHigh   = widget._meRatioColorHigh   or {0.2, 1, 1, 1}
+
     local col
     if ratio < 8 then
-        col = {1, 0.2, 0.2, 1}
+        col = widget._meRatioColorLow
     elseif ratio < 10 then
-        col = {1, 1, 0.2, 1}
+        col = widget._meRatioColorLowMid
     elseif ratio <= 40 then
-        col = {0.2, 1, 0.2, 1}
+        col = widget._meRatioColorGood
     else
-        col = {0.2, 1, 1, 1}
+        col = widget._meRatioColorHigh
     end
 
     ------------------------------------------------------------
-    -- Draw bracketed label: [M:E  1:XXX  ]
+    -- Draw bracketed label: [M:E  1:XXX  ] -- cached on the rounded
+    -- ratio, the only part of the label that can actually change.
     ------------------------------------------------------------
-    local display = string.format("[M:E %s]", ratioStr)
+    if widget._cache_meRatio ~= ratioRounded then
+        widget._cache_meRatio = ratioRounded
+        widget._cache_meRatioText = string.format("[M:E 1:%d]", ratioRounded)
+    end
+    local display = widget._cache_meRatioText
 
     glColor(col)
     glText(display, ratioX, ratioY, fontSize + 2, "l")
@@ -4191,12 +4549,7 @@ do
     local size  = fontSize + 2
     local width = gl.GetTextWidth(display) * size
 
-    meRatioRect = {
-        x1 = ratioX - 4,
-        y1 = ratioY - fontSize,
-        x2 = ratioX - 4 + width + 8,
-        y2 = ratioY + fontSize,
-    }
+    meRatioRect = widget._setRect(meRatioRect, ratioX - 4, ratioY - fontSize, ratioX - 4 + width + 8, ratioY + fontSize)
 end
 
 
@@ -4223,35 +4576,10 @@ do
         local ratioStr = string.format("1:%d", ratioRounded)
 
         ------------------------------------------------------------
-        -- Metal context (NET-AWARE + styled)
+        -- Metal context (NET-AWARE + styled, hold-based anti-flicker --
+        -- see widget._getMetalHint near the top of the file)
         ------------------------------------------------------------
-        local metalHint, metalColor, metalIcon
-
-        if mNet < 0 then
-            metalHint  = "Stalling metal"
-            metalColor = {1, 0.2, 0.2, 1}
-            metalIcon  = "⚠️ "
-
-        elseif mInc < 5 then
-            metalHint  = "Metal income very low"
-            metalColor = {1, 0.2, 0.2, 1}
-            metalIcon  = "⚠️ "
-
-        elseif mInc < 12 then
-            metalHint  = "Metal income low."
-            metalColor = {1, 0.7, 0.1, 1}
-            metalIcon  = "⚠️ "
-
-        elseif mInc < 25 then
-            metalHint  = "Metal income normal."
-            metalColor = {0, 0, 0, 1}
-            metalIcon  = "✔️ "
-
-        else
-            metalHint  = "Metal income high — strong eco potential."
-            metalColor = {0.2, 1, 0.2, 1}
-            metalIcon  = "⬆️ "
-        end
+        local metalHint, metalColor, metalIcon = widget._getMetalHint(mNet, mInc)
 
         ------------------------------------------------------------
         -- Tooltip lines
@@ -4375,7 +4703,7 @@ end
 -- GAME SPEED + PINPOINTER + BUILD POWER (Compact Mode, lower-left corner)
 do
     local px = box.x1 + 8
-    local py = box.y1 + 8
+    local py = box.y1 + 18  -- Round 16: +10 for bottom-row spacing
 
     glColor(1, 1, 1, 1)
     glText("[INTEL]", px, py, font_scale, "o")
@@ -4383,12 +4711,7 @@ do
     -------------------------------------------------
     -- Hover rect (covers Intel area)
     -------------------------------------------------
-    ppRect = {
-        x1 = px - 4,
-        y1 = py - 4,
-        x2 = px + 35,   -- This is the hit box for the tooltip for Intel
-        y2 = py + 36,
-    }
+    ppRect = widget._setRect(ppRect, px - 4, py - 4, px + 35, py + 36)
 end
 
 -- TOOLTIP FOR INFO (Compact View)
@@ -4552,12 +4875,7 @@ do
     local tx = hx1 - tWidth - 8
     local ty = hy1
 
-    mainTransparentToggleRect = {
-        x1 = tx,
-        y1 = ty - tSize,
-        x2 = tx + tWidth,
-        y2 = ty + tSize
-    }
+    mainTransparentToggleRect = widget._setRect(mainTransparentToggleRect, tx, ty - tSize, tx + tWidth, ty + tSize)
 
     glColor(cfg.titleColor)
     glText(tLabel, tx, ty, tSize, "o")
@@ -4572,12 +4890,7 @@ do
     local py = hy1
 
     -- Save hitbox for click detection
-    pauseButtonRect = {
-        x1 = px,
-        y1 = py - pauseSize,
-        x2 = px + pauseWidth,
-        y2 = py + pauseSize
-    }
+    pauseButtonRect = widget._setRect(pauseButtonRect, px, py - pauseSize, px + pauseWidth, py + pauseSize)
 
 ------------------------------------------------------------
 -- ENERGY → METAL STATS (Compact View, fixed + ultra-compact)
@@ -4601,9 +4914,18 @@ do
     -- local mText = formatK(mVal, "m")
     -- local uText = string.format("%d%%", convUtil)
 
-local eText = "-" .. formatK(math.abs(eVal or 0), "e")
-local mText = "+" .. formatK(math.abs(mVal or 0), "m")
-local uText = string.format("%d%%", convUtil or 0)
+widget._convStatCache = widget._convStatCache or {}
+local ccache = widget._convStatCache
+local eText, mText, uText
+if ccache.eVal == eVal and ccache.mVal == mVal and ccache.convUtil == convUtil then
+    eText, mText, uText = ccache.eText, ccache.mText, ccache.uText
+else
+    eText = "-" .. formatK(math.abs(eVal or 0), "e")
+    mText = "+" .. formatK(math.abs(mVal or 0), "m")
+    uText = string.format("%d%%", convUtil or 0)
+    ccache.eVal, ccache.mVal, ccache.convUtil = eVal, mVal, convUtil
+    ccache.eText, ccache.mText, ccache.uText = eText, mText, uText
+end
 
     -- ultra-compact reserved widths
     local eW = glGetTextWidth("-99.9ke") * pauseSize
@@ -4638,12 +4960,7 @@ local uText = string.format("%d%%", convUtil or 0)
     glText("]", sx + bracketW + eW + mW + uW + bracketW * 0.5, sy, pauseSize, "oc")
 
     -- Tooltip hitbox
-    convStatRect = {
-        x1 = sx,
-        y1 = sy - pauseSize,
-        x2 = sx + totalW,
-        y2 = sy + pauseSize
-    }
+    convStatRect = widget._setRect(convStatRect, sx, sy - pauseSize, sx + totalW, sy + pauseSize)
 end
 
 -- Draw Pause
@@ -5043,6 +5360,15 @@ compactMode = true
 local savedHist = Spring.GetConfigInt("eco_graph_history_seconds", cfg.historySeconds)
 cfg.historySeconds = savedHist or cfg.historySeconds
 
+-- Resync the sample-retention cap to the just-restored history length.
+-- UpdateViewGeometry() already ran above (for vsx/vsy + box sizing)
+-- using the DEFAULT cfg.historySeconds, before this saved value loaded --
+-- without this, the actual sample buffer stays capped at the default
+-- duration's worth of samples for the rest of the session, even though
+-- the dropdown and the graph's drawn time axis correctly show the
+-- restored length.
+historyMaxSamples = math.max(30, math.floor(cfg.historySeconds * 30))
+
 ------------------------------------------------------------
 -- LOAD SAVED BACKGROUND MODE ("Default" opaque vs "Transparent")
 -- Stored on the widget table (not a new top-level local) -- this file's
@@ -5055,6 +5381,37 @@ cfg.historySeconds = savedHist or cfg.historySeconds
 ------------------------------------------------------------
 widget._transparentMode = Spring.GetConfigInt("eco_graph_transparent_mode", 0) == 1
 widget._detachedTransparentMode = Spring.GetConfigInt("eco_detached_transparent_mode", 0) == 1
+
+-- "Top Bar"-style panel skin (/ecographbar) -- one flag shared by both
+-- windows, same reasoning as /ecographt//ecographd setting both
+-- windows' transparency together: there's no way to name "just one
+-- window" from a single command, so this one switch covers both.
+widget._barSkin = Spring.GetConfigInt("eco_graph_bar_skin", 0) == 1
+
+-- "Top Bar" skin, take 2 (/ecographbarui) -- uses WG.FlowUI.Draw.Element,
+-- BAR's own shared panel-chrome function (see the big comment above the
+-- vertex helpers for where this was confirmed). Kept as a separate flag
+-- from widget._barSkin/`/ecographbar` (Round 10's hand-approximated
+-- version) rather than replacing it -- the user asked to keep both as
+-- independent options.
+--
+-- Round 12: this is now the DEFAULT look for a player who has never
+-- touched this setting. Spring.GetConfigInt's own default argument can't
+-- tell "never set" apart from "explicitly set to 0" -- both come back as
+-- whatever default you pass -- so -1 is used as a sentinel that could
+-- never come from Spring.SetConfigInt(key, 0/1) elsewhere in this file.
+-- Seeing -1 means this key has never been written for this player; the
+-- flag is set ON and immediately persisted as a real 1, so every
+-- subsequent load (including after an explicit /ecographbarui OFF, or
+-- /ecographorig) reads back whatever the player actually chose, not the
+-- sentinel.
+local savedBarSkinUi = Spring.GetConfigInt("eco_graph_bar_skin_ui", -1)
+if savedBarSkinUi == -1 then
+    widget._barSkinUi = true
+    Spring.SetConfigInt("eco_graph_bar_skin_ui", 1)
+else
+    widget._barSkinUi = savedBarSkinUi == 1
+end
 
 -- Load saved hide state for the dual-line/history selector toggle
 local savedHide = Spring.GetConfigInt("eco_graph_hide_graphs", 0)
@@ -6157,7 +6514,7 @@ end
         local top = box.y2
         local h   = top - my
 
-        local minH = vsy * 0.033 --original 0.052  Vertical minimum  height of the main Eco Graph allowed.
+        local minH = vsy * 0.050 --original 0.033  Vertical minimum  height of the main Eco Graph allowed.
         local maxH = vsy * 0.90
         if h < minH then h = minH end
         if h > maxH then h = maxH end
@@ -6312,6 +6669,7 @@ local function Detached_Load()
 
 local savedVisible = Spring.GetConfigInt("eco_detached_visible", 0)
 detached.visible = (savedVisible == 1)
+widget._detachedVisible = detached.visible
 
 
     local savedX = Spring.GetConfigFloat("eco_detached_x", -1)
@@ -6429,12 +6787,7 @@ local function Detached_DrawStatsRow()
         local y1 = statsY - fontSize
         local y2 = statsY + fontSize
 
-        detached.metalIncRect = {
-            x1 = leftX,
-            y1 = y1,
-            x2 = leftX + totalW,
-            y2 = y2
-        }
+        detached.metalIncRect = widget._setRect(detached.metalIncRect, leftX, y1, leftX + totalW, y2)
 
         -- Energy hitbox
         local eUseStr = "Use: " .. FormatIncome(eUse)
@@ -6448,12 +6801,7 @@ local function Detached_DrawStatsRow()
         totalW = eUseW + pad + eIncW + pad + eNetW
         leftX = energyStatsX - (totalW * 0.5)
 
-        detached.energyIncRect = {
-            x1 = leftX,
-            y1 = y1,
-            x2 = leftX + totalW,
-            y2 = y2
-        }
+        detached.energyIncRect = widget._setRect(detached.energyIncRect, leftX, y1, leftX + totalW, y2)
     end
 
 
@@ -6540,34 +6888,17 @@ local function Detached_DrawMetalGraph()
     local zeroY = gy1 + gh * ((0 - minV) / rangeV)
     glColor(cfg.gridColor)
     glLineWidth(1.0)
-    glBeginEnd(GL_LINES, function()
-        glVertex(gx1, zeroY)
-        glVertex(gx2, zeroY)
-    end)
+    glBeginEnd(GL_LINES, widget._zeroLineVerts, gx1, zeroY, gx2)
 
     -- INCOME CURVE
     glColor(cfg.metalIncomeColor)
     glLineWidth(2.0)
-    glBeginEnd(GL_LINE_STRIP, function()
-        for i = 1, #data, 2 do
-            local s  = data[i]
-            local tf = (s.t - minT) / rangeT
-            local vf = (s.income - minV) / rangeV
-            glVertex(gx1 + gw * tf, gy1 + gh * vf)
-        end
-    end)
+    glBeginEnd(GL_LINE_STRIP, widget._curveVerts, data, gx1, gw, gy1, gh, minT, rangeT, minV, rangeV, true)
 
     -- USAGE CURVE
     glColor(cfg.metalUsageColor)
     glLineWidth(2.0)
-    glBeginEnd(GL_LINE_STRIP, function()
-        for i = 1, #data, 2 do
-            local s  = data[i]
-            local tf = (s.t - minT) / rangeT
-            local vf = (s.usage - minV) / rangeV
-            glVertex(gx1 + gw * tf, gy1 + gh * vf)
-        end
-    end)
+    glBeginEnd(GL_LINE_STRIP, widget._curveVerts, data, gx1, gw, gy1, gh, minT, rangeT, minV, rangeV, false)
 end
 
 local function Detached_DrawEnergyGraph()
@@ -6626,34 +6957,17 @@ local function Detached_DrawEnergyGraph()
     local zeroY = gy1 + gh * ((0 - minV) / rangeV)
     glColor(cfg.gridColor)
     glLineWidth(1.0)
-    glBeginEnd(GL_LINES, function()
-        glVertex(gx1, zeroY)
-        glVertex(gx2, zeroY)
-    end)
+    glBeginEnd(GL_LINES, widget._zeroLineVerts, gx1, zeroY, gx2)
 
     -- INCOME CURVE
     glColor(cfg.energyIncomeColor)
     glLineWidth(2.0)
-    glBeginEnd(GL_LINE_STRIP, function()
-        for i = 1, #data, 2 do
-            local s  = data[i]
-            local tf = (s.t - minT) / rangeT
-            local vf = (s.income - minV) / rangeV
-            glVertex(gx1 + gw * tf, gy1 + gh * vf)
-        end
-    end)
+    glBeginEnd(GL_LINE_STRIP, widget._curveVerts, data, gx1, gw, gy1, gh, minT, rangeT, minV, rangeV, true)
 
     -- USAGE CURVE
     glColor(cfg.energyUsageColor)
     glLineWidth(2.0)
-    glBeginEnd(GL_LINE_STRIP, function()
-        for i = 1, #data, 2 do
-            local s  = data[i]
-            local tf = (s.t - minT) / rangeT
-            local vf = (s.usage - minV) / rangeV
-            glVertex(gx1 + gw * tf, gy1 + gh * vf)
-        end
-    end)
+    glBeginEnd(GL_LINE_STRIP, widget._curveVerts, data, gx1, gw, gy1, gh, minT, rangeT, minV, rangeV, false)
 end
 
 --------------------------------------------------------------------------------
@@ -6728,18 +7042,40 @@ local function Detached_Draw()
     -- the "Default" value; drops to 0 when THIS window's own background-
     -- mode toggle is set to Transparent -- independent of the main/
     -- attached window's transparency flag)
-    glColor(0, 0, 0, widget._detachedTransparentMode and 0 or 0.80)
-    glRect(x1, y1, x2, y2)
+    if widget._barSkinUi and not widget._detachedTransparentMode and WG.FlowUI and WG.FlowUI.Draw and WG.FlowUI.Draw.Element then
+        -- Same Top Bar overlap hiding as the attached/compact window
+        -- above -- the detached window can just as easily be dragged on
+        -- top of Top Bar, and uses this identical FlowUI skin. Round 23:
+        -- opaque backing drawn FIRST, behind FlowUI's own panel, so the
+        -- skin's texture/gradient still shows on top instead of being
+        -- flattened by it.
+        if GetTopBarOverlap(x1, y1, x2, y2) then
+            -- Round 32: same darkened-again warm-brown backing as the
+            -- attached/compact window above (same 0.90 opacity, darker
+            -- color).
+            glColor(0.30, 0.25, 0.19, 0.90)
+            glRect(x1, y1, x2, y2)
+        end
 
-    -- Border
-    glColor(1,1,1,0.4)
-    glLineWidth(1.5)
-    glBeginEnd(GL_LINES, function()
-        glVertex(x1,y1); glVertex(x2,y1)
-        glVertex(x2,y1); glVertex(x2,y2)
-        glVertex(x2,y2); glVertex(x1,y2)
-        glVertex(x1,y2); glVertex(x1,y1)
-    end)
+        glColor(1, 1, 1, 1)
+        WG.FlowUI.Draw.Element(x1, y1, x2, y2, 0, 0, 1, 1, nil, nil, nil, nil, nil, nil, nil, nil)
+    elseif widget._barSkin and not widget._detachedTransparentMode then
+        glBeginEnd(GL.TRIANGLE_FAN, widget._barSkinPanelVerts, x1, y1, x2, y2, 10,
+            0.22, 0.07, 0.05, 0.80,
+            0.04, 0.02, 0.02, 0.80)
+
+        glColor(0.55, 0.32, 0.16, 0.75)
+        glLineWidth(1.5)
+        glBeginEnd(GL_LINES, widget._barSkinBorderVerts, x1, y1, x2, y2, 10)
+    else
+        glColor(0, 0, 0, widget._detachedTransparentMode and 0 or 0.80)
+        glRect(x1, y1, x2, y2)
+
+        -- Border
+        glColor(1,1,1,0.4)
+        glLineWidth(1.5)
+        glBeginEnd(GL_LINES, widget._rectBorderVerts, x1, y1, x2, y2)
+    end
 
     -- Clip to detached window
     gl.Scissor(true)
@@ -6782,19 +7118,14 @@ local function Detached_Draw()
             local tgY1 = tgCenterY - tgH * 0.5
             local tgY2 = tgCenterY + tgH * 0.5
 
-            widget._detachedBgToggleRect = { x1 = tgX1, y1 = tgY1, x2 = tgX2, y2 = tgY2 }
+            widget._detachedBgToggleRect = widget._setRect(widget._detachedBgToggleRect, tgX1, tgY1, tgX2, tgY2)
 
             glColor(0, 0, 0, widget._detachedTransparentMode and 0.35 or 0.55)
             glRect(tgX1, tgY1, tgX2, tgY2)
 
             glColor(1, 1, 1, 0.45)
             glLineWidth(1)
-            glBeginEnd(GL_LINES, function()
-                glVertex(tgX1, tgY1); glVertex(tgX2, tgY1)
-                glVertex(tgX2, tgY1); glVertex(tgX2, tgY2)
-                glVertex(tgX2, tgY2); glVertex(tgX1, tgY2)
-                glVertex(tgX1, tgY2); glVertex(tgX1, tgY1)
-            end)
+            glBeginEnd(GL_LINES, widget._rectBorderVerts, tgX1, tgY1, tgX2, tgY2)
 
             glColor(1, 1, 1, 0.9)
             glText(widget._detachedTransparentMode and "T" or "D", centerX, tgCenterY - 3, 10, "oc")
@@ -7005,6 +7336,7 @@ function widget:MousePress(mx, my, button)
 -- CTRL + Left‑Click inside Eco Graph toggles detached window
 if ctrl and button == 1 and PointInBox(mx, my) then
     detached.visible = not detached.visible
+    widget._detachedVisible = detached.visible
     Spring.SetConfigInt("eco_detached_visible", detached.visible and 1 or 0)
     return true
 end
@@ -7014,6 +7346,7 @@ if button == 1
 and detached.closeX1 and mx >= detached.closeX1 and mx <= detached.closeX2
 and my >= detached.closeY1 and my <= detached.closeY2 then
     detached.visible = false
+    widget._detachedVisible = false
     Spring.SetConfigInt("eco_detached_visible", 0)
     Detached_Save()
     return true
@@ -7390,12 +7723,35 @@ function widget:Initialize()
     -- they download the release, with nothing visible left to drag back
     -- into view.
     widgetHandler:AddAction("ecographcenter", function()
+        -- Main Eco Graph window: re-center on the CURRENT screen,
+        -- keeping its existing size -- same off-screen-after-resolution-
+        -- change reasoning as EcoToggleMenu.Center()/detached.Center()
+        -- below, just applied to the box this command previously missed.
+        local curVsx, curVsy = Spring.GetViewGeometry()
+        local mw = box.x2 - box.x1
+        local mh = box.y2 - box.y1
+
+        box.x1 = (curVsx - mw) * 0.5
+        box.y1 = (curVsy - mh) * 0.5
+        box.x2 = box.x1 + mw
+        box.y2 = box.y1 + mh
+
+        cfg.anchorX = (box.x1 + mw * 0.5) / curVsx
+        cfg.anchorY = box.y1 / curVsy
+        Spring.SetConfigFloat("eco_graph_x", cfg.anchorX)
+        Spring.SetConfigFloat("eco_graph_y", cfg.anchorY)
+
+        if graphList then
+            glDeleteList(graphList)
+            graphList = nil
+        end
+
         EcoToggleMenu.Center()
         if detached.visible then
             detached.Center()
         end
-        Spring.Echo("[EcoGraph] Toggle menu" ..
-            (detached.visible and " and detached window" or "") .. " re-centered.")
+        Spring.Echo("[EcoGraph] Main window, toggle menu" ..
+            (detached.visible and ", and detached window" or "") .. " re-centered.")
         return true
     end, nil, "t")
 
@@ -7403,6 +7759,7 @@ function widget:Initialize()
     -- window, same as CTRL+Left-Click on the main Eco Graph window.
     widgetHandler:AddAction("ecographdual1", function()
         detached.visible = not detached.visible
+        widget._detachedVisible = detached.visible
         Spring.SetConfigInt("eco_detached_visible", detached.visible and 1 or 0)
         Spring.Echo("[EcoGraph] Detached dual-line window: " ..
             (detached.visible and "ON" or "OFF"))
@@ -7464,6 +7821,73 @@ function widget:Initialize()
         Spring.Echo("[EcoGraph] Background: Dark/opaque")
         return true
     end, nil, "t")
+
+    -- /ecographbar -- toggles the "Top Bar"-style panel skin (chamfered
+    -- corners, dark warm-brown gradient, bronze border) on both windows
+    -- at once. Purely cosmetic: the panel's background/border is the
+    -- only thing that changes -- layout, text, and graphs are untouched.
+    widgetHandler:AddAction("ecographbar", function()
+        widget._barSkin = not widget._barSkin
+        Spring.SetConfigInt("eco_graph_bar_skin", widget._barSkin and 1 or 0)
+        Spring.Echo("[EcoGraph] Top Bar-style skin: " .. (widget._barSkin and "ON" or "OFF"))
+        return true
+    end, nil, "t")
+
+    -- /ecographbarui -- the OTHER "Top Bar"-style skin: draws the panel
+    -- via WG.FlowUI.Draw.Element, the exact same shared function Top
+    -- Bar's own panels use (confirmed from its source), instead of
+    -- Round 10's hand-approximated shape. Independent of /ecographbar --
+    -- both exist as separate options, not a replacement.
+    widgetHandler:AddAction("ecographbarui", function()
+        widget._barSkinUi = not widget._barSkinUi
+        Spring.SetConfigInt("eco_graph_bar_skin_ui", widget._barSkinUi and 1 or 0)
+        Spring.Echo("[EcoGraph] Top Bar UI skin (FlowUI): " .. (widget._barSkinUi and "ON" or "OFF"))
+        return true
+    end, nil, "t")
+
+    -- /ecographtopbardebug -- DIAGNOSTIC ONLY (Round 21 investigation).
+    -- Prints exactly what GetTopBarOverlap() sees: the widget_Top Bar
+    -- config flag it now gates on first, whether WG['topbar'] still
+    -- exists, what it reports for its own position, and this panel's
+    -- own box.
+    widgetHandler:AddAction("ecographtopbardebug", function()
+        Spring.Echo(string.format("[EcoGraph] widget_Top Bar config = %d (0 = off)",
+            Spring.GetConfigInt("widget_Top Bar", 1)))
+        local topbar = WG['topbar']
+        if not topbar then
+            Spring.Echo("[EcoGraph] WG['topbar'] is nil (Top Bar not loaded)")
+        elseif not topbar.GetPosition then
+            Spring.Echo("[EcoGraph] WG['topbar'] exists but has no GetPosition function")
+        else
+            local tb = topbar.GetPosition()
+            if tb then
+                Spring.Echo(string.format("[EcoGraph] WG['topbar'] exists, rect: %.0f,%.0f,%.0f,%.0f",
+                    tb[1], tb[2], tb[3], tb[4]))
+            else
+                Spring.Echo("[EcoGraph] WG['topbar'] exists, GetPosition() returned nil")
+            end
+        end
+        Spring.Echo(string.format("[EcoGraph] Eco Graph box: %.0f,%.0f,%.0f,%.0f  barSkinUi=%s  overlap=%s",
+            box.x1, box.y1, box.x2, box.y2,
+            tostring(widget._barSkinUi),
+            tostring(GetTopBarOverlap(box.x1, box.y1, box.x2, box.y2))))
+        return true
+    end, nil, "t")
+
+    -- /ecographorig -- back to the original plain panel (flat color +
+    -- straight-edge border), from before either skin existed. Added in
+    -- Round 12 once /ecographbarui became the new default look, so
+    -- there's still a one-word way to get the original back. Not a
+    -- toggle like the others -- there's no separate "orig" flag, it just
+    -- forces both skin flags off.
+    widgetHandler:AddAction("ecographorig", function()
+        widget._barSkin = false
+        widget._barSkinUi = false
+        Spring.SetConfigInt("eco_graph_bar_skin", 0)
+        Spring.SetConfigInt("eco_graph_bar_skin_ui", 0)
+        Spring.Echo("[EcoGraph] Reverted to the original plain panel.")
+        return true
+    end, nil, "t")
 end
 
 widget._old_Shutdown_Commands = widget.Shutdown
@@ -7475,6 +7899,10 @@ function widget:Shutdown()
     widgetHandler:RemoveAction("ecographfont-")
     widgetHandler:RemoveAction("ecographt")
     widgetHandler:RemoveAction("ecographd")
+    widgetHandler:RemoveAction("ecographbar")
+    widgetHandler:RemoveAction("ecographbarui")
+    widgetHandler:RemoveAction("ecographtopbardebug")
+    widgetHandler:RemoveAction("ecographorig")
 
     if widget._old_Shutdown_Commands then
         widget._old_Shutdown_Commands(self)
