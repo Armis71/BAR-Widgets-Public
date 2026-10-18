@@ -6591,6 +6591,21 @@ end
         local w = mx - box.x1
 
         local minW = vsx * 0.15 -- Original 0.45, then 0.40 - Minimum horizonal width of the main Eco Graph allowed.
+        -- Round 18: in Top-Bar addon mode, [Pause]/[A]/[D]/[X] (anchored
+        -- off box.x2) and [INTEL]/[M:E] (anchored off box.x1) share the
+        -- SAME row -- unlike normal mode, where they're on different
+        -- rows -- with no collision-avoidance between the two groups.
+        -- Resizing narrower than ~350-400px let them visually overlap.
+        -- Raise the floor specifically in addon mode so that can't
+        -- happen; normal mode is untouched since it was never at risk
+        -- (different rows there). 420 is a conservative estimate, not
+        -- yet checked pixel-for-pixel against the real font in-game --
+        -- see widget.ToggleTopBarAddonMode()'s own matching clamp on
+        -- widget._addonWidth (same literal, duplicated rather than a
+        -- shared constant -- see that site's own comment why).
+        if widget._topAddonMode then
+            minW = math.max(minW, 420)
+        end
         local maxW = vsx * 0.95
         if w < minW then w = minW end
         if w > maxW then w = maxW end
@@ -7504,6 +7519,10 @@ function widget.ToggleTopBarAddonMode()
     local vsx, vsy = Spring.GetViewGeometry()
     local topY = box.y2
     local centerX = (box.x1 + box.x2) * 0.5
+    -- Round 18: captured so a "stuck" (magnet) detached window can be
+    -- kept flush after this toggle resizes the main window -- see the
+    -- stuck-mode sync block at the end of this function.
+    local preY1 = box.y1
 
     if widget._topAddonMode then
         -- Shrink to just the top rows, anchored from the TOP edge (box.y2)
@@ -7533,6 +7552,17 @@ function widget.ToggleTopBarAddonMode()
         -- strip width instead of whatever width normal mode was at.
         widget._preAddonWidth = box.x2 - box.x1
         local newW = widget._addonWidth or (box.x2 - box.x1)
+        -- Round 18: clamp against the same collision-safe floor the
+        -- freeform resize handler now enforces in addon mode (its own
+        -- "Round 18: addon-mode minimum width" comment there) -- in
+        -- case a remembered widget._addonWidth predates that floor.
+        -- (No shared named constant: this file's main chunk is already
+        -- at Lua 5.1's 200-local ceiling -- see Round 15's notes -- so
+        -- the literal 420 is duplicated at both sites instead, same as
+        -- other paired magic numbers already are elsewhere in this
+        -- file, e.g. Round 8's [X]/resize-handle margin.)
+        newW = math.max(newW, 420)
+        newW = math.min(newW, vsx * 0.95)
         box.x1 = centerX - newW * 0.5
         box.x2 = centerX + newW * 0.5
         cfg.width = newW / vsx
@@ -7572,6 +7602,27 @@ function widget.ToggleTopBarAddonMode()
         if graphList then glDeleteList(graphList) graphList = nil end
 
         Spring.Echo("[EcoGraph] Top-Bar addon mode: OFF")
+    end
+
+    -- Round 18: keep a "stuck" (magnet) detached window visually flush
+    -- after a resize from THIS toggle, not just after a drag (Round 13's
+    -- own stuck-sync only fires from widget:MouseMove). The user can
+    -- only ever enter stuck mode via detached.AttachBelowMain() (the
+    -- "^" button), which docks it flush under the main window's bottom
+    -- edge, centered on the main window's own center -- so at the
+    -- moment stuck mode turns on, detached.y is always exactly
+    -- box.y1 - gap, and its X is already centered on centerX. Since
+    -- this toggle's width change is anchored on that SAME centerX (see
+    -- above), the X relationship never needs correcting -- only box.y1
+    -- moves (the height change is TOP-anchored), so only detached's Y
+    -- needs to follow it, by the same delta, to stay flush instead of
+    -- leaving a gap (shrinking into addon mode) or overlapping
+    -- (expanding back out).
+    if detached.visible and detached.stuck then
+        local moveDY = box.y1 - preY1
+        detached.y1 = detached.y1 + moveDY
+        detached.y2 = detached.y2 + moveDY
+        Detached_Save()
     end
 end
 
@@ -8029,32 +8080,27 @@ end
 
 
 --------------------------------------------------------------------------------
--- TOGGLE-MENU SAFETY NET — SHUTDOWN
+-- TOGGLE-MENU SAFETY NET — SHUTDOWN (REMOVED, Round 19, 2026-10-18)
 --------------------------------------------------------------------------------
--- NOTE (2026-10-17): EcoToggleMenu (above) used to be the only in-game
--- control that could disable "Top Bar" from here; that toggle button has
--- since been removed, so this widget itself can no longer be the reason
--- Top Bar ends up off. This safety net is kept anyway, now as a general
--- fallback: if Top Bar is off (by any means -- e.g. BAR's own F11 widget
--- list) when Eco Graph itself is disabled or its file removed, a new/
--- casual player would otherwise have no easy way to turn Top Bar back on.
--- So auto-restore Top Bar here before this widget goes away, same as
--- every other Shutdown hook in this file, chained onto whatever Shutdown
--- handler already exists.
---------------------------------------------------------------------------------
--- NOTE: stored on the widget table itself (not as a new `local`) because
--- this file's main chunk is already at Lua's 200-local-variable ceiling;
--- one more top-level local here fails to load the whole widget.
-widget._old_Shutdown_ToggleMenu = widget.Shutdown
-function widget:Shutdown()
-    if Spring.GetConfigInt("widget_Top Bar", 1) == 0 then
-        Spring.SendCommands("luaui enablewidget Top Bar")
-        Spring.SetConfigInt("widget_Top Bar", 1)
-    end
-    if widget._old_Shutdown_ToggleMenu then
-        widget._old_Shutdown_ToggleMenu(self)
-    end
-end
+-- This used to auto-restore "Top Bar" on Shutdown if it was off, as a
+-- fallback for a new/casual player who disabled it and might not know
+-- how to turn it back on (see the NOTE this replaced, dated 2026-10-17,
+-- for the full original reasoning -- that reasoning is unchanged, only
+-- the mechanism is gone).
+--
+-- Removed for the incoming BAR user-widget sandbox: it worked by
+-- Spring.SendCommands("luaui enablewidget Top Bar"), and "enablewidget"
+-- is one of the sandbox's blocked command substrings -- the exact same
+-- root cause already documented for the Top Bar toggle BUTTON's own
+-- removal (2026-10-17, see EcoToggleMenu above). Unlike that case,
+-- there's no reword or replacement to swap in here either: the gist's
+-- migration rules list widgetHandler:EnableWidget/DisableWidget/
+-- ToggleWidget (and the Raw forms) as unsupported no-ops too, so no
+-- user widget can re-enable another widget under the sandbox, by any
+-- API. Keeping this as silently-dead code would only leave a false
+-- sense of safety (it would still set the config flag to 1 without the
+-- widget actually being re-enabled), so it's deleted outright instead.
+-- Full writeup: claude/bar-widget-sandbox-notes.md.
 
 --------------------------------------------------------------------------------
 -- CONSOLE COMMANDS
