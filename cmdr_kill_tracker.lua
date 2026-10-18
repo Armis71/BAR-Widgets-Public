@@ -1300,13 +1300,22 @@ end
 local function JumpCameraTo(x, y, z, height, transitionTime)
     local camState = spGetCameraState()
     camState.px = x
-    camState.py = y
     camState.pz = z
-    if camState.height ~= nil then
-        camState.height = height
-    end
-    if camState.dist ~= nil then
-        camState.dist = height
+    -- Bug fix (2026-10-18), same root cause/fix as Base Unit Tracker's
+    -- own jumpCameraTo: a camera controller with neither a `.height`
+    -- nor a `.dist` field -- e.g. "rot" / Rotatable Overhead, used for
+    -- the camera joystick -- has no separate elevation field at all,
+    -- so `py` IS the camera's actual world-space altitude there, not
+    -- a ground-level reference point the way it is for the default
+    -- "spring" camera. Leaving `py` set to the tombstone's raw
+    -- ground-level y dropped the camera straight to the ground next
+    -- to the dead commander instead of staying at an overhead height.
+    if camState.height ~= nil or camState.dist ~= nil then
+        camState.py = y
+        if camState.height ~= nil then camState.height = height end
+        if camState.dist ~= nil then camState.dist = height end
+    else
+        camState.py = y + height
     end
     spSetCameraState(camState, transitionTime or TOMBSTONE_ZOOM_TIME)
 end

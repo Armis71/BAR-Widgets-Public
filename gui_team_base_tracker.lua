@@ -1174,6 +1174,57 @@ local minimapSlaved = false
 -- runtime/session state, recomputed every frame, never saved.
 local autoHideState = { enabled = false, revealed = true, lastBarHeight = 0 }
 
+-- 2026-10-06: edge-scroll suppression for the bottom of the screen
+-- while Casting Mode's docked bar is up -- the user's own ask: "when
+-- docked on the bottom of the screen (cast mode) it doesn't allow me
+-- to scroll off screen if i touch the lower border of the screen...
+-- usually i just try to open the base unit tracker to see it but if i
+-- moved the mouse cursor too low it scrolls the screen which is
+-- annoying." See UpdateEdgeScrollSuppression's own comment (right
+-- before doDrawScreen) for how this is actually applied. `original` is
+-- the real engine EdgeMoveWidth value, read once in widget:Initialize
+-- -- never a hardcoded guess, so this respects whatever edge-scroll
+-- sensitivity the player already has configured rather than silently
+-- overwriting it. `suppressed` tracks whether THIS widget is currently
+-- the one holding it at 0, so a frame can tell "is there anything of
+-- mine to restore" without calling Spring.SetConfigFloat every single
+-- frame regardless of whether anything actually changed.
+--
+-- 2026-10-07 follow-up: user reported still being able to pan off the
+-- bottom of the map while docked (mouse near the bottom edge), even
+-- with this suppression confirmed active (Casting Mode on). Root
+-- cause, found by reading the actual engine source
+-- (rts/Game/Camera.cpp, GetMoveVectorFromState): the engine floors the
+-- edge-pan hot-zone to a hardcoded MINIMUM of 1 real pixel no matter
+-- how low EdgeMoveWidth goes -- `border.y = max(1, viewH *
+-- edgeMoveWidth)` -- so writing it to 0 shrinks the band but can never
+-- fully close it; the literal bottommost screen row still triggers
+-- full-speed pan. On top of that, a written Spring.SetConfigFloat
+-- value is only queued, not applied until the START of the engine's
+-- NEXT tick, so there's always at least one frame of lag too. Both are
+-- genuine engine limitations, not something fixable by tuning the
+-- Lua-side band math further -- and pushing the mouse cursor all the
+-- way down against the physical bottom of the screen (exactly what
+-- reaching for a bottom-docked bar involves) is the easiest possible
+-- way to land on that unavoidable row and sit there for as long as the
+-- mouse keeps being held down.
+--
+-- Fix: belt-and-suspenders. Keep suppressing EdgeMoveWidth as before
+-- (still worth doing -- it kills the pan everywhere in the band except
+-- that literal last row), but ALSO snapshot the camera's ground
+-- position (`lockedCam`, via Spring.GetCameraState()) the instant
+-- suppression engages, and force the camera back to that exact
+-- position every single frame suppression stays active -- see
+-- UpdateEdgeScrollSuppression's own body below. This doesn't try to
+-- predict or block the engine's forced pan; it just overwrites its
+-- result every frame, before anything is ever drawn, which is
+-- imperceptible to the player. Mirrors followCameraTo()'s own existing
+-- px/py/pz-only SetCameraState(_, 0) pattern (used elsewhere in this
+-- file for commander-following) -- only ground position is touched,
+-- never height/dist/rotation, so scroll-zoom and look direction stay
+-- completely free even while this is holding position.
+local edgeScrollState = { original = 0.02, suppressed = false, lockedCam = nil }
+
 -- Whether the separate floating stats window (M/s, E/s, MP, EP, AV, DV,
 -- UP, DD, UK per team -- the columns the docked Casting Mode bar no
 -- longer shows inline) is open. Only ever drawn alongside the docked
@@ -2513,13 +2564,25 @@ end
 local function jumpCameraTo(x, y, z, height, transitionTime)
   local camState = Spring.GetCameraState()
   camState.px = x
-  camState.py = y
   camState.pz = z
-  if camState.height ~= nil then
-    camState.height = height
-  end
-  if camState.dist ~= nil then
-    camState.dist = height
+  -- Bug fix (2026-10-18): a camera controller with neither a
+  -- `.height` nor a `.dist` field -- e.g. "rot" / Rotatable
+  -- Overhead, used for the camera joystick -- has no separate
+  -- elevation field at all: `py` IS the camera's actual world-space
+  -- altitude there, not a ground-level reference point the way it
+  -- is for the default "spring" camera. Leaving `py` set to the
+  -- raw target y (as every jump target naturally is -- ground level
+  -- for a tombstone, a base center, etc.) dropped the camera
+  -- straight to the ground next to whatever it just jumped to,
+  -- instead of staying at an overhead height. Add the same jump
+  -- height as an offset in that case instead, so both camera modes
+  -- end up similarly elevated after a jump.
+  if camState.height ~= nil or camState.dist ~= nil then
+    camState.py = y
+    if camState.height ~= nil then camState.height = height end
+    if camState.dist ~= nil then camState.dist = height end
+  else
+    camState.py = y + height
   end
   Spring.SetCameraState(camState, transitionTime or 1.2)
 end
@@ -2529,9 +2592,31 @@ end
 -- freely scroll-zoom while tracking.
 local function followCameraTo(x, y, z)
   local camState = Spring.GetCameraState()
-  camState.px = x
-  camState.py = y
-  camState.pz = z
+  -- Bug fix (2026-10-18): same root cause as jumpCameraTo's own fix
+  -- just above, but here it would re-trigger every single frame of
+  -- an active follow instead of just once on click. A controller
+  -- with neither `.height` nor `.dist` (e.g. "rot" / Rotatable
+  -- Overhead) has no separate elevation field -- `py` IS the
+  -- camera's real altitude -- so pinning it to the followed unit's
+  -- raw ground-level y every frame pinned the camera to the ground
+  -- for the whole duration of the follow. Preserve whatever height
+  -- ABOVE THE GROUND the camera already had instead of a fixed jump
+  -- constant (this function intentionally takes no height
+  -- parameter, same as its "doesn't touch height/dist so the player
+  -- can still freely scroll-zoom while tracking" comment already
+  -- establishes for the spring-camera case -- this is that same
+  -- idea's equivalent for a camera mode with no height/dist field).
+  if camState.height == nil and camState.dist == nil then
+    local curGroundY = Spring.GetGroundHeight(camState.px, camState.pz) or camState.py
+    local elevation = camState.py - curGroundY
+    camState.px = x
+    camState.pz = z
+    camState.py = y + elevation
+  else
+    camState.px = x
+    camState.py = y
+    camState.pz = z
+  end
   Spring.SetCameraState(camState, 0)
 end
 
@@ -2686,6 +2771,10 @@ function widget:Initialize()
   leaderboardState.mode = Spring.GetConfigInt("LabTracker_Leaderboard", 0) == 1
   resizeHandleState.enabled = Spring.GetConfigInt("LabTracker_ResizeEnabled", 0) == 1
   castingMode = Spring.GetConfigInt("LabTracker_CastingMode", 0) == 1
+  -- 2026-10-06: the real engine edge-pan width, read ONCE here rather
+  -- than guessed -- see edgeScrollState's own declaration comment and
+  -- UpdateEdgeScrollSuppression for how this gets used/restored.
+  edgeScrollState.original = Spring.GetConfigFloat("EdgeMoveWidth", 0.02)
   stayVisibleWhenUIHidden = Spring.GetConfigInt("LabTracker_StayVisibleHiddenUI", 0) == 1
   autoHideState.enabled = Spring.GetConfigInt("LabTracker_AutoHideEnabled", 0) == 1
   -- 2026-09-10: CAST is now the master switch for hidden-UI persistence
@@ -2732,11 +2821,33 @@ function widget:Initialize()
   end
   recountLabs()
 
+  local savedBarSkinUi = Spring.GetConfigInt("LabTracker_BarSkinUi", -1)
+  if savedBarSkinUi == -1 then
+    widget._barSkinUi = true
+    Spring.SetConfigInt("LabTracker_BarSkinUi", 1)
+  else
+    widget._barSkinUi = savedBarSkinUi == 1
+  end
+
   widgetHandler:AddAction("basetrackercenter", BaseTrackerCenterCommand, nil, "t")
+  widgetHandler:AddAction("basetrackerbarui", function()
+    widget._barSkinUi = not widget._barSkinUi
+    Spring.SetConfigInt("LabTracker_BarSkinUi", widget._barSkinUi and 1 or 0)
+    Spring.Echo("[Base Tracker] Top Bar-style skin: " .. (widget._barSkinUi and "ON" or "OFF"))
+    return true
+  end, nil, "t")
+  widgetHandler:AddAction("basetrackerorig", function()
+    widget._barSkinUi = false
+    Spring.SetConfigInt("LabTracker_BarSkinUi", 0)
+    Spring.Echo("[Base Tracker] Reverted to the original flat panel.")
+    return true
+  end, nil, "t")
 end
 
 function widget:Shutdown()
   widgetHandler:RemoveAction("basetrackercenter")
+  widgetHandler:RemoveAction("basetrackerbarui")
+  widgetHandler:RemoveAction("basetrackerorig")
 
   -- Safety net: if this widget is disabled/reloaded mid-cast while the
   -- minimap is still in slave mode (gl.SlaveMiniMap), release it --
@@ -2746,6 +2857,36 @@ function widget:Shutdown()
   if minimapSlaved then
     gl.SlaveMiniMap(false)
     minimapSlaved = false
+  end
+
+  -- Same safety-net idea as the minimap release just above, for the
+  -- bottom-edge-scroll suppression (see edgeScrollState's own
+  -- declaration comment): if this widget is disabled/reloaded while
+  -- it's the one currently holding EdgeMoveWidth at 0, hand the
+  -- player's own real value back rather than leaving their camera
+  -- stuck with no edge-pan at all on any side.
+  if edgeScrollState.suppressed then
+    Spring.SetConfigFloat("EdgeMoveWidth", edgeScrollState.original)
+    edgeScrollState.suppressed = false
+  end
+end
+
+-- 2026-10-06: a second, independent safety net for
+-- UpdateEdgeScrollSuppression (called from doDrawScreen, which only
+-- runs on frames this widget actually draws -- itself skipped
+-- entirely while BAR's UI is hidden AND Casting Mode's "stay visible"
+-- pill is off). Without this, turning Casting Mode off -- or just
+-- hiding the UI -- at the exact moment the mouse happened to be
+-- sitting in the suppressed bottom band could leave EdgeMoveWidth
+-- stuck at 0 (no edge-pan on ANY side) until this widget draws again.
+-- widget:Update runs every tick regardless of GUI-hidden state, so
+-- this always gets a chance to let go the moment Casting Mode is no
+-- longer on, independent of whatever doDrawScreen is or isn't doing.
+function widget:Update()
+  if (not castingMode) and edgeScrollState.suppressed then
+    Spring.SetConfigFloat("EdgeMoveWidth", edgeScrollState.original)
+    edgeScrollState.suppressed = false
+    edgeScrollState.lockedCam = nil
   end
 end
 
@@ -3954,8 +4095,13 @@ function DrawDockedHeader(x, headerY2, totalWidth, headerH)
   local headerY1 = headerY2 - headerH
   local pad = 6
 
-  gl.Color(0.1, 0.1, 0.1, 0.85)
-  gl.Rect(x, headerY1, x + totalWidth, headerY2)
+  if widget._barSkinUi and WG.FlowUI and WG.FlowUI.Draw and WG.FlowUI.Draw.Element then
+      gl.Color(1, 1, 1, 1)
+      WG.FlowUI.Draw.Element(x, headerY1, x + totalWidth, headerY2, 0, 0, 1, 1, nil, nil, nil, nil, nil, nil, nil, nil)
+  else
+      gl.Color(0.1, 0.1, 0.1, 0.85)
+      gl.Rect(x, headerY1, x + totalWidth, headerY2)
+  end
 
   -- Right-aligned pill row. Each call anchors off wherever the
   -- previous one's left edge ended up (via the shared `cursorX`
@@ -4269,6 +4415,75 @@ function AutoHideTooltipLines()
   return titleLine, bodyLine
 end
 
+-- 2026-10-06: BAR's own engine camera edge-pan has exactly one control
+-- knob, Spring.[Get/Set]ConfigFloat("EdgeMoveWidth", ...) -- the width,
+-- as a fraction of screen height, of the hot zone along EVERY screen
+-- edge that triggers panning. There's no per-direction version of it,
+-- so the only way to block JUST the bottom edge (per the user's own
+-- "Scrolling left right and up is fine[,] not just down") is to zero
+-- it out only while the mouse is actually inside THAT edge's own band,
+-- and restore it the instant it isn't -- left/right/top never get
+-- touched unless the mouse happens to ALSO be sitting in a corner at
+-- the same time (unavoidable with a single global knob, and a
+-- vanishingly small overlap in practice).
+--
+-- Compares `my` against `edgeScrollState.original` (the player's own
+-- real configured width, captured once in widget:Initialize), NEVER
+-- against the engine's current live value -- reading the live value
+-- instead would compare against 0 the instant suppression kicks in
+-- (since that's what was just written to it), making every single
+-- following frame read as "not in the band any more" and immediately
+-- restore it, which restores and re-suppresses every frame in a tight
+-- flicker instead of staying suppressed for as long as the mouse
+-- actually stays low.
+--
+-- Global (not `local function`) and only ever handed plain values
+-- doDrawScreen already has as parameters (dockedMode, my, vsy) -- costs
+-- doDrawScreen zero upvalue slots, same reason/pattern as
+-- AutoHideShouldCollapse/DrawCastPill elsewhere in this file (already
+-- sitting exactly at Lua 5.1's 60-upvalue ceiling -- see DrawCastPill's
+-- own comment).
+--
+-- Only ever asked to suppress while `dockedMode` (Casting Mode) is
+-- true, per the user's own explicit "Only do this when base unit
+-- tracker is on Cast mode" -- while it's off, `shouldSuppress` is
+-- always false here, so this only ever RESTORES (or does nothing).
+-- widget:Update is a second, independent safety net for the one case
+-- this per-frame call can't reach on its own: GUI hidden with Casting
+-- Mode's "stay visible" pill off, where doDrawScreen doesn't run at
+-- all -- see widget:Update's own comment.
+function UpdateEdgeScrollSuppression(dockedMode, my, vsy)
+  local shouldSuppress = dockedMode and vsy and vsy > 0
+    and my <= vsy * edgeScrollState.original
+
+  if shouldSuppress and not edgeScrollState.suppressed then
+    Spring.SetConfigFloat("EdgeMoveWidth", 0)
+    edgeScrollState.suppressed = true
+    -- 2026-10-07: see edgeScrollState's own comment above for why this
+    -- alone isn't enough -- snapshot ground position now so it can be
+    -- re-forced every frame below for as long as suppression stays on.
+    edgeScrollState.lockedCam = Spring.GetCameraState()
+  elseif (not shouldSuppress) and edgeScrollState.suppressed then
+    Spring.SetConfigFloat("EdgeMoveWidth", edgeScrollState.original)
+    edgeScrollState.suppressed = false
+    edgeScrollState.lockedCam = nil
+  end
+
+  -- Runs every frame suppression is active (including the very first,
+  -- harmlessly re-applying the position just captured above) --
+  -- overwrites whatever the engine's own unavoidable 1px-floor pan
+  -- already pushed the camera to this frame, before it's ever drawn.
+  -- Only px/py/pz are touched -- height/dist/rotation are left exactly
+  -- as GetCameraState just returned them, so zoom/look stay free.
+  if shouldSuppress and edgeScrollState.lockedCam then
+    local cam = Spring.GetCameraState()
+    cam.px = edgeScrollState.lockedCam.px
+    cam.py = edgeScrollState.lockedCam.py
+    cam.pz = edgeScrollState.lockedCam.pz
+    Spring.SetCameraState(cam, 0)
+  end
+end
+
 -- Renamed from `function widget:DrawScreen()` to a plain local so both
 -- the normal DrawScreen callin and the DrawScreenEffects fallback
 -- further below (used to survive BAR's Show/Hide UI toggle) can share
@@ -4292,6 +4507,15 @@ local function doDrawScreen(dockedMode, vsx, vsy)
 
   local mx, my = Spring.GetMouseState()
   mouseX, mouseY = mx, my
+
+  -- 2026-10-06: bottom-edge-scroll suppression while Casting Mode's
+  -- docked bar is up -- see UpdateEdgeScrollSuppression's own comment
+  -- above for why this needs the ENGINE's edge-pan config instead of
+  -- anything purely Lua-side. `vsy` is nil in the non-docked branch
+  -- (see this function's own header comment on that) -- harmless,
+  -- UpdateEdgeScrollSuppression's own `dockedMode and vsy and ...`
+  -- short-circuits before ever touching it.
+  UpdateEdgeScrollSuppression(dockedMode, my, vsy)
 
   -- 2026-09-22: Shift-cycles-view-mode-tabs hotkey -- polled once per
   -- rendered frame (see CheckShiftCycleHotkey's own comment, next to
@@ -4569,8 +4793,13 @@ local function doDrawScreen(dockedMode, vsx, vsy)
   -- doDrawScreen directly.
   AutoHideRecordHeight(dockedMode, drawHeight)
 
-  gl.Color(0,0,0,backgroundOpacity)
-  gl.Rect(x, y - drawHeight, x + totalWidth, y + edgePadding)
+  if widget._barSkinUi and backgroundOpacity > 0 and WG.FlowUI and WG.FlowUI.Draw and WG.FlowUI.Draw.Element then
+      gl.Color(1, 1, 1, 1)
+      WG.FlowUI.Draw.Element(x, y - drawHeight, x + totalWidth, y + edgePadding, 0, 0, 1, 1, nil, nil, nil, nil, nil, nil, nil, nil)
+  else
+      gl.Color(0,0,0,backgroundOpacity)
+      gl.Rect(x, y - drawHeight, x + totalWidth, y + edgePadding)
+  end
   leaderboardState.panelRect.x1, leaderboardState.panelRect.y1, leaderboardState.panelRect.x2, leaderboardState.panelRect.y2 = x, y - drawHeight, x + totalWidth, y + edgePadding
 
   local headerHeight = headerRowSpace
@@ -4590,8 +4819,13 @@ local function doDrawScreen(dockedMode, vsx, vsy)
   if dockedMode then
     DrawDockedHeader(x, y, totalWidth, DOCKED_HEADER_H)
   else
-  gl.Color(0.1,0.1,0.1,0.8)
-  gl.Rect(uiRects.header.x1, uiRects.header.y1, uiRects.header.x2, uiRects.header.y2)
+  if widget._barSkinUi and WG.FlowUI and WG.FlowUI.Draw and WG.FlowUI.Draw.Element then
+      gl.Color(1, 1, 1, 1)
+      WG.FlowUI.Draw.Element(uiRects.header.x1, uiRects.header.y1, uiRects.header.x2, uiRects.header.y2, 0, 0, 1, 1, nil, nil, nil, nil, nil, nil, nil, nil)
+  else
+      gl.Color(0.1,0.1,0.1,0.8)
+      gl.Rect(uiRects.header.x1, uiRects.header.y1, uiRects.header.x2, uiRects.header.y2)
+  end
 
   gl.Color(1,1,1,1)
   local titleText = trackerTitle()
