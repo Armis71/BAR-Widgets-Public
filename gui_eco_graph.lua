@@ -11,27 +11,6 @@ function widget:GetInfo()
     }
 end
 
---------------------------------------------------------------------------------
--- SAFETY SWITCH -- "Disable Top Bar" toggle button lock
---------------------------------------------------------------------------------
--- 1 / ON  = LOCKED (DEFAULT). The "Top Bar" ON/OFF button below is grayed
---           out and does nothing when clicked, so nobody can accidentally
---           (or without knowing the consequences) turn Top Bar off from here
---           and end up stuck with it disabled if this widget ever goes away.
--- 0 / OFF = UNLOCKED. The "Top Bar" button works normally again.
---
--- Why this defaults to LOCKED: a user disabled Top Bar from this button,
--- then later deleted the Eco Graph widget entirely -- with no Top Bar and
--- no Eco Graph, they had no way back to a Top Bar toggle short of finding
--- it in the advanced F11 widget list, which they didn't know to check.
--- Locking this button by default means the ONLY way to disable Top Bar
--- from here is to edit this file and set the switch below to 0 -- which
--- is deliberate: someone editing Lua by hand already knows F11 exists.
---
--- This is a plain global (not "local") on purpose -- this file is already at
--- Lua's 200-local-variable ceiling, and globals don't count against it.
---------------------------------------------------------------------------------
-DISABLE_TOPBAR_TOGGLE = 0   -- 1 = ON (locked, default) | 0 = OFF (unlocked)
 
 
 -- GLOBAL FONT SCALE (shrink everything proportionally)
@@ -541,7 +520,6 @@ do
 
     local BUTTON_W = 120
     local BUTTON_H = 100
-    local BUTTON_SPACING = 2
 
     local bgColor = {0, 0, 0, 0.55}
     local borderColor = {1, 1, 1, 0.35}
@@ -553,7 +531,7 @@ do
     local savedY = Spring.GetConfigInt("unified_menu_y", nil, false)
 
     EcoToggleMenu.posX = savedX or math.floor((vsx - BUTTON_W) * 0.5)
-    local totalH = BUTTON_H * 2 + BUTTON_SPACING
+    local totalH = BUTTON_H
     EcoToggleMenu.posY = savedY or math.floor((vsy - totalH) * 0.5)
 
     ------------------------------------------------------------------------
@@ -571,7 +549,6 @@ do
     ------------------------------------------------------------------------
     -- TARGET WIDGET NAMES
     ------------------------------------------------------------------------
-    local WIDGET_TOPBAR = "Top Bar"
     local WIDGET_ECO    = "Eco Graph"
 
     ------------------------------------------------------------------------
@@ -583,25 +560,6 @@ do
 
     local function InRect(mx, my, r)
         return mx >= r.x1 and mx <= r.x2 and my >= r.y1 and my <= r.y2
-    end
-
-    local function WidgetEnabled(name)
-        return Spring.GetConfigInt("widget_" .. name, 1) == 1
-    end
-
-    local function ToggleWidget(name)
-        -- Locked by default: see DISABLE_TOPBAR_TOGGLE switch at top of file
-        if name == WIDGET_TOPBAR and DISABLE_TOPBAR_TOGGLE == 1 then
-            return
-        end
-
-        if WidgetEnabled(name) then
-            Spring.SendCommands("luaui disablewidget " .. name)
-            Spring.SetConfigInt("widget_" .. name, 0)
-        else
-            Spring.SendCommands("luaui enablewidget " .. name)
-            Spring.SetConfigInt("widget_" .. name, 1)
-        end
     end
 
     ------------------------------------------------------------------------
@@ -655,20 +613,11 @@ do
         local x1 = EcoToggleMenu.posX
         local y1 = EcoToggleMenu.posY
 
-        local totalH = BUTTON_H * 2 + BUTTON_SPACING
+        local totalH = BUTTON_H
         local x2 = x1 + BUTTON_W
         local y2 = y1 + totalH
 
         EcoToggleMenu.menuRect = widget._setRect(EcoToggleMenu.menuRect, x1, y1, x2, y2)
-
-        -- TOP BAR BUTTON
-        DrawButton(
-            x1,
-            y1 + BUTTON_H + BUTTON_SPACING,
-            "Top Bar",
-            WidgetEnabled(WIDGET_TOPBAR),
-            DISABLE_TOPBAR_TOGGLE == 1
-        )
 
         -- ECO GRAPH BUTTON
         DrawButton(
@@ -722,13 +671,7 @@ do
             Spring.SetConfigInt("unified_menu_y", EcoToggleMenu.posY)
 
             if not EcoToggleMenu.dragMoved and IsAbove(mx, my) then
-                local relY = my - EcoToggleMenu.posY
-
-                if relY > BUTTON_H + BUTTON_SPACING then
-                    ToggleWidget(WIDGET_TOPBAR)
-                else
-                    WG.EcoGraph_ToggleUI()
-                end
+                WG.EcoGraph_ToggleUI()
             end
 
             return true
@@ -750,7 +693,7 @@ do
         -- defined but never wired up), so those would be stale from
         -- whatever the resolution was at widget load, not the CURRENT one.
         local curVsx, curVsy = Spring.GetViewGeometry()
-        local totalH = BUTTON_H * 2 + BUTTON_SPACING
+        local totalH = BUTTON_H
         EcoToggleMenu.posX = math.floor((curVsx - BUTTON_W) * 0.5)
         EcoToggleMenu.posY = math.floor((curVsy - totalH) * 0.5)
 
@@ -3363,13 +3306,18 @@ end
 -- with its last-known rect (nothing drawn, but the table and
 -- GetPosition() both stuck around), which made this darken everywhere
 -- Eco Graph sat near the top of the screen even with Top Bar fully off.
--- So check the SAME on/off signal the in-widget "Top Bar ON/OFF" toggle
--- button (EcoToggleMenu, below) already reads and displays first --
--- Spring.GetConfigInt("widget_Top Bar", 1) -- and only fall through to
--- the WG['topbar'] rect/overlap check when that says Top Bar is on.
--- Defaults to "on" (1) when unset, matching WidgetEnabled()'s own
--- default, so this still applies out of the box for players who've
--- never touched that toggle.
+-- So check the same on/off signal this file's shutdown safety net and
+-- /ecographtopbardebug both already read -- Spring.GetConfigInt(
+-- "widget_Top Bar", 1) -- and only fall through to the WG['topbar']
+-- rect/overlap check when that says Top Bar is on. Defaults to "on" (1)
+-- when unset, so this still applies out of the box for players who
+-- have never touched Top Bar's own enable state.
+--
+-- NOTE (2026-10-17): the in-widget "Top Bar ON/OFF" toggle button this
+-- comment used to reference has been removed from EcoToggleMenu (see
+-- that module, below) -- Top Bar can no longer be disabled from here at
+-- all, so "widget_Top Bar" now only ever gets set to 0 by something
+-- outside this widget (e.g. BAR's own F11 widget list).
 ------------------------------------------------------------------------
 function GetTopBarOverlap(x1, y1, x2, y2)
     if Spring.GetConfigInt("widget_Top Bar", 1) == 0 then
@@ -3401,6 +3349,30 @@ UpdateConverterStats()
     local playerName = GetPlayerNameFromTeam(teamID)
     local faction    = DetectFaction(teamID)  -- currently unused in compact mode
 
+    -- Hoisted up from the title-draw block further down (Round 7,
+    -- 2026-10-17) -- /ecographtopbaraddon's Status/Wind positioning (set
+    -- in the Wind block right below, which draws BEFORE the title row
+    -- for z-ordering) needs the actual rendered width of
+    -- "Eco Graph: <name>" to anchor off of, so this has to be computed
+    -- before that point rather than down at the title row itself.
+    local title = "Eco Graph: "
+    local titleFont = titleSize + 8
+    local titleW = glGetTextWidth(title) * titleFont
+
+    if widget._cache_playerName ~= playerName then
+        widget._cache_playerName = playerName
+        widget._cache_shortName = ShortenPlayerName(playerName)
+        widget._cache_shortNameW = glGetTextWidth(widget._cache_shortName) * titleFont
+    end
+    local shortName = widget._cache_shortName
+    -- Round 10: no longer adds widget._cache_shortNameW -- the name
+    -- moved to its own row underneath the title in addon mode (see
+    -- the Title + Player Name block further down), so it no longer
+    -- shares the title's row there and doesn't need reserved width
+    -- here any more. (shortNameW is still cached above in case a
+    -- future round needs it again; just unused by this formula now.)
+    local titleEndX = box.x1 + 6 + titleW
+
     local mCur, _, _, mInc, mExp = spGetTeamResources(teamID, "metal")
     local eCur, _, _, eInc, eExp = spGetTeamResources(teamID, "energy")
 
@@ -3425,6 +3397,59 @@ UpdateConverterStats()
         mCur, eCur,
         mStorage, eStorage
     )
+
+    ------------------------------------------------------------------------
+    -- Round 10: Status/Wind's X, hoisted and computed ONCE here (right
+    -- after `status` itself is known) instead of being recomputed twice
+    -- further down -- the Wind block and the Status block each used to
+    -- keep their own separate copy of this formula in sync by hand every
+    -- round (Round 9 and 9b both had to touch both copies). They just
+    -- read the single statusCenterX/statusTextWidth computed here now.
+    --
+    -- /ecographtopbaraddon only: also clamped against the energy-to-metal
+    -- bracket's own left edge now, not just the title's right edge --
+    -- the user's screenshot showed "Status: OVERFLOWING" colliding with
+    -- the bracket on the RIGHT at small panel widths. The bracket's own
+    -- reserved width is built from fixed max-length placeholder strings
+    -- (like "-99.9ke", not the live numbers), so it does not shrink as
+    -- the panel narrows the way the open gap between the title and the
+    -- bracket does -- hence computing that same width here too, ahead
+    -- of the bracket's own draw block further down (same formula).
+    local statusTextWidth = glGetTextWidth("Status: " .. status) * (fontSize + 4 * FONT_SCALE)
+    local bracketPauseSize = 14 * FONT_SCALE
+    local bracketReservedW = glGetTextWidth("[") * bracketPauseSize * 0.9 * 2
+        + glGetTextWidth("-99.9ke") * bracketPauseSize
+        + glGetTextWidth("+99.9km") * bracketPauseSize
+        + glGetTextWidth("100%") * bracketPauseSize
+    local bracketLeftX = box.x2 - 10 - bracketReservedW
+    local statusCenterX
+    if widget._topAddonMode then
+        -- The player name now draws on its OWN row underneath the title
+        -- in addon mode (Round 10), on the same row Wind/Status share --
+        -- so the real left-hand obstacle for THIS row is whichever is
+        -- wider: the title text above it, or the name text beside it.
+        -- Using titleEndX alone here would let a long player name poke
+        -- into Wind's own left edge even though Status (on the title's
+        -- own row) stayed clear of the title.
+        local nameEndX = box.x1 + 6 + (widget._cache_shortNameW or 0)
+        local clearLeftX = math.max(titleEndX, nameEndX)
+        local leftBound = clearLeftX + statusTextWidth * 0.5 + 4
+        local rightBound = bracketLeftX - statusTextWidth * 0.5 - 4
+        if leftBound <= rightBound then
+            -- Plenty of room: center in the open gap, but never let the
+            -- left edge pass the title/name or the right edge pass the bracket.
+            statusCenterX = math.max((clearLeftX + bracketLeftX) * 0.5, leftBound)
+            statusCenterX = math.min(statusCenterX, rightBound)
+        else
+            -- Not enough room to clear both sides at once (the panel's
+            -- squeezed narrower than the status text itself) -- split
+            -- the unavoidable overlap evenly instead of letting one
+            -- side (usually the bracket) absorb all of it.
+            statusCenterX = (leftBound + rightBound) * 0.5
+        end
+    else
+        statusCenterX = (box.x1 + box.x2) * 0.5 + 35
+    end
 
     local compactBgCol = widget._transparentMode and cfg.bgColorTransparent or cfg.bgColor
 
@@ -3510,9 +3535,15 @@ UpdateConverterStats()
     local textY = box.y2 - 40
     local barY  = textY - 20
 
-    -- X anchor (centered)
+    -- X anchor (centered) -- /ecographtopbaraddon anchors off the actual
+    -- end of "Eco Graph: <name>" instead of the full panel's center,
+    -- so Status/Wind don't leave a big gap on their left where the
+    -- hidden sections used to be.
     local centerX = (box.x1 + box.x2) * 0.5
-    local statusCenterX = centerX + 35
+    -- Round 10: statusCenterX/statusTextWidth are now computed ONCE,
+    -- right after `status` itself is known -- see the hoisted comment
+    -- near the top of this function. This just reuses that single
+    -- value instead of keeping its own separate copy in sync by hand.
 
     -- BAR GEOMETRY
     local barW = 190
@@ -3565,28 +3596,23 @@ UpdateConverterStats()
 -- Title + Player Name (single row, Compact View)
 glColor(cfg.titleColor)
 
-local title = "Eco Graph: "
-local titleFont = titleSize + 8
-local titleW = glGetTextWidth(title) * titleFont
-
--- Draw "Eco Graph: "
+-- Draw "Eco Graph: " (title/titleFont/titleW/shortName are hoisted
+-- above, near the top of this function -- see the Round 7 comment
+-- there)
 glText(title, box.x1 + 6, box.y2 - 20, titleFont, "o")
 
--- Draw player name immediately after title
+-- Draw player name: same row as the title in normal mode; its own
+-- row underneath in addon mode (Round 10, per the user's own ask) --
+-- same Y as the Wind text row, whose left-hand gutter is otherwise
+-- empty there since Wind/Status center well to the right of the
+-- title (see the hoisted statusCenterX comment above).
 local teamID = viewedTeamID or Spring.GetMyTeamID()
 local r, g, b = Spring.GetTeamColor(teamID)
 glColor(r, g, b, 1)
 
--- Cache the shortened name -- playerName essentially never changes
--- mid-match, so rebuilding it (and its "..." concatenation) every frame
--- was pure waste.
-if widget._cache_playerName ~= playerName then
-    widget._cache_playerName = playerName
-    widget._cache_shortName = ShortenPlayerName(playerName)
-end
-local shortName = widget._cache_shortName
-
-glText(shortName, box.x1 + 6 + titleW, box.y2 - 20, titleFont, "o")
+local nameX = widget._topAddonMode and (box.x1 + 6) or (box.x1 + 6 + titleW)
+local nameY = widget._topAddonMode and (box.y2 - 40) or (box.y2 - 20)
+glText(shortName, nameX, nameY, titleFont, "o")
 
 -- METAL / ENERGY STATS (match Full Mode layout)
 local teamID = Spring.GetMyTeamID()
@@ -3636,6 +3662,9 @@ else
 end
 
     local centerX = (box.x1 + box.x2) * 0.5
+    -- Round 10: same hoisted-value reuse as the Wind block above --
+    -- see that comment and the hoisted comment near the top of this
+    -- function.
 
     -- Status color (compact mode)
     local col = statusColors[status] or {1,1,1,1}
@@ -3649,7 +3678,7 @@ end
         widget._cache_statusText = "Status: " .. status
     end
     glText(widget._cache_statusText,
-        centerX + 35, box.y2 - 20, (fontSize + 4 * FONT_SCALE), "oc")
+        statusCenterX, box.y2 - 20, (fontSize + 4 * FONT_SCALE), "oc")
 
 -- STATUS TOOLTIP (hover area is exactly the "Status: ..." text itself --
 -- per the user's own ask, no padding/expansion, and specifically no
@@ -3664,7 +3693,7 @@ local fontH = (fontSize + 4 * FONT_SCALE)
 local textWidth = gl.GetTextWidth(statusText) * fontH
 
 -- Text is centered ("oc"), so offset left by half width
-local sx = (centerX + 35) - (textWidth * 0.5)
+local sx = statusCenterX - (textWidth * 0.5)
 local sy = box.y2 - 20
 
 -- Hover box is exactly the text's own bounding box.
@@ -3733,7 +3762,7 @@ end
 
 
 -- COMMANDERS ONLY (same column, resize‑safe)
-do
+if not widget._topAddonMode then
     local c1, c2 = commanderC1, commanderC2
 
     -- X anchor for BOTH the label and the numbers
@@ -3832,7 +3861,17 @@ local curW   = glGetTextWidth(curStr) * fontSize
 
 -- Draw entire line in white first
 glColor(cfg.titleColor)
-local statusCenterX = centerX + 35
+-- Round 11 (2026-10-18): this used to redeclare its OWN local
+-- statusCenterX (= centerX + 35, a plain full-panel-center anchor
+-- that never changed with addon mode, the title, or the bracket) --
+-- a completely separate, never-updated position from the hoisted
+-- statusCenterX the Status text itself draws at (see the hoisted
+-- comment near the top of this function). That mismatch is why
+-- Status and the Wind text/bar visibly didn't share a center: two
+-- different formulas, one of them frozen since before Round 7 ever
+-- existed. Removed the redeclaration so this just falls through to
+-- the same single hoisted value Status uses -- same centering, same
+-- clamp, always aligned.
 glText(textWind, statusCenterX, textY, fontSize, "oc")
 
 -- Overdraw Cur with color
@@ -3880,20 +3919,8 @@ else
 end
 glRect(innerX1, innerY1, innerX2, innerY2)
 
--- fill
-local fillW = (innerX2 - innerX1) * frac
-if fillW > 0 then
-    glColor(0.3, 0.6, 1.0, 0.90)
-    glRect(innerX1, innerY1, innerX1 + fillW, innerY2)
-    
-    -- current wind marker
-    local markerX = innerX1 + fillW
-    glColor(1, 1, 1, 0.9)
-    glRect(markerX - 1, innerY1, markerX + 1, innerY2)
-end
-
 -- TIDAL ONLY (Compact View — single line)
-do
+if not widget._topAddonMode then
     local tidal = Game.tidal or 0
 
     -- X anchor centered between Status and Energy Inc
@@ -3918,7 +3945,7 @@ end
 -- Fully skipped (data scan, background, zero line, curves) when
 -- hideGraphs is true -- previously only the curves themselves were
 -- gated, while the scan/background/zero-line ran every frame regardless.
-do
+if not widget._topAddonMode then
 if not hideGraphs then
 
     local data = history.metal
@@ -4002,7 +4029,7 @@ end
 
 -- HISTORY SECONDS SELECTOR (Compact Mode, right side)
 -- Changed 'do' to 'if not hideGraphs then'
-if not hideGraphs then 
+if not hideGraphs and not widget._topAddonMode then 
     local hx1 = centerX + 220
     local hx2 = box.x2 - 10
     local hy1 = box.y1 + 30
@@ -4050,7 +4077,7 @@ end -- End of the if not hideGraphs check
 -- ENERGY INCOME/USAGE GRAPH (Compact Mode, full auto-scaling)
 -- Fully skipped (data scan, background, zero line, curves) when
 -- hideGraphs is true -- see the matching comment on the Metal graph above.
-do
+if not widget._topAddonMode then
 if not hideGraphs then
 
     local data = history.energy
@@ -4129,7 +4156,7 @@ end
 end
 
 -- METAL STORAGE BAR (Compact Mode, bottom-anchored, layered)
-do
+if not widget._topAddonMode then
     -- This controls left and right length of bar nudge left or right
 	local barX1 = box.x1 + 170 + metalOffset  -- Moves left side of metal storage bar to the right
     local barX2 = centerX - 270 + metalOffset
@@ -4253,7 +4280,7 @@ glText(text, barX2 + 65, textY, fontSize, "or")   -- + 60  This moves the Metal 
 
 end
 -- ENERGY STORAGE BAR (Compact Mode, bottom‑anchored, mirrored)
-do
+if not widget._topAddonMode then
     
     -- Values
     local cur   = eCur or 0
@@ -4410,7 +4437,7 @@ do
 end
 
 -- BIG METAL AVAILABLE (Compact Mode, Full View style)
-do
+if not widget._topAddonMode then
     local myTeamID = Spring.GetMyTeamID()
     if myTeamID then
         local mCur = select(1, Spring.GetTeamResources(myTeamID, "metal")) or 0
@@ -4453,7 +4480,7 @@ gl.Texture(false) ]]
 end
 
 -- BIG ENERGY AVAILABLE (Compact Mode, bottom-aligned)
-do
+if not widget._topAddonMode then
     local myTeamID = Spring.GetMyTeamID()
     if myTeamID then
         local eCur = select(1, Spring.GetTeamResources(myTeamID, "energy")) or 0
@@ -4502,7 +4529,9 @@ do
     -- Position: right of [Intel]
     ------------------------------------------------------------
     local intelX = box.x1 + 8
-    local intelY = box.y1 + 18  -- Round 16: +10 for bottom-row spacing
+    -- /ecographtopbaraddon: same bottom-left-corner Y as [Intel]'s own
+    -- addon-mode position below, so M:E stays aligned next to it.
+    local intelY = widget._topAddonMode and (box.y1 + 12) or (box.y1 + 18)  -- Round 16: +10 for bottom-row spacing; Round 7: addon mode pinned to the bottom corner
 
     -- VERY TIGHT spacing
     local ratioX = intelX + 50
@@ -4703,7 +4732,10 @@ end
 -- GAME SPEED + PINPOINTER + BUILD POWER (Compact Mode, lower-left corner)
 do
     local px = box.x1 + 8
-    local py = box.y1 + 18  -- Round 16: +10 for bottom-row spacing
+    -- /ecographtopbaraddon: pinned to the panel's bottom-left corner
+    -- (same Y as [Pause]/[D]/[X]'s own bottom-right corner -- see the
+    -- PAUSE BUTTON section below), instead of the Wind text's row.
+    local py = widget._topAddonMode and (box.y1 + 12) or (box.y1 + 18)  -- Round 16: +10 for bottom-row spacing; Round 7: addon mode pinned to the bottom corner
 
     glColor(1, 1, 1, 1)
     glText("[INTEL]", px, py, font_scale, "o")
@@ -4863,8 +4895,12 @@ do
     local hideWidth = glGetTextWidth(hideLabel) * hideSize
 
     -- Same geometry as DrawHideButton()
-    local hx1 = box.x2 - hideWidth - 6
-    local hy1 = box.y2 - 20
+    local hx1 = box.x2 - hideWidth - 6 - (widget._topAddonMode and 20 or 0)  -- Round 8: extra left margin in addon mode so [X] clears the resize handle (see below)
+    -- /ecographtopbaraddon: [Pause]/[D or T]/[X] move down to the panel's
+    -- bottom-right corner in this mode (same X -- only the Y changes),
+    -- mirroring [Intel]/M:E's own bottom-left corner instead of sitting
+    -- in the top row next to Status.
+    local btnY = widget._topAddonMode and (box.y1 + 12) or (box.y2 - 20)
 
     -- Transparency toggle, directly left of [X]
     local tLabel = widget._transparentMode and "[T]" or "[D]"
@@ -4873,21 +4909,44 @@ do
     -- doesn't shift position when the label swaps between them.
     local tWidth = math.max(glGetTextWidth("[D]"), glGetTextWidth("[T]")) * tSize
     local tx = hx1 - tWidth - 8
-    local ty = hy1
+    local ty = btnY
 
     mainTransparentToggleRect = widget._setRect(mainTransparentToggleRect, tx, ty - tSize, tx + tWidth, ty + tSize)
 
     glColor(cfg.titleColor)
     glText(tLabel, tx, ty, tSize, "o")
 
+    -- Round 16: "[A]" TOP-BAR ADDON MODE TOGGLE, directly left of [D]/[T]
+    -- -- moved here (between [Pause] and [D]) from its original Round 15
+    -- spot on the Wind bar row, per the user's own correction. Same
+    -- fixed-label style as [D]/[T]/[X] (just toggles on click), same
+    -- widget._addonBtnX1/Y1/X2/Y2 hitbox fields the MousePress click
+    -- check already reads -- only WHERE this button draws changed, not
+    -- how clicking it is detected or what it does.
+    local addonLabel = "[A]"
+    local addonSize  = 14 * FONT_SCALE
+    local addonWidth = glGetTextWidth(addonLabel) * addonSize
+    local ax = tx - addonWidth - 8
+    local ay = btnY
+
+    widget._addonBtnX1 = ax
+    widget._addonBtnY1 = ay - addonSize
+    widget._addonBtnX2 = ax + addonWidth
+    widget._addonBtnY2 = ay + addonSize
+
+    glColor(cfg.titleColor)
+    glText(addonLabel, ax, ay, addonSize, "o")
+
     -- Pause button
     local pauseLabel = "[Pause]"
     local pauseSize  = 14 * FONT_SCALE
     local pauseWidth = glGetTextWidth(pauseLabel) * pauseSize
 
-    -- Position Pause directly left of the transparency toggle
-    local px = tx - pauseWidth - 8
-    local py = hy1
+    -- Round 16: Pause now sits left of "[A]" instead of directly left of
+    -- the transparency toggle, to make room for the new button between
+    -- them.
+    local px = ax - pauseWidth - 8
+    local py = btnY
 
     -- Save hitbox for click detection
     pauseButtonRect = widget._setRect(pauseButtonRect, px, py - pauseSize, px + pauseWidth, py + pauseSize)
@@ -4935,9 +4994,19 @@ end
 
     local totalW = bracketW + eW + mW + uW + bracketW
 
-    -- position: LEFT of Pause button
-    local sx = px - 14 - totalW  -- moving the Energy to Metal stats left or right. The higher goes left.
-    local sy = py
+    -- position: LEFT of Pause button (X only -- see below for Y).
+    -- Round 9: in addon mode, Pause moved down to the bottom-right
+    -- corner (see sy below), so anchoring this bracket's X off px
+    -- any more just leaves it stranded wherever Pause used to be --
+    -- not actually near the panel's right edge any more. Anchor it
+    -- directly off box.x2 instead so it's flush in the top-right
+    -- corner on its own, independent of where Pause now sits.
+    local sx = widget._topAddonMode and (box.x2 - 10 - totalW) or (px - 14 - totalW)  -- moving the Energy to Metal stats left or right. The higher goes left.
+    -- /ecographtopbaraddon: Pause moved down to the bottom-right corner,
+    -- but this bracket stays on the TOP row next to Status -- so its Y
+    -- can't just follow Pause's py any more; pin it to the same fixed
+    -- top-row Y Status/the title row use instead.
+    local sy = widget._topAddonMode and (box.y2 - 20) or py
 
     -- [
     glColor(1,1,1,1)
@@ -5417,6 +5486,16 @@ end
 local savedHide = Spring.GetConfigInt("eco_graph_hide_graphs", 0)
 hideGraphs = (savedHide == 1)
 
+-- Load saved Top-Bar addon mode (/ecographtopbaraddon) -- a minimal,
+-- Top-Bar-replacement layout that hides the storage bars (and their
+-- draggable auto-share thumbs), the Big Metal/Energy Available
+-- readout, the commander count, the Tidal stat, and the income/usage
+-- graphs + history selector -- leaving just the title/status row,
+-- [Pause]/[D]/[X], the energy-to-metal stats bracket, [Intel], the
+-- M:E ratio, and the Wind text + bar. See the /ecographtopbaraddon
+-- console command (bottom of this file) for the actual toggle.
+widget._topAddonMode = Spring.GetConfigInt("eco_graph_top_addon_mode", 0) == 1
+
     -- Ensure detached window respects saved position on initialize
     -- `Detached_Load()` is called later after the detached helpers are defined.
 
@@ -5471,8 +5550,10 @@ local function DrawHideButton()
     local hideLabel = "[X]"
     local hideSize  = 14 * FONT_SCALE
     local hideWidth = gl.GetTextWidth(hideLabel) * hideSize
-    local hx1 = box.x2 - hideWidth - 6
-    local hy1 = box.y2 - 20
+    local hx1 = box.x2 - hideWidth - 6 - (widget._topAddonMode and 20 or 0)  -- Round 8: see the PAUSE BUTTON block comment in DrawCompactOverlay
+    -- /ecographtopbaraddon: moves down to the bottom-right corner along
+    -- with Pause/[D]/[T] (see the PAUSE BUTTON block in DrawCompactOverlay)
+    local hy1 = widget._topAddonMode and (box.y1 + 12) or (box.y2 - 20)
     
     glColor(1,1,1,0.9)
     glText(hideLabel, hx1, hy1, hideSize, "o")
@@ -6263,8 +6344,11 @@ function widget:MousePress(mx, my, button)
     local hideLabel = "[X]"
     local hideSize  = 14 * FONT_SCALE
     local hideWidth = gl.GetTextWidth(hideLabel) * hideSize
-    local hx1       = box.x2 - hideWidth - 6
-    local hy1       = box.y2 - 20
+    local hx1       = box.x2 - hideWidth - 6 - (widget._topAddonMode and 20 or 0)  -- Round 8: matches DrawHideButton()'s own addon-mode extra left margin
+    -- /ecographtopbaraddon: matches DrawHideButton()'s own addon-mode Y
+    -- (bottom-right corner) so the click target tracks where [X] is
+    -- actually drawn in this mode.
+    local hy1       = widget._topAddonMode and (box.y1 + 12) or (box.y2 - 20)
 
     if mx >= hx1 and mx <= hx1 + hideWidth
     and my >= hy1 - hideSize and my <= hy1 + hideSize then
@@ -6506,7 +6590,7 @@ end
     if resizing and button == 1 then
         local w = mx - box.x1
 
-        local minW = vsx * 0.40 -- Original 0.45 - Minimum horizonal width of the main Eco Graph allowed.
+        local minW = vsx * 0.15 -- Original 0.45, then 0.40 - Minimum horizonal width of the main Eco Graph allowed.
         local maxW = vsx * 0.95
         if w < minW then w = minW end
         if w > maxW then w = maxW end
@@ -6654,6 +6738,12 @@ local detached = {
     dragOffsetY = 0,
     resizeStartX = 0,
     resizeStartY = 0,
+    -- Round 13: "stuck" (magnet) mode -- while true, dragging EITHER the
+    -- main window or the detached window shifts the other by the same
+    -- delta, so they move together without merging into one window. Set
+    -- by the "^" button (detached.AttachBelowMain()), cleared by the "v"
+    -- button that replaces it while stuck.
+    stuck = false,
 }
 
 -- DEFAULT SIZE (relative to screen)
@@ -6671,6 +6761,7 @@ local savedVisible = Spring.GetConfigInt("eco_detached_visible", 0)
 detached.visible = (savedVisible == 1)
 widget._detachedVisible = detached.visible
 
+detached.stuck = Spring.GetConfigInt("eco_detached_stuck", 0) == 1
 
     local savedX = Spring.GetConfigFloat("eco_detached_x", -1)
     local savedY = Spring.GetConfigFloat("eco_detached_y", -1)
@@ -6717,6 +6808,61 @@ function detached.Center()
     detached.y2 = detached.y1 + h
 
     Detached_Save()
+end
+
+-- "^" RE-ATTACH + STICK: docks the detached window directly below the
+-- main window, horizontally centered under it, keeping its existing
+-- size, and turns on "stuck" (magnet) mode -- see the `detached.stuck`
+-- comment on the table above. Reads `box` (the main window's own live
+-- geometry) directly, so this works the same whether the main window is
+-- in its normal height or shrunk down via /ecographtopbaraddon --
+-- box.x1/x2/y1 always reflect whatever the main window's current
+-- position/size actually is, no special-casing needed for either mode.
+-- (box.y1 is the main window's BOTTOM edge in this coordinate system --
+-- see the FREEFORM RESIZING block's own "local top = box.y2" convention
+-- -- so "below" means just under box.y1, not box.y2.)
+function detached.AttachBelowMain()
+    local vsx, vsy = Spring.GetViewGeometry()
+    local w = detached.x2 - detached.x1
+    local h = detached.y2 - detached.y1
+    local gap = 6
+
+    local mainCenterX = (box.x1 + box.x2) * 0.5
+
+    local newX1 = mainCenterX - w * 0.5
+    local newY2 = box.y1 - gap
+    local newY1 = newY2 - h
+
+    -- Keep it on-screen if the main window is sitting near the bottom
+    -- edge and there isn't room below it for the detached window's own
+    -- height -- same screen-bounds clamping style as the DRAGGING THE
+    -- WHOLE WIDGET block above.
+    if newY1 < 0 then
+        newY1 = 0
+        newY2 = h
+    end
+    if newX1 < 0 then
+        newX1 = 0
+    elseif newX1 + w > vsx then
+        newX1 = vsx - w
+    end
+
+    detached.x1 = newX1
+    detached.y1 = newY1
+    detached.x2 = newX1 + w
+    detached.y2 = newY2
+
+    detached.stuck = true
+    Spring.SetConfigInt("eco_detached_stuck", 1)
+
+    Detached_Save()
+end
+
+-- "v" UNSTICK: turns off magnet mode. Doesn't move either window --
+-- they stay exactly where they are, just stop following each other.
+function detached.Unstick()
+    detached.stuck = false
+    Spring.SetConfigInt("eco_detached_stuck", 0)
 end
 
 -- GEOMETRY HELPERS ------------------------------------------------------------
@@ -6802,6 +6948,30 @@ local function Detached_DrawStatsRow()
         leftX = energyStatsX - (totalW * 0.5)
 
         detached.energyIncRect = widget._setRect(detached.energyIncRect, leftX, y1, leftX + totalW, y2)
+    end
+
+
+    -- "^" / "v" RE-ATTACH + STICK BUTTON: centered between the two stat
+    -- groups, same row as Income/Net (same `mid` X the two stat groups
+    -- are built around above). Round 13: while NOT stuck, shows "^" --
+    -- click docks this window directly below the main window, centered
+    -- under it, and turns on magnet (stuck) mode -- see
+    -- detached.AttachBelowMain(). While stuck, shows "v" instead --
+    -- click turns magnet mode back off (detached.Unstick()) without
+    -- moving either window.
+    do
+        local attachLabel = detached.stuck and "v" or "^"
+        local attachSize  = 14 * FONT_SCALE
+        local attachW     = glGetTextWidth(attachLabel) * attachSize
+
+        glColor(cfg.titleColor)
+        glText(attachLabel, mid, statsY, attachSize, "oc")
+
+        local pad = 4
+        detached.attachX1 = mid - attachW * 0.5 - pad
+        detached.attachY1 = statsY - attachSize
+        detached.attachX2 = mid + attachW * 0.5 + pad
+        detached.attachY2 = statsY + attachSize
     end
 
 
@@ -7315,6 +7485,96 @@ Detached_Load()
 -- INTEGRATION INTO MAIN WIDGET
 --------------------------------------------------------------------------------
 
+--------------------------------------------------------------------------------
+-- TOP-BAR ADDON MODE TOGGLE (shared) ------------------------------------------
+--------------------------------------------------------------------------------
+-- Round 15: factored out of the /ecographtopbaraddon console command's own
+-- body so the new "[A]" button on the main panel itself (see
+-- DrawCompactOverlay's own "[A]" button block, and its MousePress check in
+-- the wrapper below) can call the exact same logic instead of duplicating
+-- it. Has to live HERE -- textually after `local detached = {...}` -- since
+-- the ON branch references `detached` directly; a function defined earlier
+-- in the file (like the file's original, hand-written widget:MousePress)
+-- has no way to see a `local` declared later, no matter when it actually
+-- runs (same Lua scoping constraint documented in Round 13's notes).
+function widget.ToggleTopBarAddonMode()
+    widget._topAddonMode = not widget._topAddonMode
+    Spring.SetConfigInt("eco_graph_top_addon_mode", widget._topAddonMode and 1 or 0)
+
+    local vsx, vsy = Spring.GetViewGeometry()
+    local topY = box.y2
+    local centerX = (box.x1 + box.x2) * 0.5
+
+    if widget._topAddonMode then
+        -- Shrink to just the top rows, anchored from the TOP edge (box.y2)
+        -- so the title/status/button row doesn't jump -- same top-anchored
+        -- resize math as the freeform drag-resize handler elsewhere in this
+        -- file. Remembers the pre-addon height so turning this back off
+        -- restores it, instead of staying tiny forever.
+        widget._preAddonHeight = box.y2 - box.y1
+
+        -- Round 17: height gets the same remembered-addon-size treatment
+        -- width already had since Round 14 -- this used to hard-code
+        -- newH = 95 unconditionally, so resizing the panel SHORTER while
+        -- already in addon mode (e.g. dragging the resize handle down)
+        -- would silently snap back to 95 the next time addon mode turned
+        -- on, as if the manual resize had never happened. Now it restores
+        -- whatever addon-mode height the user last resized to, falling
+        -- back to 95 only the very first time (no remembered value yet).
+        local newH = widget._addonHeight or 95
+        box.y1 = topY - newH
+        cfg.height = newH / vsy
+
+        -- Round 14: width gets the same pre/post treatment as height,
+        -- anchored from the panel's horizontal CENTER so it doesn't jump
+        -- sideways. Remembers the normal-mode width so turning this back
+        -- off restores it, and remembers the LAST addon-mode width the
+        -- user resized to, so re-entering addon mode restores that narrow
+        -- strip width instead of whatever width normal mode was at.
+        widget._preAddonWidth = box.x2 - box.x1
+        local newW = widget._addonWidth or (box.x2 - box.x1)
+        box.x1 = centerX - newW * 0.5
+        box.x2 = centerX + newW * 0.5
+        cfg.width = newW / vsx
+        if graphList then glDeleteList(graphList) graphList = nil end
+
+        -- This mode's whole point is a slim Top-Bar-style strip -- make
+        -- sure the detached dual-line window is open so the Metal/Energy
+        -- income/usage numbers it hides are still visible somewhere.
+        if not detached.visible then
+            detached.visible = true
+            widget._detachedVisible = true
+            Spring.SetConfigInt("eco_detached_visible", 1)
+        end
+
+        Spring.Echo("[EcoGraph] Top-Bar addon mode: ON")
+    else
+        -- Round 17: remember the addon-mode height first (mirrors width's
+        -- own widget._addonWidth capture right below), so the resize the
+        -- user just made while in addon mode is what the ON branch above
+        -- restores next time, instead of silently reverting to 95.
+        widget._addonHeight = box.y2 - box.y1
+
+        -- Restore whatever height this panel had before entering addon
+        -- mode (falls back to a sane default if that was never recorded).
+        local restoreH = widget._preAddonHeight or (vsy * 0.12)
+        box.y1 = topY - restoreH
+        cfg.height = restoreH / vsy
+
+        -- Round 14: same restore for width, remembering the addon-mode
+        -- width first so toggling back ON later picks up where this
+        -- addon-mode session left off.
+        widget._addonWidth = box.x2 - box.x1
+        local restoreW = widget._preAddonWidth or (vsx * 0.70)
+        box.x1 = centerX - restoreW * 0.5
+        box.x2 = centerX + restoreW * 0.5
+        cfg.width = restoreW / vsx
+        if graphList then glDeleteList(graphList) graphList = nil end
+
+        Spring.Echo("[EcoGraph] Top-Bar addon mode: OFF")
+    end
+end
+
 -- 1. Inject into DrawScreen
 local old_DrawScreen = widget.DrawScreen
 
@@ -7390,6 +7650,41 @@ if detached.visible and button == 1 and widget._detachedBgToggleRect then
 end
 
 
+-- RE-ATTACH/UNSTICK BUTTON CLICK ("^" / "v"): same priority as the
+-- close button and background toggle above -- checked before the
+-- generic drag-start block below, which would otherwise swallow this
+-- click as "start dragging the window" instead (same overlap-priority
+-- lesson as the main window's resize-handle/close-button fix). Round
+-- 13: branches on detached.stuck, since the button's own job swaps
+-- between the two (see Detached_DrawStatsRow()'s own comment).
+if detached.visible and button == 1
+and detached.attachX1 and mx >= detached.attachX1 and mx <= detached.attachX2
+and my >= detached.attachY1 and my <= detached.attachY2 then
+    if detached.stuck then
+        detached.Unstick()
+    else
+        detached.AttachBelowMain()
+    end
+    return true
+end
+
+
+-- "[A]" TOP-BAR ADDON MODE TOGGLE CLICK (main window's own button, Round
+-- 15): same overlap-priority reasoning as the re-attach button above --
+-- checked here, in the first wrapper that runs AFTER `detached`/
+-- widget.ToggleTopBarAddonMode() exist and so can call it directly, and BEFORE
+-- falling through to old_MousePress, whose own final step would
+-- otherwise swallow this click as "start dragging the window" instead.
+-- Lives on the MAIN window (not the detached one), but its hitbox is
+-- only valid while the main panel is actually visible and drawing.
+if WG.EcoGraph_UIVisible and button == 1
+and widget._addonBtnX1 and mx >= widget._addonBtnX1 and mx <= widget._addonBtnX2
+and my >= widget._addonBtnY1 and my <= widget._addonBtnY2 then
+    widget.ToggleTopBarAddonMode()
+    return true
+end
+
+
     -- Detached window interactions
     if detached.visible and Detached_PointIn(mx, my) then
         -- Resize
@@ -7462,6 +7757,26 @@ function widget:MouseMove(mx, my, dx, dy, button)
             if newX2 > vsx then newX2 = vsx; newX1 = vsx - w end
             if newY2 > vsy then newY2 = vsy; newY1 = vsy - h end
 
+            -- Round 13: while magnet (stuck) mode is on, dragging the
+            -- DETACHED window drags the main window along with it by the
+            -- same delta -- "stick like a magnet", not a merge. Measured
+            -- from the detached window's own pre-clamp position, so a
+            -- screen-edge clamp on the detached window doesn't yank the
+            -- main window further than the detached window itself
+            -- actually moved.
+            if detached.stuck then
+                local moveDX = newX1 - detached.x1
+                local moveDY = newY1 - detached.y1
+                box.x1 = box.x1 + moveDX
+                box.y1 = box.y1 + moveDY
+                box.x2 = box.x2 + moveDX
+                box.y2 = box.y2 + moveDY
+                cfg.anchorX = (box.x1 + (box.x2 - box.x1) * 0.5) / vsx
+                cfg.anchorY = box.y1 / vsy
+                if graphList then glDeleteList(graphList) graphList = nil end
+                BuildGraphList()
+            end
+
             detached.x1, detached.y1, detached.x2, detached.y2 =
                 newX1, newY1, newX2, newY2
 
@@ -7469,8 +7784,29 @@ function widget:MouseMove(mx, my, dx, dy, button)
         end
     end
 
+    -- Round 13: capture the main window's position BEFORE handing off to
+    -- the original handler below (which is what actually drags it) so a
+    -- drag there can be detected afterward and mirrored onto the
+    -- detached window while magnet (stuck) mode is on. old_MouseMove is
+    -- defined earlier in the file, before `detached` exists as a local,
+    -- so it can't reference `detached` itself -- this wrapper is the one
+    -- place that safely can.
+    local preBoxX1, preBoxY1 = box.x1, box.y1
+
     -- Fall back to original handler
-    return old_MouseMove(self, mx, my, dx, dy, button)
+    local handled = old_MouseMove(self, mx, my, dx, dy, button)
+
+    if detached.stuck and detached.visible
+    and (box.x1 ~= preBoxX1 or box.y1 ~= preBoxY1) then
+        local moveDX = box.x1 - preBoxX1
+        local moveDY = box.y1 - preBoxY1
+        detached.x1 = detached.x1 + moveDX
+        detached.y1 = detached.y1 + moveDY
+        detached.x2 = detached.x2 + moveDX
+        detached.y2 = detached.y2 + moveDY
+    end
+
+    return handled
 end
 
 --------------------------------------------------------------------------------
@@ -7495,11 +7831,40 @@ function widget:MouseRelease(mx, my, button)
         if detached.dragging and button == 1 then
             detached.dragging = false
             Detached_Save()
+
+            -- Round 13: dragging the detached window while stuck also
+            -- moved the main window along with it (see the DRAGGING
+            -- block in the MouseMove wrapper above) -- persist that too,
+            -- since the main window's OWN "STOP DRAGGING" save (in
+            -- old_MouseRelease below) never runs here: the main window's
+            -- `dragging` flag was never true in this scenario, only
+            -- `detached.dragging` was.
+            if detached.stuck then
+                Spring.SetConfigFloat("eco_graph_x", cfg.anchorX)
+                Spring.SetConfigFloat("eco_graph_y", cfg.anchorY)
+            end
+
             return true
         end
     end
 
-    return old_MouseRelease(self, mx, my, button)
+    -- Round 13: `dragging` (the main window's OWN drag flag, a
+    -- file-level local declared well before `detached` exists -- unlike
+    -- `box`, it's an upvalue this wrapper can read directly) is about to
+    -- be cleared by old_MouseRelease below if this release ends a main-
+    -- window drag. In that case, while magnet (stuck) mode is on, the
+    -- detached window moved along too (via MouseMove's stuck-shift logic)
+    -- but has no release of its own to persist it here -- do that after
+    -- old_MouseRelease runs.
+    local wasMainDragging = dragging and button == 1
+
+    local handled = old_MouseRelease(self, mx, my, button)
+
+    if wasMainDragging and detached.stuck and detached.visible then
+        Detached_Save()
+    end
+
+    return handled
 end
 
 --------------------------------------------------------------------------------
@@ -7666,13 +8031,16 @@ end
 --------------------------------------------------------------------------------
 -- TOGGLE-MENU SAFETY NET — SHUTDOWN
 --------------------------------------------------------------------------------
--- The embedded EcoToggleMenu module above is the only in-game control that
--- can disable "Top Bar" (via ToggleWidget -> luaui disablewidget "Top Bar").
--- If Eco Graph itself is ever disabled or its file removed while Top Bar is
--- off, a new/casual player has no way to turn Top Bar back on short of the
--- advanced F11 widget list. So auto-restore Top Bar here before this widget
--- goes away, same as every other Shutdown hook in this file, chained onto
--- whatever Shutdown handler already exists.
+-- NOTE (2026-10-17): EcoToggleMenu (above) used to be the only in-game
+-- control that could disable "Top Bar" from here; that toggle button has
+-- since been removed, so this widget itself can no longer be the reason
+-- Top Bar ends up off. This safety net is kept anyway, now as a general
+-- fallback: if Top Bar is off (by any means -- e.g. BAR's own F11 widget
+-- list) when Eco Graph itself is disabled or its file removed, a new/
+-- casual player would otherwise have no easy way to turn Top Bar back on.
+-- So auto-restore Top Bar here before this widget goes away, same as
+-- every other Shutdown hook in this file, chained onto whatever Shutdown
+-- handler already exists.
 --------------------------------------------------------------------------------
 -- NOTE: stored on the widget table itself (not as a new `local`) because
 -- this file's main chunk is already at Lua's 200-local-variable ceiling;
@@ -7888,6 +8256,35 @@ function widget:Initialize()
         Spring.Echo("[EcoGraph] Reverted to the original plain panel.")
         return true
     end, nil, "t")
+
+    -- /ecographtopbaraddon -- a minimal "Top Bar replacement" layout.
+    -- Hides the storage bars (and their draggable auto-share thumbs),
+    -- the Big Metal/Energy Available readout, the commander count, the
+    -- Tidal stat, and the income/usage graphs + history selector --
+    -- leaving just the title/status row, [Pause]/[D]/[X], the
+    -- energy-to-metal stats bracket, [Intel], the M:E ratio, and the
+    -- Wind text + bar (see DrawCompactOverlay's own `if not
+    -- widget._topAddonMode then` guards for exactly what that covers).
+    -- [Intel] and the M:E ratio move up onto the Wind text's row since
+    -- their usual spot near the bottom has nothing left down there to
+    -- sit next to any more.
+    --
+    -- The Metal/Energy income/usage numbers this hides from the main
+    -- panel are not lost -- they already have a second home: the
+    -- detached dual-line window shows its own copy of them, and the
+    -- main panel's copy already hides itself whenever that window is
+    -- visible (see the `widget._detachedVisible` check near the top of
+    -- DrawCompactOverlay -- pre-existing, not new this round). So this
+    -- command also force-opens the detached window, rather than
+    -- leaving those numbers with nowhere to go.
+    -- Round 15: body now lives in the shared widget.ToggleTopBarAddonMode(),
+    -- so this command and the new "[A]" button on the main panel (see
+    -- DrawCompactOverlay and its MousePress check) stay in sync by
+    -- construction instead of by hand.
+    widgetHandler:AddAction("ecographtopbaraddon", function()
+        widget.ToggleTopBarAddonMode()
+        return true
+    end, nil, "t")
 end
 
 widget._old_Shutdown_Commands = widget.Shutdown
@@ -7903,6 +8300,7 @@ function widget:Shutdown()
     widgetHandler:RemoveAction("ecographbarui")
     widgetHandler:RemoveAction("ecographtopbardebug")
     widgetHandler:RemoveAction("ecographorig")
+    widgetHandler:RemoveAction("ecographtopbaraddon")
 
     if widget._old_Shutdown_Commands then
         widget._old_Shutdown_Commands(self)
