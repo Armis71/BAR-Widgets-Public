@@ -3919,6 +3919,26 @@ else
 end
 glRect(innerX1, innerY1, innerX2, innerY2)
 
+-- FILL (bug fix, 2026-10-18): this was lost somewhere during the
+-- inner-bar-background restyle above (whichever round switched this
+-- box from a flat black backdrop to the tint-aware one) -- only the
+-- empty backdrop box was ever drawn after that, never the actual
+-- wind-level fill or the current-wind tick, which is why the bar
+-- looked like it "stopped working" (a static, unchanging empty box).
+-- Same fill/tick treatment as the Full Mode wind bar earlier in this
+-- file, just sized to this bar's own (possibly inset) inner box
+-- instead of introducing new locals this close to this function's own
+-- 200-local ceiling (see Round 7's note on that).
+if frac > 0 then
+    glColor(0.3, 0.6, 1.0, 0.90)
+    glRect(innerX1, innerY1, innerX1 + (innerX2 - innerX1) * frac, innerY2)
+end
+
+if curWind > 0 then
+    glColor(1, 1, 1, 1)
+    glRect(innerX1 + (innerX2 - innerX1) * frac - 1, innerY1 - 2, innerX1 + (innerX2 - innerX1) * frac + 1, innerY2 + 2)
+end
+
 -- TIDAL ONLY (Compact View — single line)
 if not widget._topAddonMode then
     local tidal = Game.tidal or 0
