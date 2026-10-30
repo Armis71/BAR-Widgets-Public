@@ -637,8 +637,83 @@ local function IsCosmeticDecoration(ud)
     return false
 end
 
+-- Round 17: "fortifier legion is meta 1 and energy 1" -- "and its not
+-- /nocost is it running". Confirmed directly against the archive: this
+-- isn't nocost mode, and it isn't the real Fortifier either. legmohobpct
+-- is a second, separate UnitDef BAR attaches to the real Fortifier
+-- building (legmohobp, metalCost=640, energyCost=8100) purely to animate
+-- its drilling arm -- customParams.attached_con_turret on legmohobp
+-- points at it. It reuses the real building's exact buildpic/display
+-- name ("Fortifier", LEGMOHOCON.DDS) but carries its own placeholder
+-- metalcost=1/energycost=1, which is exactly why it showed up as a
+-- second "Fortifier" card with those two stats and nothing else
+-- distinguishing it.
+--
+-- Rather than hardcode this one defName, scanned every arm/cor/leg
+-- UnitDef in the real archive for the same "metalCost<=1 AND
+-- energyCost<=1" placeholder-cost signature (the same giveaway the
+-- user's own "is nocost running?" guess was pointing at) and confirmed
+-- every single hit is this same kind of invisible helper object, never a
+-- real player-buildable unit -- the cheapest real units in the whole
+-- archive (Energy Converter, Solar Collector, Dragon's Teeth) always
+-- have at least one of the two costs in the hundreds or thousands, never
+-- both at once. Four more previously-unexcluded units turned up the same
+-- way: corvacct (Cortex's equivalent attached turret, reusing "Printer"'s
+-- buildpic), legvision (a cloaked, 1-health vision marker prop),
+-- armpw_wings (a cosmetic wing attachment piece), and legnanotcbase
+-- (Legion's nano-turret base helper, which separately also carries its
+-- own customParams.isnanoturret -- a second, independent real flag
+-- confirming it's not meant to be a player-buildable roster unit).
+local function HasPlaceholderCost(ud)
+    local metal = ud.metalCost or 0
+    local energy = ud.energyCost or 0
+    return metal <= 1 and energy <= 1
+end
+
+-- Round 17 follow-up: "Fortifier is a building and T2, it shows up on
+-- Legion T1 bots selection" / "metal is 1060 energy is 14500" -- a
+-- SECOND, separate bug from the metal-1/energy-1 ghost above, this time
+-- about the Advanced Metal Fortifier family (legmohocon), whose real
+-- cost (1060/14500, confirmed against both the archive and the user's
+-- own wiki link) is nothing like a placeholder, so HasPlaceholderCost
+-- doesn't touch it. legmohocon's own customParams point at TWO more
+-- attached-turret UnitDefs besides legmohoconct -- attached_con_turret =
+-- "legmohoconct" and attached_con_turret_mex = "legmohoconin" -- and BAR
+-- deliberately keeps all three at identical cost (the files' own "costs
+-- should be same as..." comments, and legmohoconct/legmohoconin's
+-- scav_swap_override_* customParams, both confirm the engine swaps the
+-- live unit between these three UnitDefIDs as one conceptual building,
+-- not three separate player choices). Unlike legmohobpct/corvacct, these
+-- two also carry a real customParams.techlevel = 2 of their own, so the
+-- "T1" half of the report is still open -- flagged to the user rather
+-- than guessed at, since it can't be confirmed without a live match
+-- (see this round's notes) -- but their "builder"/"NANO"-movementclass
+-- shape (no isBuilding/isFactory flag, a subfolder of "Legion/Economy"
+-- which SubfolderBucket doesn't recognize as a structure, and no lab's
+-- buildOptions claims them) explains the "Bots" half cleanly: they fall
+-- through every real check straight to ClassifyUnitType's mobile-ground
+-- "bot" default. Rather than special-case legmohoconct/legmohoconin by
+-- name, every UnitDef referenced by another unit's
+-- attached_con_turret/attached_con_turret_mex is collected below and
+-- excluded from the roster the same way the cost-1 ghosts are -- they're
+-- never an independent player build choice, just an internal stand-in
+-- for whichever real building (legmohocon, legmohobp, corvac, ...)
+-- attaches them.
+local function BuildAttachedTurretTargets()
+    local targets = {}
+    for _, ud in pairs(UnitDefs) do
+        local cp = ud.customParams
+        if cp then
+            if cp.attached_con_turret then targets[cp.attached_con_turret] = true end
+            if cp.attached_con_turret_mex then targets[cp.attached_con_turret_mex] = true end
+        end
+    end
+    return targets
+end
+
 local function BuildAllUnitsCache()
     local labMap = BuildLabTypeMap()
+    local attachedTurretTargets = BuildAttachedTurretTargets()
     local list = {}
     local bestCommander = {}        -- [faction] = chosen entry so far
     local bestCommanderIsAlias = {} -- [faction] = is that entry an i18nfromunit alias?
@@ -670,6 +745,8 @@ local function BuildAllUnitsCache()
             and not name:find("assistdrone", 1, true)
             and not IsCosmeticDecoration(ud)
             and not isDecoyCommander
+            and not HasPlaceholderCost(ud)
+            and not attachedTurretTargets[name]
         then
             if isCommander then
                 local isAlias = (ud.customParams and ud.customParams.i18nfromunit) and true or false
@@ -2319,6 +2396,8 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
     UNIT_FLASHCARDS_TEST_EXPORTS({
         UnitTechLevel       = UnitTechLevel,
         IsCosmeticDecoration = IsCosmeticDecoration,
+        HasPlaceholderCost = HasPlaceholderCost,
+        BuildAttachedTurretTargets = BuildAttachedTurretTargets,
         Lighten             = Lighten,
         Darken              = Darken,
         RoundedRect         = RoundedRect,
