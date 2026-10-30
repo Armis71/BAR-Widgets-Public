@@ -476,8 +476,28 @@ end
 -- to the same canFly/floater/canHover movement checks gui_unit_chatter.lua's
 -- own classification in this project already relies on, defaulting
 -- unclassified mobile ground units to "bot".
+--
+-- Round 17 follow-up: "this shows up as legion, t1, bots, it's a
+-- construction turret meaning a building" (legnanotc). Confirmed
+-- against the archive: Armada's and Cortex's own "Construction Turret"
+-- nano-turret buildings (armnanotc/cornanotc and their t2/plat variants)
+-- already classify correctly, because their subfolder
+-- ("ArmBuildings/LandUtil", "CorBuildings/SeaUtil", etc) contains
+-- "buildings" -- but Legion's four equivalents (legnanotc, legnanotcplat,
+-- legnanotct2, legnanotct2plat) use "Legion/Utilities" instead, which
+-- SubfolderBucket doesn't recognize, so (same as The Hive in section 10
+-- and the Advanced Metal Fortifier in section 17 above) they fall
+-- straight through to the mobile-ground "bot" default -- yet another gap
+-- specific to Legion's different folder-naming convention. All of these
+-- real nano turrets (plus legnanotcbase, already excluded entirely as a
+-- cost-1 ghost) carry customParams.isnanoturret = true, a direct, real
+-- engine flag -- checked here the same way customParams.mine already is,
+-- rather than widening SubfolderBucket's "buildings" match again.
 local function ClassifyUnitType(ud, labMap)
     if ud.customParams and ud.customParams.mine then
+        return "structure"
+    end
+    if ud.customParams and ud.customParams.isnanoturret then
         return "structure"
     end
     if ud.isFactory or ud.isBuilding then
