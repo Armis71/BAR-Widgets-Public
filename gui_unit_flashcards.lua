@@ -1442,6 +1442,73 @@ local function FitFontSize(text, baseSize, maxWidth, minSize)
     return math.max(minSize, math.floor(baseSize * (maxWidth / tw)))
 end
 
+-- Round 16 follow-up: "can you wordwrap these?" -- a long quiz choice
+-- name (e.g. "Advanced Construction Submarine") was still wider than
+-- QUIZ_COL_W's narrow ~170px even at FitFontSize's own floor (11), so
+-- it was spilling out past the choice button's right edge instead of
+-- being contained. Splits a name into exactly 2 lines at whichever word
+-- boundary balances them best (minimizes the wider of the two
+-- resulting lines) rather than always breaking after the first word --
+-- so e.g. "Advanced Construction Submarine" breaks into "Advanced
+-- Construction" / "Submarine" (the wider line is ~21 characters) rather
+-- than "Advanced" / "Construction Submarine" (wider line ~22).
+-- A single unbreakable word is returned as its own one-line list --
+-- there's no narrower word boundary to split it on.
+local function BestTwoLineSplit(text)
+    local words = {}
+    for w in text:gmatch("%S+") do words[#words + 1] = w end
+    if #words <= 1 then return {text} end
+
+    local bestI, bestWidest = 1, nil
+    for i = 1, #words - 1 do
+        local line1 = table.concat(words, " ", 1, i)
+        local line2 = table.concat(words, " ", i + 1, #words)
+        local widest = math.max(gl.GetTextWidth(line1), gl.GetTextWidth(line2))
+        if not bestWidest or widest < bestWidest then
+            bestWidest, bestI = widest, i
+        end
+    end
+    return {
+        table.concat(words, " ", 1, bestI),
+        table.concat(words, " ", bestI + 1, #words),
+    }
+end
+
+-- Draws `text` horizontally centered on cx, vertically centered in a
+-- maxHeight-tall band around cy -- on one line via FitFontSize when
+-- that actually fits maxWidth, otherwise wrapped to 2 lines via
+-- BestTwoLineSplit above, with the font re-fit to whichever of those
+-- two lines is wider (floored at minSize, capped so both lines plus
+-- their gap still fit maxHeight -- no point picking a width-correct
+-- size that then overflows the row vertically instead).
+local function DrawWrappedCenteredText(text, cx, cy, maxWidth, maxHeight, baseSize, minSize)
+    local oneLineSize = FitFontSize(text, baseSize, maxWidth, minSize)
+    if gl.GetTextWidth(text) * oneLineSize <= maxWidth then
+        gl.Text(text, cx, cy - oneLineSize * 0.35, oneLineSize, "oc")
+        return
+    end
+
+    local lines = BestTwoLineSplit(text)
+    if #lines == 1 then
+        -- Unbreakable single word -- nothing left to do but draw it at
+        -- the floor size; same as the old single-line overflow behavior
+        -- for this one edge case.
+        gl.Text(lines[1], cx, cy - minSize * 0.35, minSize, "oc")
+        return
+    end
+
+    local widest = math.max(gl.GetTextWidth(lines[1]), gl.GetTextWidth(lines[2]))
+    local fontSize = widest > 0 and math.floor(baseSize * math.min(1, maxWidth / (widest * baseSize))) or baseSize
+    fontSize = math.max(minSize, fontSize)
+    local lineGap = 2
+    fontSize = math.min(fontSize, math.floor((maxHeight - lineGap) / 2))
+    fontSize = math.max(minSize, fontSize) -- a tiny maxHeight could push the cap below minSize; readability wins
+
+    local lineH = fontSize + lineGap
+    gl.Text(lines[1], cx, cy + lineH / 2 - fontSize * 0.35, fontSize, "oc")
+    gl.Text(lines[2], cx, cy - lineH / 2 - fontSize * 0.35, fontSize, "oc")
+end
+
 -- Round 15: "put in pop up... large fonts along with confetti and
 -- fireworks" -- the big celebratory banner line (content picked by
 -- BuildCelebrationMessage, way up near AllCellsOn). Drawn separately from
@@ -1889,9 +1956,9 @@ local function DrawPanel()
                 end
                 DrawGlossyRect(rect.x1, rect.y1, rect.x2, rect.y2, bg[1], bg[2], bg[3], bg[4])
 
-                local fontSize = FitFontSize(choice.name, 15, (rect.x2 - rect.x1) - 10, 11)
                 gl.Color(1, 1, 1, 1)
-                gl.Text(choice.name, (rect.x1 + rect.x2) / 2, (rect.y1 + rect.y2) / 2 - fontSize * 0.35, fontSize, "oc")
+                DrawWrappedCenteredText(choice.name, (rect.x1 + rect.x2) / 2, (rect.y1 + rect.y2) / 2,
+                    (rect.x2 - rect.x1) - 10, rect.y2 - rect.y1, 15, 11)
             end
         end
         gl.Color(1, 1, 1, 1)
@@ -2259,6 +2326,8 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
         DrawGlossyRect      = DrawGlossyRect,
         DrawCardFrame       = DrawCardFrame,
         DrawTextWithShadow  = DrawTextWithShadow,
+        BestTwoLineSplit    = BestTwoLineSplit,
+        DrawWrappedCenteredText = DrawWrappedCenteredText,
         SubfolderBucket     = SubfolderBucket,
         ClassifyUnitType    = ClassifyUnitType,
         BuildLabTypeMap     = BuildLabTypeMap,
