@@ -129,6 +129,31 @@ local deckCursor     = 0
 local currentCard  = nil     -- entry from deckPool, or nil if pool is empty
 local flipped       = false
 local cardHover     = false
+
+-- Round 17 follow-up: "can you animate the card that it actually flips?"
+-- `flipped` above still updates to its FINAL value immediately on every
+-- real flip gesture -- every other piece of logic that reads it (hints,
+-- quiz state, the hover-flip gesture itself) keeps working exactly as it
+-- did with an instant flip. Only the DRAWING of the transition is
+-- animated, via `.draw` (added later, right after DrawCard itself is
+-- defined -- it needs to call DrawCard, which isn't in scope yet here)
+-- sampling this against spGetTimer/spDiffTimers, the same elapsed-time-
+-- only technique DrawConfetti already uses so it can't desync or drift
+-- if the panel is hidden and reopened mid-flip. A field on the existing
+-- `preload` table rather than a new top-level local of its own -- this
+-- file is already right at Lua 5.1's 200-local-per-function ceiling
+-- (same reasoning as `preload.step`/`preload.centerIconAndPanel` above);
+-- `preload` is just a convenient existing bag here, no thematic link
+-- intended.
+preload.flipAnim = {active = false, startTime = nil, fromFace = false, toFace = false, duration = 0.07} -- round 17 follow-up: "make it 0.07" (was 0.28 -> 0.14 -> 0.07)
+preload.flipAnim.start = function(newFace)
+    preload.flipAnim.active = true
+    preload.flipAnim.startTime = spGetTimer()
+    preload.flipAnim.fromFace = flipped
+    preload.flipAnim.toFace = newFace
+    flipped = newFace
+end
+
 local panelRects    = {} -- faction/tier buttons, type buttons, all-random button, card rect --
                           -- rebuilt only when the layout actually changes (see RelayoutPanelIfNeeded
                           -- below, round 16 perf fix), not on every single DrawScreen frame
@@ -590,11 +615,53 @@ local function NonBlank(s)
     return s and s:match("%S") and not s:find(".", 1, true) and s or nil
 end
 
+-- Round 17 follow-up: "rename this 'experimental vehicle plant' to
+-- Amphibious Complex. I see now why its like that but nobody understands
+-- its all about visual and how it looks correctly. The actual game this
+-- is actually a T1 vehicle lab on the build menu of con hovercraft but
+-- whatever." A deliberate, explicit exception to BAR's own real name for
+-- armhavp, not a correction of a bug -- round 38's investigation already
+-- established armhavp ("Experimental Vehicle Plant") and armamsub
+-- ("Amphibious Complex") are two real, separate, correctly-tiered units
+-- that simply share a near-identical model design. For a flashcard study
+-- tool specifically, the user's call is that what matters is matching
+-- the NAME to how the picture actually reads at a glance (and to how
+-- it's reached in a real build menu -- a T1 amphibious vehicle lab, off
+-- Construction Hovercraft) rather than armhavp's own, technically
+-- correct but visually-indistinguishable BAR name. Scoped to this one
+-- unit by explicit request, not a general "prefer visual over data"
+-- policy -- every other card in this file still uses BAR's own real
+-- name. A field on `preload` rather than a new top-level local/table --
+-- this file is already at Lua 5.1's 200-local-per-function ceiling, same
+-- reasoning as every other `preload.*` addition in this file; no
+-- thematic link to texture preloading intended, it's just an existing
+-- bag to hang one-off state on without costing a new local.
+preload.displayNameOverride = {
+    armhavp = "Amphibious Complex",
+
+    -- Round 17 follow-up: "change Experimental Aircraft Plant to Advance
+    -- Aircraft Plant." Checked the archive first, same as every rename/
+    -- exclusion in this file -- armhaap (the real, reachable "Experimental
+    -- Aircraft Plant", in armhaca's buildOptions) has `buildpic =
+    -- "ARMAAP.DDS"` in its own raw unitdef -- the EXACT SAME icon file as
+    -- armaap, the real "Advanced Aircraft Plant" (T2). Unlike armhavp
+    -- above (a genuine but merely similar-LOOKING separate model), this
+    -- one is a literal shared-buildpic-file case, the same shape of
+    -- upstream BAR data mismatch round 38 found for armhasy/armshltxuw --
+    -- so the card for armhaap isn't just visually similar to Advanced
+    -- Aircraft Plant, it's pixel-for-pixel the identical picture. Renamed
+    -- to match, same as armhavp -- not excluded, since it's real,
+    -- reachable content.
+    armhaap = "Advanced Aircraft Plant",
+}
+
 local function ResolveDisplayName(entry)
     if entry.isCommander then
         return (FACTION_LABEL[entry.faction] or "") .. " Commander"
     end
     local ud = entry.ud
+    local override = preload.displayNameOverride[ud.name]
+    if override then return override end
     return NonBlank(ud.translatedHumanName) or NonBlank(ud.humanName) or ud.name
 end
 
@@ -748,6 +815,46 @@ local function HasPlaceholderCost(ud)
     return metal <= 1 and energy <= 1
 end
 
+-- Round 17: "The banshee icon is showed 3 times in armada t1 air -- 1st
+-- it was labeled a banshee the 2nd and 3rd time it was labeled attack
+-- drone." Confirmed directly against the real archive: armkam (the real
+-- Banshee, a genuinely distinct, player-buildable T1 aircraft, listed in
+-- armap's own buildoptions) shares its exact buildpic (ARMKAM.DDS) with
+-- TWO separate, unrelated UnitDefs -- armdrone and armdroneold, both
+-- translated "Attack Drone" -- which is exactly why all three looked
+-- identical on a card. Neither armdrone nor armdroneold appears in ANY
+-- lab's buildoptions anywhere in the archive; they're the drones armed
+-- carrier units (armdronecarry "Nexus" / armdronecarryland "Nexus
+-- Terra") automatically launch as their own weapon, never something a
+-- player selects from a build menu directly -- the same "not actually
+-- reachable from a real build menu" category as round 17's armsat/corsat
+-- fix, but armsat/corsat was confirmed to be an isolated 2-entry fluke,
+-- while THIS one turned out to be a real, BAR-authored category: both
+-- carry a genuine customParams.drone = 1 flag of their own.
+--
+-- Rather than hardcode armdrone/armdroneold by name, scanned every
+-- arm/cor/leg UnitDef in the real archive for that same customParams.drone
+-- flag and confirmed every single hit is this same kind of auto-spawned
+-- combat drone, never independently player-buildable: 9 total --
+-- armdrone/armdroneold/armtdrone (Armada, all reusing armkam/Banshee's
+-- or a torpedo-bomber's buildpic), cordrone/cordroneold/cortdrone
+-- (Cortex's identical trio), and legdrone/legheavydrone/legheavydronesmall
+-- (Legion's own drone family) -- none of the 9 appear in any lab's
+-- buildoptions anywhere in the archive, confirming none are a real menu
+-- choice. Unlike the metalCost<=1 ghosts above, these carry real costs
+-- (a carrier's weapon drones still cost something to replace) -- this is
+-- a distinct, BAR-authored "auto-spawned, not player-selected" flag, not
+-- a placeholder-cost signature. A field on the existing `preload` table
+-- rather than a new top-level local -- this file is already right at
+-- Lua 5.1's 200-local-per-function ceiling (same reasoning as every
+-- other preload.*/HISTORY.*/TEXTWRAP.* table-field addition this whole
+-- session); `preload` is just a convenient existing bag, no thematic
+-- link intended.
+preload.isAutoSpawnedDrone = function(ud)
+    local cp = ud.customParams
+    return (cp and cp.drone) and true or false
+end
+
 -- Round 17 follow-up: "Fortifier is a building and T2, it shows up on
 -- Legion T1 bots selection" / "metal is 1060 energy is 14500" -- a
 -- SECOND, separate bug from the metal-1/energy-1 ghost above, this time
@@ -889,6 +996,121 @@ local function CollapseTierCorrectedDuplicates(list)
     return filtered
 end
 
+-- Round 17: "Oracle and Satellite... both labeled as Armada T2. They
+-- are duplicates... I only see Oracle based on the website... remove
+-- the Satellite, it's not even in the website itself." Confirmed
+-- directly against the real archive: armsat ("Satellite") and its
+-- Cortex counterpart corsat (also translated "Satellite") are NOT a
+-- display-name collision with armawac/corawc ("Oracle"/"Seer") the way
+-- the Butler/Consul/Printer family was -- they're a separate, genuinely
+-- orphaned pair of UnitDefs that simply reuse the real AWACS plane's
+-- own buildpic (buildpic = "ARMAWAC.DDS" / "CORAWAC.DDS" respectively),
+-- which is exactly why they looked identical on the card. Neither is
+-- listed in any aircraft plant's buildOptions in any faction/tier --
+-- not reachable from a real build menu in actual play, matching the
+-- user's own observation that beyondallreason.info doesn't list
+-- "Satellite" at all (https://www.beyondallreason.info/units/armada-aircraft
+-- only shows Oracle). A real-archive-wide scan for
+-- blocking=false/collide=false/reclaimable=false/repairable=false/
+-- capturable=false (a "this isn't a real physical object" cluster) also
+-- turned up exactly these two and nothing else among all 786 arm/cor/leg
+-- unit defs -- but those are raw .lua unitdef keys, not confirmed to
+-- survive as identically-named fields on the live Spring UnitDef API
+-- this widget actually runs against, so excluded by name instead, same
+-- precedent as the assistdrone pair below (a known, exact, small set
+-- rather than a field-based rule this project can't verify live).
+--
+-- Round 17 follow-up: "top one is cyclone and i chose cyclone and it is
+-- correct... bottom is a different icon but i got it wrong, i chose
+-- Sabre but it says it's a cyclone too" -- then, once shown the two
+-- buildpics: "the one below is the actual cyclone
+-- https://www.beyondallreason.info/unit/armsfig -- the top one i dont
+-- see anywhere on the website". Same pattern as Satellite, this time on
+-- "Cyclone": armsfig is the real, buildable Cyclone (in armplat's and
+-- armhaapuw's buildOptions, matches the wiki page the user linked).
+-- armsfig2 shares the exact same translated name ("Cyclone") but is NOT
+-- listed in any lab's buildOptions anywhere in the archive -- a true
+-- orphan, not reachable from a build menu, matching the user's own
+-- observation that its icon (a very different-looking render -- three
+-- stacked fighters, not armsfig's or armsaber's shared X-wing-twin-
+-- turbine silhouette, which is almost certainly what led to the "Sabre"
+-- guess) isn't on the wiki at all. A full roster scan for every same-
+-- faction group of units sharing a display name, cross-checked against
+-- every lab's buildOptions, turned up Cortex's exact mirror of this
+-- same pattern too: corsfig (real, buildable "Bat") / corsfig2 (orphan,
+-- unreachable, also "Bat") -- fixed together, same as armsat/corsat.
+-- That same scan surfaced a couple dozen OTHER same-name groups across
+-- the roster (mine tiers, aircraft-plant land/underwater pairs,
+-- experimental gantries, etc) where one or both members also don't turn
+-- up in a buildOptions scan -- left untouched here, on purpose: several
+-- of those are known to be reached some other way than a lab's
+-- buildOptions list (terrain-gated underwater plants, morph/upgrade
+-- chains, scavenger-only spawns), so a plain "not in buildOptions"
+-- scan isn't a safe signal for those the way it was, confirmed twice
+-- now, for an exact-duplicate-named pair like this one and Satellite.
+-- Only acting on the one the user actually flagged and visually
+-- confirmed, plus its direct same-pattern Cortex counterpart.
+--
+-- Round 17 follow-up: "the 1st and 3rd is the same image. 1st is
+-- labeled 'experimental bot lab', 3rd is labeled 'experimental
+-- gantry'... the former doesn't exist, here's proof
+-- https://www.beyondallreason.info/unit/armshltx -- this is the
+-- amphibious version https://www.beyondallreason.info/unit/armshltxuw".
+-- A DIFFERENT shape of the same underlying problem: round 34's scan
+-- only caught orphans sharing the exact same TRANSLATED name as a real
+-- unit (an exact-duplicate card), so it never flagged this one -- armhalab
+-- has its OWN distinct translated name ("Experimental Bot Lab", not
+-- "Experimental Gantry"), but its buildpic, objectname, script, and
+-- yardmap are all literally identical to armshltx's (buildpic =
+-- "ARMSHLTX.DDS" on both) -- a same-picture-different-label duplicate
+-- rather than a same-picture-same-label one. It IS technically listed
+-- in one lab's buildOptions (armhack's, confirmed in the archive) --
+-- unlike every prior case in this file, so "not in any buildOptions"
+-- alone doesn't apply here -- but its own buildOptions list (armhack,
+-- armsnipe, armfboy, armaser, armdecom, armscab, armzeus, armmar,
+-- armspy, armaak -- a mismatched grab-bag of ordinary T2 bots) doesn't
+-- match what an "Experimental" T3 gantry actually builds at all, and
+-- fetching the real armshltx wiki page directly confirmed its actual,
+-- current buildOptions are the T3 experimentals (Titan, Razorback,
+-- Marauder, Vanguard, Lunkhead, Thor) -- with no "Experimental Bot Lab"
+-- named or linked anywhere on that page; "armhalab" only turns up as a
+-- leftover image filename in the page's own gallery, not a presented
+-- unit. Reads as stale/legacy content still physically present in the
+-- archive (and in one old unit's buildOptions list) but not part of the
+-- current, live game the community wiki tracks -- matching the user's
+-- own "doesn't exist" conclusion. Same pattern confirmed for all three
+-- factions (armhalab/corhalab/leghalab all translate to "Experimental
+-- Bot Lab" and each reuses its own faction's real Gantry buildpic
+-- exactly: ARMSHLTX.DDS / CORGANT.DDS / LEGGANT.DDS), so all three
+-- excluded together, by name, same precedent as every prior case here.
+--
+-- Round 17 follow-up: "[this card is] an experimental shipyard, but the
+-- only reasonable one is this [armshltxuw], and that's the experimental
+-- amphibious gantry." Confirmed directly against the archive: armhasy
+-- ("Experimental Shipyard") is a completely real, distinct, player-
+-- buildable T3 sea factory (its own model/script/stats, reachable from
+-- armhacs/Voyager, with its own real build list of T3 ships -- Serpent,
+-- Bats, Epoch, Antiship, Lship, Lun, Aas, Mship) -- unlike every prior
+-- case in this file, this is NOT an orphan. The actual problem sits one
+-- level up, in BAR's own data: armhasy's buildpic field is literally set
+-- to "ARMSHLTXUW.DDS" -- the amphibious Experimental Gantry's own icon
+-- file -- not anything of its own, which is why its card showed the
+-- Gantry's picture under the Shipyard's name. Since both armshltxuw and
+-- armhasy are genuinely real, separately buildable units sharing one
+-- upstream icon (not a ghost/leftover entry this widget can cleanly
+-- disqualify the way every previous case was), asked the user how to
+-- handle it rather than unilaterally dropping real content; told to
+-- keep only the land Experimental Gantry (armshltx) representing that
+-- name/picture for Armada and drop both armshltxuw and armhasy. This
+-- explicitly REVISES round 34's own call to leave the armshltx/
+-- armshltxuw land/underwater pair alone (made before armhasy's shared-
+-- icon collision with armshltxuw was known) -- armshltxuw was real and
+-- legitimately distinct on its own, but keeping it meant a second,
+-- confusingly-shared icon stayed in play. Scoped to Armada only, per
+-- the user's own explicit "that's it for Armada" -- NOT mirrored to
+-- Cortex/Legion's analogous corgantuw/corhasy, leghalab's sibling
+-- leggantuw, etc. here; those would need their own separate report and
+-- confirmation before touching, same as this one got.
 local function BuildAllUnitsCache()
     local labMap = BuildLabTypeMap()
     local attachedTurretTargets = BuildAttachedTurretTargets()
@@ -919,11 +1141,16 @@ local function BuildAllUnitsCache()
             and not name:find("effigy")
             and not (ud.customParams and ud.customParams.iseffigy)
             and name ~= "armrespawn" and name ~= "correspawn"
+            and name ~= "armsat" and name ~= "corsat"
+            and name ~= "armsfig2" and name ~= "corsfig2"
+            and name ~= "armhalab" and name ~= "corhalab" and name ~= "leghalab"
+            and name ~= "armshltxuw" and name ~= "armhasy"
             and not (ud.translatedHumanName and ud.translatedHumanName:find("units.names.", 1, true))
             and not name:find("assistdrone", 1, true)
             and not IsCosmeticDecoration(ud)
             and not isDecoyCommander
             and not HasPlaceholderCost(ud)
+            and not preload.isAutoSpawnedDrone(ud)
             and not attachedTurretTargets[name]
         then
             if isCommander then
@@ -1301,6 +1528,11 @@ end
 -- a brand-new shuffle (OnSelectionChanged clears shuffledDeck), since a
 -- different pool deserves its own fresh random order.
 local function DrawNextCard()
+    -- Round 17 follow-up: a brand-new card appearing face-down isn't a
+    -- "flip" of the card that was just showing -- cancel any in-flight
+    -- flip animation outright rather than letting it finish animating
+    -- toward a card that's no longer even the current one.
+    preload.flipAnim.active = false
     if quizMode then
         quizDeckCursor = quizDeckCursor + 1
         if quizDeckCursor > #quizDeck then
@@ -1921,7 +2153,13 @@ local function DrawCelebrationBanner()
     gl.Color(1, 1, 1, 1)
 end
 
-local function DrawCard(x1, y1, x2, y2, entry)
+-- Round 17 follow-up: `showFace` is an optional override (true = name
+-- face, false = picture face) used only by preload.flipAnim.draw below, so
+-- it can render the FROM/TO face mid-animation independently of
+-- `flipped`'s own already-final value. Omitted (nil), it just reads
+-- `flipped` directly, exactly as before this round.
+local function DrawCard(x1, y1, x2, y2, entry, showFace)
+    if showFace == nil then showFace = flipped end
     DrawCardFrame(x1, y1, x2, y2)
 
     if not entry then
@@ -1943,7 +2181,7 @@ local function DrawCard(x1, y1, x2, y2, entry)
     DrawCornerPip(x1 + CARD_BORDER + 8, y2 - CARD_BORDER - 18, pipText, color, false)
     DrawCornerPip(x2 - CARD_BORDER - 8, y1 + CARD_BORDER + 8, pipText, color, true)
 
-    if not flipped then
+    if not showFace then
         -- QUESTION FACE: just the build picture, large, centered, and
         -- kept at 1:1 (round 3 fix -- build pictures are square and
         -- stretching them to fill a non-square available area visibly
@@ -1998,6 +2236,54 @@ local function DrawCard(x1, y1, x2, y2, entry)
         end
         gl.Color(1, 1, 1, 1)
     end
+end
+
+-- Round 17 follow-up: "can you animate the card that it actually
+-- flips?" A simple, framerate-independent 2D "flip" illusion: the
+-- card's own horizontal scale shrinks to a sliver (still showing the
+-- FROM face), then grows back out (now showing the TO face) -- like a
+-- real card turning edge-on to the camera and back, viewed from the
+-- front. Scaled around the card's own horizontal center (via the usual
+-- Translate/Scale/Translate sandwich DrawConfetti's particles already
+-- use for their own per-particle rotation) so it narrows evenly from
+-- both edges instead of sliding sideways. Falls through to a plain,
+-- unscaled DrawCard call whenever no animation is running, including
+-- every brand-new-card draw (DrawNextCard cancels any in-flight
+-- animation itself, since those aren't a flip of the current card at
+-- all).
+preload.flipAnim.draw = function(x1, y1, x2, y2, entry)
+    if not preload.flipAnim.active then
+        DrawCard(x1, y1, x2, y2, entry, flipped)
+        return
+    end
+
+    local elapsed = spDiffTimers(spGetTimer(), preload.flipAnim.startTime)
+    if elapsed >= preload.flipAnim.duration then
+        preload.flipAnim.active = false
+        DrawCard(x1, y1, x2, y2, entry, flipped) -- flipped is already the final face
+        return
+    end
+
+    local t = elapsed / preload.flipAnim.duration -- 0 .. 1
+    local showFace, scaleX
+    if t < 0.5 then
+        showFace = preload.flipAnim.fromFace
+        scaleX = 1 - (t / 0.5)
+    else
+        showFace = preload.flipAnim.toFace
+        scaleX = (t - 0.5) / 0.5
+    end
+    -- Never a literal 0 -- a genuinely zero-width scale is pointless to
+    -- render and not worth risking on whatever gl.Scale(0, ...) does.
+    scaleX = math.max(0.03, scaleX)
+
+    local cx = (x1 + x2) / 2
+    gl.PushMatrix()
+    gl.Translate(cx, 0, 0)
+    gl.Scale(scaleX, 1, 1)
+    gl.Translate(-cx, 0, 0)
+    DrawCard(x1, y1, x2, y2, entry, showFace)
+    gl.PopMatrix()
 end
 
 --------------------------------------------------------------------------------
@@ -2165,6 +2451,35 @@ local function ClampPanelPos()
     local panelW, panelH = ComputePanelSize()
     panelPos.x = math.max(0, math.min(panelPos.x, math.max(0, vsx - panelW)))
     panelPos.y = math.max(0, math.min(panelPos.y, math.max(0, vsy - panelH)))
+end
+
+-- Round 17 follow-up: "/flashcardcenter which centers the icon and
+-- window" -- centers both the icon and the panel on the current
+-- viewport (their own width/height, not just their anchor corner, so
+-- each one's actual MIDDLE lands on screen-center) and immediately
+-- persists both, the same way a drag's own MouseRelease already does --
+-- otherwise centering would be undone the moment the widget reloads.
+-- A field on the existing `preload` table rather than a new top-level
+-- local/table of its own -- this file is already right at Lua 5.1's
+-- 200-local-per-function ceiling (see the `preload.step`/`HISTORY`
+-- table-field notes elsewhere for the same reasoning); `preload` just
+-- happens to be a convenient existing bag, no thematic link intended.
+preload.centerIconAndPanel = function()
+    local vsx, vsy = Spring.GetViewGeometry()
+
+    iconPos.x = (vsx - ICON.W) / 2
+    iconPos.y = (vsy - ICON.H) / 2
+    ClampIconPos()
+    UpdateIconRect()
+    spSetConfigInt("UnitFlashcards_IconX", math.floor(iconPos.x))
+    spSetConfigInt("UnitFlashcards_IconY", math.floor(iconPos.y))
+
+    local panelW, panelH = ComputePanelSize()
+    panelPos.x = (vsx - panelW) / 2
+    panelPos.y = (vsy - panelH) / 2
+    ClampPanelPos()
+    spSetConfigInt("UnitFlashcards_PanelX", math.floor(panelPos.x))
+    spSetConfigInt("UnitFlashcards_PanelY", math.floor(panelPos.y))
 end
 
 local function LayoutPanel()
@@ -2568,7 +2883,7 @@ local function DrawPanel()
     gl.Text(quizLabel, (qb.x1 + qb.x2) / 2, (qb.y1 + qb.y2) / 2 - 5, 13, "oc")
 
     local cr = panelRects.card
-    DrawCard(cr.x1, cr.y1, cr.x2, cr.y2, currentCard)
+    preload.flipAnim.draw(cr.x1, cr.y1, cr.x2, cr.y2, currentCard)
 
     -- Quiz choice buttons (round 5), flanking the card. Once this card
     -- is answered, the correct choice always lights up green (so you
@@ -2794,7 +3109,7 @@ local function ActivateCard()
         -- only thing that sets flipped = true while a quiz is running.
         quizSkipAttempted = true
     elseif not flipped then
-        flipped = true
+        preload.flipAnim.start(true) -- round 17 follow-up: animate the reveal
     else
         DrawNextCard()
     end
@@ -2806,12 +3121,26 @@ end
 -- through all of the selected" with no repeats, ending in quizFinished
 -- once the deck is exhausted. Turning it OFF just clears the choice list
 -- and any finished-state flag (the card itself is untouched either way).
--- The panel widens to fit the choice columns while quiz mode is on (see
--- ComputePanelSize), so this re-clamps the panel position afterward --
--- otherwise a panel already sitting near the screen's right/top edge
--- could grow part of itself off-screen, the same class of bug round 4
--- fixed for the plain 574x616 size.
+-- The panel also widens to fit the choice columns and grows taller (quiz
+-- bar + answer-history strip) while quiz mode is on (see ComputePanelSize).
+--
+-- Round 17 follow-up: "when ffrom non quiz to quiz on, the widget window
+-- jump upward, it shold be the lower part that jumps download." Same
+-- root cause, and the same fix, as SetHistoryPageSize right below this
+-- function: panelPos is the panel's BOTTOM-left anchor (y increases
+-- upward), so growing panelH here while leaving panelPos.y untouched
+-- pushes the TOP edge (the drag header) up by the full height delta --
+-- exactly the jump being complained about. Captures the height before
+-- and after the mode flip and shifts the anchor by that exact delta so
+-- the panel grows from its BOTTOM edge instead, with the header staying
+-- exactly where it was; shrinking back down on toggling OFF pulls the
+-- anchor back up by the same amount, symmetrically. ClampPanelPos
+-- afterward still re-clamps the panel position -- otherwise a panel
+-- already sitting near the screen's right/top edge could grow part of
+-- itself off-screen, the same class of bug round 4 fixed for the plain
+-- 574x616 size.
 local function ToggleQuizMode()
+    local _, oldPanelH = ComputePanelSize()
     quizMode = not quizMode
     if quizMode then
         quizScore.correct, quizScore.total = 0, 0
@@ -2822,6 +3151,8 @@ local function ToggleQuizMode()
         RefreshQuizChoices(nil)
         StopConfetti()
     end
+    local _, newPanelH = ComputePanelSize()
+    panelPos.y = panelPos.y - (newPanelH - oldPanelH)
     ClampPanelPos()
 end
 
@@ -2869,7 +3200,7 @@ local function PickQuizChoice(index)
     if choice.correct then
         quizScore.correct = quizScore.correct + 1
     end
-    flipped = true
+    preload.flipAnim.start(true) -- round 17 follow-up: animate the reveal
 
     -- Round 17: record this answer in the history strip and jump to the
     -- page it landed on, so answering always keeps the newest result in
@@ -2915,15 +3246,59 @@ function widget:Initialize()
         spGetConfigInt("UnitFlashcards_HistoryPageSize", HISTORY.PAGE_SIZES[1]))
 
     allUnitsCache, labTypeByID = BuildAllUnitsCache()
-    if #allUnitsCache == 0 then
-        spEcho("[Unit Flashcards] no arm/cor/leg unit defs found -- this game/mod isn't BAR-compatible")
-    end
+    -- Round 17 follow-up: "Nothing is showing now it's broken bad" -- a
+    -- live report of an empty roster (this exact echo, with no
+    -- accompanying Lua error) right after the user removed and
+    -- immediately reloaded the widget mid-game via the Widget Selector,
+    -- in an otherwise completely normal BAR match. Since UnitDefs is a
+    -- plain read-only engine table that's always supposed to be fully
+    -- populated by the time any widget's Initialize() runs, a GENUINELY
+    -- empty result from BuildAllUnitsCache here is unexpected rather
+    -- than a real "this isn't BAR" case every time -- but a mid-game
+    -- widget reload (as opposed to the normal start-of-game load this
+    -- widget is mostly exercised under) isn't something this project
+    -- can reproduce or single-step in its own test harness, so rather
+    -- than guess at the engine-side cause, this self-heals defensively:
+    -- if the roster really did come back empty, DrawScreen below
+    -- retries BuildAllUnitsCache a few more times over the widget's
+    -- first several frames before settling on "truly not BAR-compatible"
+    -- and only echoing the console warning once, at the point it gives
+    -- up. Costs nothing in the normal (non-empty) case -- the retry
+    -- check is a single `#allUnitsCache == 0` guard that's false on
+    -- every real BAR load.
+    preload.rosterRetriesLeft = (#allUnitsCache == 0) and 30 or 0
 
     -- Round 17 follow-up: start warming buildpic textures in the
     -- background (see the `preload` comment above) -- DrawScreen's
     -- PreloadStep() call below drains this a few entries per frame.
     preload.queue = allUnitsCache
     preload.idx = 1
+end
+
+-- Round 17 follow-up (see widget:Initialize's own comment above): retries
+-- BuildAllUnitsCache a bounded number of frames if the roster came back
+-- empty, instead of permanently showing "No units selected" for what may
+-- just have been UnitDefs not being fully ready yet at the moment of a
+-- mid-game widget reload. Re-seeds the texture preloader too, since an
+-- empty allUnitsCache also meant an empty (and therefore already-drained)
+-- preload.queue. Only echoes the "not BAR-compatible" console warning
+-- once, when retries are actually exhausted -- a real non-BAR game/mod
+-- shouldn't spam the console every frame.
+preload.retryEmptyRoster = function()
+    if not preload.rosterRetriesLeft or preload.rosterRetriesLeft <= 0 then return end
+    if #allUnitsCache > 0 then
+        preload.rosterRetriesLeft = 0
+        return
+    end
+    preload.rosterRetriesLeft = preload.rosterRetriesLeft - 1
+    allUnitsCache, labTypeByID = BuildAllUnitsCache()
+    if #allUnitsCache > 0 then
+        preload.rosterRetriesLeft = 0
+        preload.queue = allUnitsCache
+        preload.idx = 1
+    elseif preload.rosterRetriesLeft == 0 then
+        spEcho("[Unit Flashcards] no arm/cor/leg unit defs found -- this game/mod isn't BAR-compatible")
+    end
 end
 
 function widget:ViewResize()
@@ -2969,6 +3344,7 @@ preload.step = function()
 end
 
 function widget:DrawScreen()
+    preload.retryEmptyRoster()
     preload.step()
     DrawIcon()
 
@@ -3002,6 +3378,28 @@ local function StartPanelDrag(mx, my)
 end
 
 function widget:MousePress(mx, my, button)
+    if button == 3 then
+        -- Round 17 follow-up: "on a non-quiz mode, right click goes back
+        -- to the flash card if you have clicked/spacebar on it to see
+        -- the name" -- right-click undoes just the ONE flip gesture,
+        -- back to the picture side of the SAME card, unlike a second
+        -- left-click/spacebar on an already-flipped card, which instead
+        -- advances to a brand new one (see ActivateCard above). Scoped
+        -- to free play only -- quiz mode's own flip is a scoring reveal
+        -- set by PickQuizChoice, not a user-toggled peek, and the user
+        -- asked for this in "non-quiz mode" specifically. Any other
+        -- right-click (card not currently flipped, quiz mode on, panel
+        -- hidden, or clicked anywhere other than the card itself) is
+        -- left alone (returns false) so ordinary right-click behavior
+        -- elsewhere in the game -- camera, deselect, whatever else --
+        -- is untouched.
+        if panelVisible and not quizMode and flipped and PointInRect(mx, my, panelRects.card) then
+            preload.flipAnim.start(false) -- round 17 follow-up: animate flipping back
+            return true
+        end
+        return false
+    end
+
     if button ~= 1 then return false end
 
     if PointInRect(mx, my, iconRect) then
@@ -3161,6 +3559,17 @@ function widget:KeyPress(key, mods, isRepeat)
     return false
 end
 
+-- Round 17 follow-up: "/flashcardcenter which centers the icon and
+-- window" -- a plain chat command (typed in the in-game chat box, no
+-- leading widget name needed), same convention gui_battle_tracker.lua's
+-- own "/battletracker toggle" already uses.
+function widget:TextCommand(cmd)
+    if cmd == "flashcardcenter" then
+        preload.centerIconAndPanel()
+        spEcho("[Unit Flashcards] centered the icon and window")
+    end
+end
+
 --------------------------------------------------------------------------------
 -- TEST-ONLY EXPORTS
 --------------------------------------------------------------------------------
@@ -3173,6 +3582,7 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
         UnitTechLevel       = UnitTechLevel,
         IsCosmeticDecoration = IsCosmeticDecoration,
         HasPlaceholderCost = HasPlaceholderCost,
+        IsAutoSpawnedDrone = preload.isAutoSpawnedDrone,
         BuildAttachedTurretTargets = BuildAttachedTurretTargets,
         IsTierCorrected = IsTierCorrected,
         CollapseTierCorrectedDuplicates = CollapseTierCorrectedDuplicates,
@@ -3190,6 +3600,11 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
         BuildLabTypeMap     = BuildLabTypeMap,
         ResolveDisplayName  = ResolveDisplayName,
         BuildAllUnitsCache  = BuildAllUnitsCache,
+        getAllUnitsCache    = function() return allUnitsCache end,
+        setAllUnitsCache    = function(v) allUnitsCache = v end, -- test-only, same
+            -- style as setDeckPool/setQuizMode/setPanelPos -- lets the test
+            -- harness force the empty-roster state preload.retryEmptyRoster
+            -- is meant to recover from, without needing a real widget:Initialize().
         RebuildDeckPool     = RebuildDeckPool,
         AnySelected         = AnySelected,
         AnyTypeSelected     = AnyTypeSelected,
@@ -3217,6 +3632,8 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
         getCurrentCard      = function() return currentCard end,
         getFlipped          = function() return flipped end,
         setFlipped          = function(v) flipped = v end,
+        getCardFlipAnim     = function() return preload.flipAnim end,
+        DrawCard            = DrawCard,
         setCurrentCard      = function(v) currentCard = v end,
         getPanelVisible     = function() return panelVisible end,
         setPanelVisible     = function(v) panelVisible = v end,
@@ -3228,9 +3645,12 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
         getPreload          = function() return preload end,
         PreloadStep         = preload.step,
         getTwoLineSplitCache = function() return TEXTWRAP.cache end,
+        CenterIconAndPanel  = preload.centerIconAndPanel,
         getPanelRects       = function() return panelRects end,
         getPanelPos         = function() return panelPos end,
         setPanelPos         = function(x, y) panelPos.x, panelPos.y = x, y end,
+        getIconPos          = function() return iconPos end,
+        setIconPos          = function(x, y) iconPos.x, iconPos.y = x, y end,
         getPanelDragActive  = function() return panelDrag.active end,
         setPanelDragActive  = function(v) panelDrag.active = v end,
         BuildQuizChoices    = BuildQuizChoices,
