@@ -55,6 +55,15 @@ local CARD_RADIUS_STEPS = 6 -- fake-rounded-corner fan segments
 local QUIZ_CHOICE_TOTAL = 20
 local QUIZ_PER_SIDE     = QUIZ_CHOICE_TOTAL / 2
 
+-- Round 17: the answer-history strip (see quizHistory above). Kept as one
+-- table (rather than one `local` per field) because this file's main
+-- chunk is already very close to Lua 5.1's 200-local ceiling -- SLOTS is
+-- "show 10 at a time"; the rest (ICON_GAP/ARROW_W/ARROW_GAP/LABEL_H/
+-- ICON_H/H, H = LABEL_H + 4 + ICON_H) are pure layout, set once the other
+-- panel-layout constants exist (see LayoutPanel's own section further
+-- down).
+local HISTORY = {SLOTS = 10}
+
 --------------------------------------------------------------------------------
 -- STATE
 --------------------------------------------------------------------------------
@@ -90,6 +99,29 @@ end
 
 local allUnitsCache  = nil   -- built once: { {id=,name=,faction=,tier=,unitType=,isCommander=,ud=}, ... }
 local labTypeByID    = nil   -- built once alongside allUnitsCache: [unitDefID] = "bot"/"vehicle"/"air"/"sea"
+
+-- Round 17 follow-up: "left mouse button stops working for 5-10 seconds
+-- after choosing a quiz answer" / "couldn't click on the Platypus/Smuggler
+-- until I moved the whole widget". Spring's "#<unitDefID>" buildpic
+-- texture (gl.Texture("#"..id), used by both DrawCard and the new
+-- round-17 history-strip icons) loads and decodes from disk the FIRST
+-- time any given unitDefID's buildpic is requested in a session -- a
+-- well-known synchronous engine hitch. Before round 17, only the ONE
+-- current card's buildpic was ever on screen at a time; the new
+-- answer-history strip now keeps up to 50 PAST cards' buildpics on
+-- screen simultaneously, so a much wider set of units gets cold-loaded
+-- in the same short span of real play, right at the moment a new history
+-- icon appears (immediately after picking an answer) -- a multi-second
+-- engine-wide hitch there is very plausibly what reads as "the mouse
+-- stops working" and "couldn't click [name]" (the click landed during the
+-- hitch and was lost/mistimed; a later click, after the hitch cleared --
+-- e.g. once the user gave up and dragged the window, or just clicked
+-- something else -- then worked normally). preload below warms every
+-- unit's buildpic texture in the background, a few per frame starting
+-- at widget:Initialize, so by the time the user is actually a few quiz
+-- questions in, the whole roster is typically already cached and no
+-- single click-moment pays that cold-load cost.
+local preload = {queue = nil, idx = 1, perFrame = 12}
 local deckPool       = {}    -- filtered by current selection
 local shuffledDeck   = {}    -- current shuffle order, consumed front-to-back
 local deckCursor     = 0
@@ -129,6 +161,32 @@ local quizScore       = {correct = 0, total = 0}
 local quizDeck        = {}    -- deckPool, shuffled once per quiz round, consumed front-to-back
 local quizDeckCursor  = 0
 local quizFinished    = false
+
+-- Round 17: "when taking the quiz, after answering, list the unit/
+-- structure icon... have a green check mark over it if i got it right...
+-- red X if i got it wrong. This way I can also see which I've gone
+-- through and also test if there are still repeats." quizHistory records
+-- one entry per card actually ANSWERED (appended by PickQuizChoice,
+-- never by just flipping/peeking), oldest first, so page 1 is always the
+-- start of this quiz round and the last page is always the most recent
+-- answer -- paged HISTORY.SLOTS at a time (DrawQuizHistoryStrip below).
+-- Reset alongside the rest of a fresh quiz round in BuildQuizDeck (both
+-- of its call sites -- toggling Quiz on, and changing the
+-- faction/tier/type selection while a quiz is already running -- already
+-- treat those as a new round for quizDeck/quizScore, so history follows
+-- the same rule).
+local quizHistory = {}  -- { {entry=<roster entry>, correct=true/false}, ... }, oldest first
+local historyPage = 1   -- 1-based page into quizHistory, historyUI.pageSize per page
+
+-- Round 17 follow-up: "put a show amount pulldown, 10/20/30/40/50, so 50
+-- shows 5 rows x 10" -- how many history entries one page holds (always a
+-- multiple of HISTORY.SLOTS so it's always whole rows), and whether the
+-- pulldown's option list is currently open. Kept together in one table,
+-- like HISTORY itself, rather than two more bare top-level locals.
+-- Default of 10 matches HISTORY.PAGE_SIZES[1] below -- written as a
+-- literal, not a lookup into it, since HISTORY.PAGE_SIZES itself isn't
+-- assigned until further down the file (this runs first).
+local historyUI = {pageSize = 10, sizeOpen = false}
 
 -- Round 13: "if on a quiz and i get 100% right, can you make a confetti
 -- fireworks effect last like 4 seconds." Fires once, at the exact moment
@@ -731,6 +789,106 @@ local function BuildAttachedTurretTargets()
     return targets
 end
 
+-- Round 17 follow-up: "there should only be 1 Butler, I see two even if
+-- they are different, it's the same name and will just confuse people --
+-- show the butler made by T2 or combine them to 1." Investigated and
+-- found this is the SAME "builder<N>"-tagged tier-correction family from
+-- round 16 (armhack/armhacs/armhacv/corhack/corhacs/corhacv/corhaca) --
+-- every one of them (besides corhaca, which only duplicates cross-
+-- faction) shares its exact display name with a DIFFERENT, separate,
+-- natively-T2 real unit in the same faction: Butler is both armhack (a
+-- T3 unit corrected down to a displayed T2 by its own
+-- customParams.unitgroup = "buildert2" flag -- see UnitTechLevel above)
+-- AND armfark (a genuinely different unit, natively techlevel = 2, no
+-- correction needed). Once UnitTechLevel corrects armhack's displayed
+-- tier to T2, the two look identical on a card (same name, same tier
+-- tag) -- exactly the confusing duplicate the user is pointing at, not
+-- a case of two legitimately different same-named units (a land/
+-- underwater variant pair, an old/new scavenger reskin, etc).
+--
+-- Scoped narrowly to that exact signature -- "one of the two entries
+-- only matches this name because of the tier-correction override" --
+-- rather than a blanket "any two units sharing a faction+name collapse
+-- to one" rule. A broader scan of the whole roster turns up ~39 same-
+-- faction/same-displayname groups in total; the other ~33 (mine
+-- variants, aircraft-plant land/underwater pairs, old/new scavenger
+-- reskins, etc) are unrelated units that happen to share a name, not
+-- this tier-correction quirk, and collapsing those too wasn't asked for
+-- and risks silently dropping genuinely distinct study material. Happy
+-- to widen this if any of those turn out to be confusing the same way.
+local function IsTierCorrected(ud)
+    local cp = ud.customParams
+    local tl = cp and tonumber(cp.techlevel)
+    if not tl then return false end
+    local tier = math.floor(tl)
+    local ug = cp.unitgroup
+    local ugTier = ug and ug:match("^buildert?(%d)$")
+    ugTier = ugTier and tonumber(ugTier)
+    return ugTier ~= nil and ugTier ~= tier
+end
+
+-- Groups non-commander entries by (faction, display name); any group
+-- containing BOTH a tier-corrected entry and a plain (non-corrected) one
+-- collapses to just the plain entry (lowest unitDefID as a tiebreak if
+-- more than one plain entry remains, same tiebreak style as the
+-- commander dedup above) so only one card ever represents that name.
+-- Groups that are all-corrected or all-plain are left untouched -- there's
+-- no tier-correction signal there, so nothing is assumed about them.
+local function CollapseTierCorrectedDuplicates(list)
+    local groups = {} -- [faction.."\1"..displayName] = {entry, entry, ...}
+    for _, entry in ipairs(list) do
+        if not entry.isCommander then
+            local key = entry.faction .. "\1" .. ResolveDisplayName(entry)
+            local g = groups[key]
+            if not g then
+                g = {}
+                groups[key] = g
+            end
+            g[#g + 1] = entry
+        end
+    end
+
+    local dropped = {} -- [entry.id] = true
+    for _, g in pairs(groups) do
+        if #g > 1 then
+            local sawCorrected, sawPlain = false, false
+            for _, entry in ipairs(g) do
+                if IsTierCorrected(entry.ud) then
+                    sawCorrected = true
+                else
+                    sawPlain = true
+                end
+            end
+            if sawCorrected and sawPlain then
+                local keep = nil
+                for _, entry in ipairs(g) do
+                    if not IsTierCorrected(entry.ud) then
+                        if not keep or entry.id < keep.id then
+                            keep = entry
+                        end
+                    end
+                end
+                for _, entry in ipairs(g) do
+                    if entry ~= keep then
+                        dropped[entry.id] = true
+                    end
+                end
+            end
+        end
+    end
+
+    if next(dropped) == nil then
+        return list
+    end
+    local filtered = {}
+    for _, entry in ipairs(list) do
+        if not dropped[entry.id] then
+            filtered[#filtered + 1] = entry
+        end
+    end
+    return filtered
+end
+
 local function BuildAllUnitsCache()
     local labMap = BuildLabTypeMap()
     local attachedTurretTargets = BuildAttachedTurretTargets()
@@ -808,6 +966,7 @@ local function BuildAllUnitsCache()
     for _, entry in pairs(bestCommander) do
         list[#list + 1] = entry
     end
+    list = CollapseTierCorrectedDuplicates(list)
     return list, labMap
 end
 
@@ -1114,6 +1273,9 @@ local function BuildQuizDeck()
     quizDeck = ShuffleCopy(deckPool)
     quizDeckCursor = 0
     quizFinished = false
+    quizHistory = {}  -- round 17: a fresh round starts a fresh history strip too
+    historyPage = 1
+    historyUI.sizeOpen = false -- round 17 follow-up: don't carry a leftover open pulldown into a fresh round (pageSize itself is a display preference, left alone)
     StopConfetti() -- a new round starting clears any leftover burst from the last one
 end
 
@@ -1528,6 +1690,96 @@ local function DrawTextWithShadow(text, x, y, size, flags, cr, cg, cb, ca, shado
     gl.Color(1, 1, 1, 1)
 end
 
+-- Round 17: the quiz answer-history strip's green-check/red-X badge,
+-- drawn over the bottom-right corner of each history icon. The circle
+-- itself reuses RoundedRect: a square rect whose radius equals half its
+-- own width/height degenerates into a plain filled circle (the two
+-- gl.Rect calls inside RoundedRect collapse to zero width/height, leaving
+-- just its four corner fans, which together sweep the full 360 degrees).
+-- The check/X mark is 2 line segments either way (a short down-stroke
+-- then a longer up-stroke for the check; two crossing diagonals for the
+-- X) -- drawn through one small persistent closure, same "set shared
+-- scratch locals, then gl.BeginEnd" pattern the round-16 perf pass
+-- already uses for RoundedRect's own corner fans, so this doesn't
+-- allocate a fresh closure per badge per frame either.
+-- One scratch table (not 8 separate locals -- see the HISTORY-table note
+-- above, same local-variable-budget reason) holding the mark's 2 line
+-- segments (4 points); _badgeMarkVerts reads it just before each
+-- gl.BeginEnd call, same "shared scratch, persistent closure" pattern
+-- RoundedRect's own corner fans already use.
+local _badgePts = {0, 0, 0, 0, 0, 0, 0, 0}
+local function _badgeMarkVerts()
+    gl.Vertex(_badgePts[1], _badgePts[2])
+    gl.Vertex(_badgePts[3], _badgePts[4])
+    gl.Vertex(_badgePts[5], _badgePts[6])
+    gl.Vertex(_badgePts[7], _badgePts[8])
+end
+
+local function DrawAnswerBadge(cx, cy, r, correct)
+    if correct then
+        RoundedRect(cx - r, cy - r, cx + r, cy + r, r, 0.2, 0.7, 0.25, 0.95)
+    else
+        RoundedRect(cx - r, cy - r, cx + r, cy + r, r, 0.8, 0.2, 0.2, 0.95)
+    end
+
+    local p = _badgePts
+    if correct then
+        p[1], p[2] = cx - r * 0.5, cy
+        p[3], p[4] = cx - r * 0.1, cy - r * 0.4
+        p[5], p[6] = cx - r * 0.1, cy - r * 0.4
+        p[7], p[8] = cx + r * 0.55, cy + r * 0.45
+    else
+        p[1], p[2] = cx - r * 0.45, cy - r * 0.45
+        p[3], p[4] = cx + r * 0.45, cy + r * 0.45
+        p[5], p[6] = cx - r * 0.45, cy + r * 0.45
+        p[7], p[8] = cx + r * 0.45, cy - r * 0.45
+    end
+    gl.Color(1, 1, 1, 1)
+    gl.LineWidth(2)
+    gl.BeginEnd(GL.LINES, _badgeMarkVerts)
+    gl.LineWidth(1)
+    gl.Color(1, 1, 1, 1)
+end
+
+-- One slot of the history strip: the answered unit's own build picture
+-- (same gl.Texture("#"..id)/gl.TexRect technique DrawCard's question
+-- face already uses), a dark backing rect so a missing texture doesn't
+-- show the panel through, and the correct/incorrect badge in the
+-- bottom-right corner.
+-- Round 17 follow-up: "make sure the quiz icon list the icons are 1:1
+-- they look squeeze/skewed a little". gl.TexRect always stretches a
+-- texture to fill exactly the rect it's handed with no aspect
+-- correction, so a non-square slot rect would squash the real unit
+-- buildpic (a square-ish image, same as every other build picture this
+-- widget draws) to match. First fix centered a square sub-rect inside
+-- whatever rect was passed in, which worked but left visible black
+-- letterbox bands when the slot itself wasn't square -- the REAL fix
+-- (see HISTORY.IconSide/LayoutPanel) was to stop handing this function a
+-- non-square rect in the first place, so a real history-strip slot is
+-- now always a true square to begin with. The centered-square-sub-rect
+-- logic stays here as a defensive fallback (and is exercised directly by
+-- this round's own non-square-rect tests) so this function still behaves
+-- correctly even if some future caller ever passes it a stretched rect.
+local function DrawHistoryIcon(x1, y1, x2, y2, histEntry)
+    local entry = histEntry.entry
+    gl.Color(0.08, 0.08, 0.08, 1)
+    gl.Rect(x1, y1, x2, y2)
+    gl.Color(1, 1, 1, 1)
+
+    local slotW, slotH = x2 - x1, y2 - y1
+    local side = math.min(slotW, slotH)
+    local icx1 = x1 + (slotW - side) / 2
+    local icy1 = y1 + (slotH - side) / 2
+    local icx2, icy2 = icx1 + side, icy1 + side
+
+    gl.Texture("#" .. entry.id)
+    gl.TexRect(icx1, icy1, icx2, icy2)
+    gl.Texture(false)
+
+    local r = side * 0.22
+    DrawAnswerBadge(icx2 - r * 0.9, icy1 + r * 0.9, r, histEntry.correct)
+end
+
 -- gl.GetTextWidth(text) returns a per-font-size-1 width multiplier (same
 -- technique already used by gui_armada_labs_gallery.lua / gui_battle_tracker.lua
 -- for centering/wrapping) -- used here to shrink the big reveal-name font
@@ -1759,6 +2011,83 @@ local QUIZ_COL_GAP = 10
 local QUIZ_ROW_H   = 38
 local QUIZ_ROW_GAP = 4
 
+-- Round 17: the answer-history strip (HISTORY.SLOTS unit icons per row,
+-- a "<" / label / ">" row above them) -- only present (and only adds to
+-- panelH, see ComputePanelSize) while quizMode is on, sitting below the
+-- hint line at the very bottom of the panel. Added to the same HISTORY
+-- table declared up near HISTORY.SLOTS, rather than one more `local` per
+-- field, for the same local-variable-budget reason noted there.
+--
+-- Round 17 follow-up ("make sure the icons are 1:1, they look squeeze/
+-- skewed a little" + "put a show amount pulldown, 10/20/30/40/50, so 50
+-- shows 5 rows x 10"): HISTORY.SLOTS is now specifically "columns per
+-- row" (still always 10 -- the pulldown only changes how many ROWS are
+-- showing, never the row width), and the fixed HISTORY.ICON_H/H pair
+-- above is gone -- icon height is no longer an independent constant that
+-- could disagree with the width and skew the texture. It's now always
+-- DERIVED from the icon's own (square) width instead, via
+-- HistoryIconSide/HistoryRows/HistoryBlockH below, so a slot is
+-- mechanically square and the dark backing rect behind the icon only
+-- ever sized to match it -- no more black letterbox bands.
+HISTORY.ICON_GAP      = 4
+HISTORY.ARROW_W       = 26
+HISTORY.ARROW_GAP     = 8
+HISTORY.LABEL_H       = 18
+HISTORY.PAGE_SIZES    = {10, 20, 30, 40, 50}
+HISTORY.SHOW_ROW_H    = 20
+HISTORY.SHOW_GAP      = 6
+HISTORY.SHOW_LABEL_W  = 46
+HISTORY.SHOW_BTN_W    = 64
+HISTORY.SHOW_OPT_H    = 18
+
+-- These three live as fields ON the HISTORY table (same reason as its
+-- plain data fields above -- the file is close to Lua 5.1's 200-local
+-- main-chunk ceiling, see the round-16 note near HISTORY's own
+-- declaration) rather than as three more bare top-level `local function`s.
+
+-- Square icon side length for a given panel width -- the full content
+-- width (panel minus both pads) split evenly across HISTORY.SLOTS
+-- columns, minus the gaps between them. Pure function of panelW alone
+-- (never of how many rows are showing), so it's safe to call from
+-- ComputePanelSize before panelH -- and therefore the row count's
+-- vertical space -- is known.
+HISTORY.IconSide = function(panelW)
+    local contentW = panelW - PANEL_PAD * 2
+    return (contentW - (HISTORY.SLOTS - 1) * HISTORY.ICON_GAP) / HISTORY.SLOTS
+end
+
+-- How many icon rows a given page size needs, at HISTORY.SLOTS columns
+-- per row (50 -> 5 rows, 10 -> 1 row, matching the pulldown's own ask).
+HISTORY.Rows = function(pageSize)
+    return math.max(1, math.ceil(pageSize / HISTORY.SLOTS))
+end
+
+-- Total height of the whole history block (show-row + gap + label/arrow
+-- row + gap + icon grid) for a given panel width and page size -- shared
+-- by ComputePanelSize (which needs it to size the panel) and LayoutPanel
+-- (which needs the exact same number to place everything inside it).
+HISTORY.BlockH = function(panelW, pageSize)
+    local side = HISTORY.IconSide(panelW)
+    local rows = HISTORY.Rows(pageSize)
+    local gridH = rows * side + (rows - 1) * HISTORY.ICON_GAP
+    return HISTORY.SHOW_ROW_H + HISTORY.SHOW_GAP + HISTORY.LABEL_H + 4 + gridH
+end
+
+-- Round 17 follow-up: "make the 10/20/...50 persistent". Validates a
+-- value loaded back from Spring.GetConfigInt against the real
+-- HISTORY.PAGE_SIZES list, returning it if it's actually one of the 5
+-- real options or the default (10) otherwise -- shared by
+-- widget:Initialize (the real load path) and this file's own test suite,
+-- which deliberately never calls widget:Initialize itself (see the
+-- harness's own note at the top of the test file), so this needs to be
+-- its own directly-testable piece rather than inline code there.
+HISTORY.ValidatedPageSize = function(saved)
+    for _, size in ipairs(HISTORY.PAGE_SIZES) do
+        if size == saved then return saved end
+    end
+    return HISTORY.PAGE_SIZES[1]
+end
+
 -- Round 4 fix: ClampPanelPos() used to clamp against a placeholder
 -- 200x200 floor while the panel's REAL rendered size is ~574x616 (card
 -- alone is 300x420). That let panelPos.y sit high enough that the drag
@@ -1790,6 +2119,16 @@ local function ComputePanelSize()
         + QUIZ_BAR_H + SECTION_GAP
         + CARD_H + PANEL_PAD + HINT_H
 
+    -- Round 17: the answer-history strip only exists (and only grows the
+    -- panel) while quizMode is on, same rule the quiz-choice columns
+    -- above already follow for panelW. Round 17 follow-up: its height
+    -- now also depends on the "Show" pulldown's current page size (more
+    -- rows need more height), via the same HistoryBlockH LayoutPanel
+    -- uses, so the two never disagree.
+    if quizMode then
+        panelH = panelH + SECTION_GAP + HISTORY.BlockH(panelW, historyUI.pageSize)
+    end
+
     return panelW, panelH
 end
 
@@ -1801,7 +2140,10 @@ local function ClampPanelPos()
 end
 
 local function LayoutPanel()
-    panelRects = {factionCells = {}, typeCells = {}, quizChoices = {}, allRandom = nil, clearBtn = nil, quizToggle = nil, card = nil, dragHeader = nil, closeBtn = nil}
+    panelRects = {factionCells = {}, typeCells = {}, quizChoices = {}, historyIcons = {},
+        historyPageSizeOptions = {},
+        allRandom = nil, clearBtn = nil, quizToggle = nil, card = nil, dragHeader = nil, closeBtn = nil,
+        historyPrev = nil, historyNext = nil, historyLabel = nil, historyPageSizeBtn = nil}
 
     local gridW = (#FACTIONS * #TIERS * CELL_W) + (#FACTIONS * #TIERS - 1) * CELL_GAP
         + (#FACTIONS - 1) * (COL_GAP - CELL_GAP)
@@ -1875,9 +2217,11 @@ local function LayoutPanel()
         x2 = x2 - PANEL_PAD, y2 = quizBarY2,
     }
 
-    -- card, bottom-anchored (leaves room for the hint line under it)
+    -- card, bottom-anchored (leaves room for the hint line, and in quiz
+    -- mode the answer-history strip beneath it, under it -- round 17)
     local cardX1 = x1 + (panelW - CARD_W) / 2
-    local cardY1 = y1 + PANEL_PAD + HINT_H
+    local historyBlockH = quizMode and (SECTION_GAP + HISTORY.BlockH(panelW, historyUI.pageSize)) or 0
+    local cardY1 = y1 + PANEL_PAD + HINT_H + historyBlockH
     panelRects.card = {x1 = cardX1, y1 = cardY1, x2 = cardX1 + CARD_W, y2 = cardY1 + CARD_H}
 
     -- Quiz choice columns (round 5), flanking the card -- QUIZ_PER_SIDE
@@ -1903,6 +2247,78 @@ local function LayoutPanel()
         end
     end
 
+    -- Round 17: answer-history strip, bottom of the panel, below the hint
+    -- line -- a "<" / page-label / ">" row (arrows flanking the label, so
+    -- both are always a fixed, easy-to-hit width regardless of the label
+    -- text) with a grid of HISTORY.SLOTS-wide icon rows underneath it,
+    -- evenly spanning the same left/right edges as every other full-width
+    -- row. Round 17 follow-up adds a "Show" pulldown row above the
+    -- arrows/label row (10/20/30/40/50 -> 1-5 icon rows), and makes every
+    -- icon a true square -- side length derived straight from the panel's
+    -- own width via HISTORY.IconSide, the same number HISTORY.BlockH used
+    -- to size this whole block -- instead of a separately-fixed height
+    -- that could (and did) disagree with the computed width and skew the
+    -- texture.
+    if quizMode then
+        local side = HISTORY.IconSide(panelW)
+        local rows = HISTORY.Rows(historyUI.pageSize)
+
+        local histY1 = y1 + PANEL_PAD
+        local histY2 = histY1 + HISTORY.BlockH(panelW, historyUI.pageSize)
+
+        local showY2 = histY2
+        local showY1 = showY2 - HISTORY.SHOW_ROW_H
+
+        local labelY2 = showY1 - HISTORY.SHOW_GAP
+        local labelY1 = labelY2 - HISTORY.LABEL_H
+
+        local iconsY2 = labelY1 - 4
+
+        panelRects.historyPrev = {
+            x1 = x1 + PANEL_PAD, y1 = labelY1,
+            x2 = x1 + PANEL_PAD + HISTORY.ARROW_W, y2 = labelY2,
+        }
+        panelRects.historyNext = {
+            x1 = x2 - PANEL_PAD - HISTORY.ARROW_W, y1 = labelY1,
+            x2 = x2 - PANEL_PAD, y2 = labelY2,
+        }
+        panelRects.historyLabel = {
+            x1 = panelRects.historyPrev.x2 + HISTORY.ARROW_GAP, y1 = labelY1,
+            x2 = panelRects.historyNext.x1 - HISTORY.ARROW_GAP, y2 = labelY2,
+        }
+
+        -- "Show" pulldown: a fixed-width button, left-aligned (after room
+        -- for its own "Show" text label) on its own row above the arrows
+        -- -- never competing with them for space regardless of panel
+        -- width. Its option list's rects are laid out every time (cheap,
+        -- same as every other rect here), but only drawn/hit-tested while
+        -- historyUI.sizeOpen is true.
+        local showBtnX1 = x1 + PANEL_PAD + HISTORY.SHOW_LABEL_W
+        panelRects.historyPageSizeBtn = {
+            x1 = showBtnX1, y1 = showY1,
+            x2 = showBtnX1 + HISTORY.SHOW_BTN_W, y2 = showY2,
+        }
+        for i, size in ipairs(HISTORY.PAGE_SIZES) do
+            local oy2 = showY1 - (i - 1) * HISTORY.SHOW_OPT_H
+            local oy1 = oy2 - HISTORY.SHOW_OPT_H
+            panelRects.historyPageSizeOptions[i] = {
+                x1 = showBtnX1, y1 = oy1, x2 = showBtnX1 + HISTORY.SHOW_BTN_W, y2 = oy2,
+                size = size,
+            }
+        end
+
+        local iconsX1 = x1 + PANEL_PAD
+        for row = 1, rows do
+            local rowY2 = iconsY2 - (row - 1) * (side + HISTORY.ICON_GAP)
+            local rowY1 = rowY2 - side
+            for col = 1, HISTORY.SLOTS do
+                local idx = (row - 1) * HISTORY.SLOTS + col
+                local cx1 = iconsX1 + (col - 1) * (side + HISTORY.ICON_GAP)
+                panelRects.historyIcons[idx] = {x1 = cx1, y1 = rowY1, x2 = cx1 + side, y2 = rowY2}
+            end
+        end
+    end
+
     return panelW, panelH
 end
 
@@ -1923,15 +2339,107 @@ end
 -- recomputes unconditionally when called directly -- the test suite's
 -- captured.LayoutPanel() calls rely on exactly that to set up geometry
 -- for its own assertions.
-local lastLayoutX, lastLayoutY, lastLayoutQuizMode = nil, nil, nil
+-- Round 17 follow-up: "if I choose 50, it doesn't stretch right away. If
+-- I move the widget then it jerks up." The pulldown's historyUI.pageSize
+-- wasn't part of this cache key, so picking a new page size left the
+-- stale, smaller panelRects on screen until something ELSE (like
+-- dragging the panel, which changes panelPos.x/y) finally forced a
+-- relayout -- at which point the panel would suddenly jump to its real,
+-- already-changed size all at once. Added alongside quizMode, the same
+-- "a relayout-affecting bit of state changed" rule.
+local lastLayoutX, lastLayoutY, lastLayoutQuizMode, lastLayoutPageSize = nil, nil, nil, nil
 local function RelayoutPanelIfNeeded()
     if panelRects.bounds == nil
         or lastLayoutX ~= panelPos.x
         or lastLayoutY ~= panelPos.y
         or lastLayoutQuizMode ~= quizMode
+        or lastLayoutPageSize ~= historyUI.pageSize
     then
         LayoutPanel()
-        lastLayoutX, lastLayoutY, lastLayoutQuizMode = panelPos.x, panelPos.y, quizMode
+        lastLayoutX, lastLayoutY, lastLayoutQuizMode, lastLayoutPageSize =
+            panelPos.x, panelPos.y, quizMode, historyUI.pageSize
+    end
+end
+
+-- Round 17: draws the "Show" pulldown, the "<" / "Page X/Y" / ">" row,
+-- and the current page's icon grid beneath it (see quizHistory/
+-- historyPage/historyUI, and DrawHistoryIcon/DrawAnswerBadge above).
+-- Clamps historyPage back into range first -- a new quiz round can
+-- shrink the history to fewer pages than whatever page was showing
+-- before (BuildQuizDeck resets it to 1 anyway, but this keeps the
+-- function safe to call with any historyPage value, not just ones
+-- BuildQuizDeck produced), and changing the page size the same way.
+--
+-- Round 17 follow-up: the "Show" pulldown button and its (only-while-
+-- open) option list are drawn inline here rather than as their own
+-- top-level functions -- this file is close to Lua 5.1's 200-local
+-- main-chunk ceiling (see the round-16 note near HISTORY's own
+-- declaration), and the option list specifically needs to draw AFTER
+-- the icon grid below so it visually layers on top of it, which doing
+-- it all in one function gets for free in source order.
+local function DrawQuizHistoryStrip()
+    local totalPages = math.max(1, math.ceil(#quizHistory / historyUI.pageSize))
+    if historyPage > totalPages then historyPage = totalPages end
+    if historyPage < 1 then historyPage = 1 end
+
+    local showBtn = panelRects.historyPageSizeBtn
+    if showBtn then
+        gl.Color(0.75, 0.75, 0.75, 1)
+        gl.Text("Show", showBtn.x1 - 6, (showBtn.y1 + showBtn.y2) / 2 - 5, 12, "ro")
+        gl.Color(1, 1, 1, 1)
+
+        DrawGlossyRect(showBtn.x1, showBtn.y1, showBtn.x2, showBtn.y2, 0.25, 0.25, 0.25, 0.8)
+        gl.Color(1, 1, 1, 1)
+        gl.Text(historyUI.pageSize .. (historyUI.sizeOpen and "  ^" or "  v"),
+            (showBtn.x1 + showBtn.x2) / 2, (showBtn.y1 + showBtn.y2) / 2 - 5, 12, "oc")
+    end
+
+    local pv = panelRects.historyPrev
+    if pv then
+        local enabled = historyPage > 1
+        DrawGlossyRect(pv.x1, pv.y1, pv.x2, pv.y2, 0.25, 0.25, 0.25, enabled and 0.8 or 0.35)
+        gl.Color(1, 1, 1, enabled and 1 or 0.4)
+        gl.Text("<", (pv.x1 + pv.x2) / 2, (pv.y1 + pv.y2) / 2 - 5, 13, "oc")
+    end
+    local nx = panelRects.historyNext
+    if nx then
+        local enabled = historyPage < totalPages
+        DrawGlossyRect(nx.x1, nx.y1, nx.x2, nx.y2, 0.25, 0.25, 0.25, enabled and 0.8 or 0.35)
+        gl.Color(1, 1, 1, enabled and 1 or 0.4)
+        gl.Text(">", (nx.x1 + nx.x2) / 2, (nx.y1 + nx.y2) / 2 - 5, 13, "oc")
+    end
+    gl.Color(1, 1, 1, 1)
+
+    local lbl = panelRects.historyLabel
+    if lbl then
+        local label = (#quizHistory == 0) and "No answers yet" or ("Page " .. historyPage .. "/" .. totalPages)
+        gl.Color(0.85, 0.85, 0.85, 1)
+        gl.Text(label, (lbl.x1 + lbl.x2) / 2, (lbl.y1 + lbl.y2) / 2 - 5, 12, "oc")
+        gl.Color(1, 1, 1, 1)
+    end
+
+    local startIdx = (historyPage - 1) * historyUI.pageSize
+    for i, rect in ipairs(panelRects.historyIcons) do
+        local hist = quizHistory[startIdx + i]
+        if hist then
+            DrawHistoryIcon(rect.x1, rect.y1, rect.x2, rect.y2, hist)
+        end
+    end
+
+    -- The pulldown's option list, drawn last (after the icon grid above)
+    -- so it visually layers on top -- see widget:MousePress for the click
+    -- handling that opens/closes it and picks a value.
+    if historyUI.sizeOpen then
+        for _, rect in ipairs(panelRects.historyPageSizeOptions) do
+            local selected = rect.size == historyUI.pageSize
+            if selected then
+                DrawGlossyRect(rect.x1, rect.y1, rect.x2, rect.y2, 0.25, 0.55, 0.3, 0.95)
+            else
+                DrawGlossyRect(rect.x1, rect.y1, rect.x2, rect.y2, 0.2, 0.2, 0.2, 0.95)
+            end
+            gl.Color(1, 1, 1, 1)
+            gl.Text(tostring(rect.size), (rect.x1 + rect.x2) / 2, (rect.y1 + rect.y2) / 2 - 5, 12, "oc")
+        end
     end
 end
 
@@ -2082,6 +2590,10 @@ local function DrawPanel()
     end
     gl.Text(hint, (b.x1 + b.x2) / 2, cr.y1 - 14, 11, "oc")
     gl.Color(1, 1, 1, 1)
+
+    if quizMode then
+        DrawQuizHistoryStrip()
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -2091,6 +2603,78 @@ end
 local function PointInRect(mx, my, r)
     if not r then return false end
     return mx >= r.x1 and mx <= r.x2 and my >= r.y1 and my <= r.y2
+end
+
+-- Round 17 follow-up: "if i hover over the icons... also put a tooltip...
+-- the ones right or wrong since during the quiz it shows me the correct
+-- answer anywhere, much more accommodating to learn." Finds whichever
+-- currently-visible history icon (if any) the mouse is over and returns
+-- its quizHistory entry, or nil. Separated from DrawHistoryTooltip below
+-- so the hit-test itself stays testable without a draw call. (Lives here,
+-- after PointInRect, rather than up with DrawQuizHistoryStrip -- it needs
+-- PointInRect, which is itself only defined this far down the file.)
+local function HoveredHistoryEntry(mx, my)
+    if not quizMode then return nil end
+    -- Round 17 follow-up: the "Show" pulldown's open option list visually
+    -- overlays the icon grid, so there's nothing meaningful to tooltip
+    -- while it's open.
+    if historyUI.sizeOpen then return nil end
+    local icons = panelRects.historyIcons
+    if not icons or #icons == 0 then return nil end
+    local startIdx = (historyPage - 1) * historyUI.pageSize
+    for i, rect in ipairs(icons) do
+        if PointInRect(mx, my, rect) then
+            return quizHistory[startIdx + i]
+        end
+    end
+    return nil
+end
+
+-- Drawn last (after everything else in widget:DrawScreen) so it always
+-- sits on top. Always shows the real unit name -- right or wrong -- plus
+-- what you actually picked when you got it wrong, so you can learn the
+-- right answer without having to dig back through the quiz to find it.
+local function DrawHistoryTooltip(mx, my)
+    local hist = HoveredHistoryEntry(mx, my)
+    if not hist then return end
+
+    local entry = hist.entry
+    local catLine = (FACTION_LABEL[entry.faction] or "") .. " " .. (TIER_LABEL[entry.tier] or "")
+    local nameLine = ResolveDisplayName(entry)
+    local statusLine = hist.correct and "Correct" or ("You picked: " .. (hist.pickedName or "?"))
+
+    local fontSize = 13
+    local maxW = math.max(
+        gl.GetTextWidth(catLine) * (fontSize - 1),
+        gl.GetTextWidth(nameLine) * fontSize,
+        gl.GetTextWidth(statusLine) * (fontSize - 1))
+
+    local padX, padY, lineH = 10, 8, fontSize + 6
+    local boxW = maxW + padX * 2
+    local boxH = lineH * 3 + padY * 2
+
+    local bx1, by2 = mx + 16, my + 16 + boxH
+    local vsx, vsy = Spring.GetViewGeometry()
+    if bx1 + boxW > vsx then bx1 = vsx - boxW end
+    if by2 > vsy then by2 = vsy end
+    local bx2, by1 = bx1 + boxW, by2 - boxH
+
+    RoundedRect(bx1, by1, bx2, by2, 6, 0.08, 0.08, 0.08, 0.92)
+
+    local ty = by2 - padY - fontSize
+    gl.Color(0.75, 0.75, 0.75, 1)
+    gl.Text(catLine, bx1 + padX, ty, fontSize - 1, "o")
+    ty = ty - lineH
+    gl.Color(1, 1, 1, 1)
+    gl.Text(nameLine, bx1 + padX, ty, fontSize, "o")
+    ty = ty - lineH
+    if hist.correct then
+        gl.Color(0.45, 0.9, 0.5, 1)
+    else
+        gl.Color(0.95, 0.45, 0.45, 1)
+    end
+    gl.Text(statusLine, bx1 + padX, ty, fontSize - 1, "o")
+    gl.Color(1, 1, 1, 1)
 end
 
 local function ToggleCell(cell)
@@ -2206,6 +2790,35 @@ local function ToggleQuizMode()
     ClampPanelPos()
 end
 
+-- Round 17 follow-up: "when choosing expanding the history strip from 10
+-- to 50, let it stretch down not push the top up immediately." panelPos
+-- is the panel's BOTTOM-left anchor (y increases upward, see
+-- LayoutPanel), so growing panelH by raising historyUI.pageSize while
+-- leaving panelPos.y untouched pushes the TOP edge (the drag header) up
+-- by the full height delta -- exactly the jump being complained about.
+-- Instead, shift the anchor itself down by that same delta so the panel
+-- grows from its BOTTOM edge (where the history strip already lives)
+-- while the header stays exactly where it was. Works symmetrically for
+-- shrinking back down to a smaller page size too (the delta is just
+-- negative then, pulling the anchor back up). ClampPanelPos afterward
+-- keeps this from ever pushing the panel off-screen, same as every other
+-- panelPos change already does.
+local function SetHistoryPageSize(newSize)
+    local panelW = ComputePanelSize()
+    local oldBlockH = HISTORY.BlockH(panelW, historyUI.pageSize)
+    historyUI.pageSize = newSize
+    local newBlockH = HISTORY.BlockH(panelW, historyUI.pageSize)
+    panelPos.y = panelPos.y - (newBlockH - oldBlockH)
+    ClampPanelPos()
+    historyPage = math.max(1, math.ceil(#quizHistory / historyUI.pageSize))
+
+    -- Round 17 follow-up: "make the 10/20/...50 persistent" -- saved
+    -- immediately (not just on some later drag-release) since picking a
+    -- size is already its own one-shot action, same as every other
+    -- config value this widget persists.
+    spSetConfigInt("UnitFlashcards_HistoryPageSize", newSize)
+end
+
 -- Picking a quiz choice (round 5): scores it against the real card,
 -- flips the card to confirm/reveal, and locks this card's answer so a
 -- second click doesn't double-count the score. Ignored if quiz mode is
@@ -2222,6 +2835,19 @@ local function PickQuizChoice(index)
         quizScore.correct = quizScore.correct + 1
     end
     flipped = true
+
+    -- Round 17: record this answer in the history strip and jump to the
+    -- page it landed on, so answering always keeps the newest result in
+    -- view (the "<"/">" arrows are for reviewing OLDER pages in between
+    -- questions, not for tracking the current one).
+    -- pickedName is choice.name either way -- the correct name when you
+    -- got it right, the decoy you picked when you didn't -- so a hover
+    -- tooltip can show exactly what you answered, not just correct/wrong
+    -- (round 17 follow-up: "also put a tooltip if i hover over them...
+    -- since during the quiz it shows me the correct answer anywhere,
+    -- much more accommodating to learn").
+    quizHistory[#quizHistory + 1] = {entry = currentCard, correct = choice.correct, pickedName = choice.name}
+    historyPage = math.ceil(#quizHistory / historyUI.pageSize)
 end
 
 --------------------------------------------------------------------------------
@@ -2243,16 +2869,54 @@ function widget:Initialize()
     panelPos.y = spGetConfigInt("UnitFlashcards_PanelY", iconPos.y)
     ClampPanelPos()
 
+    -- Round 17 follow-up: "make the 10/20/...50 persistent" -- the "Show"
+    -- pulldown's chosen amount, saved/restored the same
+    -- Spring.GetConfigInt/SetConfigInt way the icon/panel position above
+    -- already are, so it survives a widget reload or a fresh game
+    -- instead of resetting to 10 every time. HISTORY.ValidatedPageSize
+    -- guards against a stale or hand-edited config value that isn't one
+    -- of the 5 real options, rather than trusting it blindly.
+    historyUI.pageSize = HISTORY.ValidatedPageSize(
+        spGetConfigInt("UnitFlashcards_HistoryPageSize", HISTORY.PAGE_SIZES[1]))
+
     allUnitsCache, labTypeByID = BuildAllUnitsCache()
     if #allUnitsCache == 0 then
         spEcho("[Unit Flashcards] no arm/cor/leg unit defs found -- this game/mod isn't BAR-compatible")
     end
+
+    -- Round 17 follow-up: start warming buildpic textures in the
+    -- background (see the `preload` comment above) -- widget:Update below
+    -- drains this a few entries per frame.
+    preload.queue = allUnitsCache
+    preload.idx = 1
 end
 
 function widget:ViewResize()
     ClampIconPos()
     UpdateIconRect()
     ClampPanelPos()
+end
+
+-- Round 17 follow-up: drains `preload.queue` a few entries per frame,
+-- warming each unit's "#<unitDefID>" buildpic texture via the same
+-- bind/unbind pair DrawCard and DrawHistoryIcon already use, but without
+-- drawing anything -- just enough to make the engine load/decode/cache it
+-- once, up front, instead of on first real use mid-quiz. See the
+-- `preload` declaration above for the full "why".
+function widget:Update(dt)
+    local q = preload.queue
+    if not q then return end
+    local n = 0
+    while n < preload.perFrame and preload.idx <= #q do
+        local entry = q[preload.idx]
+        gl.Texture("#" .. entry.id)
+        gl.Texture(false)
+        preload.idx = preload.idx + 1
+        n = n + 1
+    end
+    if preload.idx > #q then
+        preload.queue = nil
+    end
 end
 
 function widget:DrawScreen()
@@ -2268,6 +2932,13 @@ function widget:DrawScreen()
         -- missing a hover state change).
         local mx, my = spGetMouseState()
         cardHover = PointInRect(mx, my, panelRects.card)
+
+        -- Round 17 follow-up: answer-history hover tooltip -- drawn last
+        -- so it always sits on top of everything else in the panel (the
+        -- "Show" pulldown's own option list is drawn inside
+        -- DrawQuizHistoryStrip/DrawPanel above, right after the icon grid
+        -- it needs to layer on top of).
+        DrawHistoryTooltip(mx, my)
     else
         cardHover = false
     end
@@ -2330,11 +3001,46 @@ function widget:MousePress(mx, my, button)
             end
         end
         if quizMode then
+            -- Round 17 follow-up: "put a show amount pulldown" --
+            -- 10/20/30/40/50. Handled first, before anything else in quiz
+            -- mode, so an open dropdown always eats the next click --
+            -- either picking an option or simply dismissing itself --
+            -- rather than letting it fall through to a quiz choice or the
+            -- history arrows it's visually sitting on top of.
+            if historyUI.sizeOpen then
+                for _, rect in ipairs(panelRects.historyPageSizeOptions) do
+                    if PointInRect(mx, my, rect) then
+                        SetHistoryPageSize(rect.size)
+                        historyUI.sizeOpen = false
+                        return true
+                    end
+                end
+                -- Clicked the button again, or anywhere else -- close
+                -- without picking a new size, same as a normal dropdown
+                -- dismissing on an outside click.
+                historyUI.sizeOpen = false
+                return true
+            end
+            if PointInRect(mx, my, panelRects.historyPageSizeBtn) then
+                historyUI.sizeOpen = true
+                return true
+            end
+
             for i, rect in ipairs(panelRects.quizChoices) do
                 if PointInRect(mx, my, rect) then
                     PickQuizChoice(i)
                     return true
                 end
+            end
+            -- Round 17: answer-history strip paging.
+            if PointInRect(mx, my, panelRects.historyPrev) then
+                if historyPage > 1 then historyPage = historyPage - 1 end
+                return true
+            end
+            if PointInRect(mx, my, panelRects.historyNext) then
+                local totalPages = math.max(1, math.ceil(#quizHistory / historyUI.pageSize))
+                if historyPage < totalPages then historyPage = historyPage + 1 end
+                return true
             end
         end
         if PointInRect(mx, my, panelRects.bounds) then
@@ -2418,6 +3124,8 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
         IsCosmeticDecoration = IsCosmeticDecoration,
         HasPlaceholderCost = HasPlaceholderCost,
         BuildAttachedTurretTargets = BuildAttachedTurretTargets,
+        IsTierCorrected = IsTierCorrected,
+        CollapseTierCorrectedDuplicates = CollapseTierCorrectedDuplicates,
         Lighten             = Lighten,
         Darken              = Darken,
         RoundedRect         = RoundedRect,
@@ -2466,7 +3174,8 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
         ClampPanelPos       = ClampPanelPos,
         LayoutPanel         = LayoutPanel,
         RelayoutPanelIfNeeded = RelayoutPanelIfNeeded,
-        getLastLayoutKey    = function() return lastLayoutX, lastLayoutY, lastLayoutQuizMode end,
+        getLastLayoutKey    = function() return lastLayoutX, lastLayoutY, lastLayoutQuizMode, lastLayoutPageSize end,
+        getPreload          = function() return preload end,
         getPanelRects       = function() return panelRects end,
         getPanelPos         = function() return panelPos end,
         setPanelPos         = function(x, y) panelPos.x, panelPos.y = x, y end,
@@ -2505,5 +3214,18 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
         ActiveFactionsAndTiers  = ActiveFactionsAndTiers,
         DrawCelebrationBanner   = DrawCelebrationBanner,
         getCelebrationMessage   = function() return celebrationMessage end,
+        HISTORY                 = HISTORY,
+        getQuizHistory          = function() return quizHistory end,
+        setQuizHistory          = function(v) quizHistory = v end,
+        getHistoryPage          = function() return historyPage end,
+        setHistoryPage          = function(v) historyPage = v end,
+        DrawAnswerBadge         = DrawAnswerBadge,
+        DrawHistoryIcon         = DrawHistoryIcon,
+        DrawQuizHistoryStrip    = DrawQuizHistoryStrip,
+        HoveredHistoryEntry     = HoveredHistoryEntry,
+        DrawHistoryTooltip      = DrawHistoryTooltip,
+        getHistoryUI            = function() return historyUI end,
+        setHistoryUI            = function(v) historyUI = v end,
+        SetHistoryPageSize      = SetHistoryPageSize,
     })
 end
