@@ -1803,24 +1803,52 @@ end
 -- than "Advanced" / "Construction Submarine" (wider line ~22).
 -- A single unbreakable word is returned as its own one-line list --
 -- there's no narrower word boundary to split it on.
-local function BestTwoLineSplit(text)
+-- Round 17 follow-up ("check memory per sec issue"): this is called from
+-- DrawWrappedCenteredText, which runs every single DrawScreen frame for
+-- every on-screen quiz choice whose name doesn't fit on one line -- but
+-- its result for a given `text` never changes (it's pure text-splitting
+-- math, no dependence on position/width/anything per-frame), so
+-- recomputing it fresh every frame -- a fresh `words` table via gmatch
+-- plus up to 2*(#words-1) table.concat calls, each allocating a new
+-- string, just to pick a split point -- was pure continuous garbage for
+-- however long a long-named choice stayed on screen. A real unit's name
+-- is one of only a few hundred fixed strings, so a plain memo table
+-- keyed by the text itself (populated once per distinct name, reused
+-- forever) turns every repeat call into a single table lookup.
+--
+-- A table-field function (like `preload.step` above), not a bare `local
+-- function` -- the 200-local-per-function ceiling this file keeps
+-- bumping into; bundling the function and its cache into one new table
+-- costs exactly 1 local instead of 2 separate ones.
+local TEXTWRAP = {cache = {}}
+TEXTWRAP.BestTwoLineSplit = function(text)
+    local cached = TEXTWRAP.cache[text]
+    if cached then return cached end
+
     local words = {}
     for w in text:gmatch("%S+") do words[#words + 1] = w end
-    if #words <= 1 then return {text} end
 
-    local bestI, bestWidest = 1, nil
-    for i = 1, #words - 1 do
-        local line1 = table.concat(words, " ", 1, i)
-        local line2 = table.concat(words, " ", i + 1, #words)
-        local widest = math.max(gl.GetTextWidth(line1), gl.GetTextWidth(line2))
-        if not bestWidest or widest < bestWidest then
-            bestWidest, bestI = widest, i
+    local result
+    if #words <= 1 then
+        result = {text}
+    else
+        local bestI, bestWidest = 1, nil
+        for i = 1, #words - 1 do
+            local line1 = table.concat(words, " ", 1, i)
+            local line2 = table.concat(words, " ", i + 1, #words)
+            local widest = math.max(gl.GetTextWidth(line1), gl.GetTextWidth(line2))
+            if not bestWidest or widest < bestWidest then
+                bestWidest, bestI = widest, i
+            end
         end
+        result = {
+            table.concat(words, " ", 1, bestI),
+            table.concat(words, " ", bestI + 1, #words),
+        }
     end
-    return {
-        table.concat(words, " ", 1, bestI),
-        table.concat(words, " ", bestI + 1, #words),
-    }
+
+    TEXTWRAP.cache[text] = result
+    return result
 end
 
 -- Draws `text` horizontally centered on cx, vertically centered in a
@@ -1837,7 +1865,7 @@ local function DrawWrappedCenteredText(text, cx, cy, maxWidth, maxHeight, baseSi
         return
     end
 
-    local lines = BestTwoLineSplit(text)
+    local lines = TEXTWRAP.BestTwoLineSplit(text)
     if #lines == 1 then
         -- Unbreakable single word -- nothing left to do but draw it at
         -- the floor size; same as the old single-line overflow behavior
@@ -2551,15 +2579,22 @@ local function DrawPanel()
         for i, rect in ipairs(panelRects.quizChoices) do
             local choice = quizChoices[i]
             if choice then
-                local bg = {0.25, 0.25, 0.25, 0.8}
+                -- Round 17 follow-up ("check memory per sec issue"): this
+                -- used to build a fresh 4-element `bg` table every single
+                -- row, every single frame, just to carry 4 numbers two
+                -- lines down to DrawGlossyRect -- pure per-frame garbage
+                -- for no reason, since the 3 possible colors are already
+                -- fixed constants. Four plain locals instead -- no table
+                -- allocation at all.
+                local bgR, bgG, bgB, bgA = 0.25, 0.25, 0.25, 0.8
                 if quizAnswered then
                     if choice.correct then
-                        bg = {0.25, 0.75, 0.3, 0.85}
+                        bgR, bgG, bgB, bgA = 0.25, 0.75, 0.3, 0.85
                     elseif i == quizPickedIndex then
-                        bg = {0.8, 0.25, 0.25, 0.85}
+                        bgR, bgG, bgB, bgA = 0.8, 0.25, 0.25, 0.85
                     end
                 end
-                DrawGlossyRect(rect.x1, rect.y1, rect.x2, rect.y2, bg[1], bg[2], bg[3], bg[4])
+                DrawGlossyRect(rect.x1, rect.y1, rect.x2, rect.y2, bgR, bgG, bgB, bgA)
 
                 gl.Color(1, 1, 1, 1)
                 DrawWrappedCenteredText(choice.name, (rect.x1 + rect.x2) / 2, (rect.y1 + rect.y2) / 2,
@@ -2885,8 +2920,8 @@ function widget:Initialize()
     end
 
     -- Round 17 follow-up: start warming buildpic textures in the
-    -- background (see the `preload` comment above) -- widget:Update below
-    -- drains this a few entries per frame.
+    -- background (see the `preload` comment above) -- DrawScreen's
+    -- PreloadStep() call below drains this a few entries per frame.
     preload.queue = allUnitsCache
     preload.idx = 1
 end
@@ -2903,7 +2938,21 @@ end
 -- drawing anything -- just enough to make the engine load/decode/cache it
 -- once, up front, instead of on first real use mid-quiz. See the
 -- `preload` declaration above for the full "why".
-function widget:Update(dt)
+--
+-- Round 17 follow-up correction: this was originally a widget:Update
+-- call-in, which crashed immediately --
+-- "Texture(): OpenGL calls can only be used in Draw() call-ins, or while
+-- creating display lists" -- Update isn't a draw call-in, so gl.Texture
+-- isn't legal there at all; every widget load errored out and the engine
+-- removed the widget on the spot. Moved the exact same drain logic into
+-- DrawScreen (a real draw call-in, same place DrawCard/DrawHistoryIcon's
+-- own gl.Texture calls already run) instead, with no widget:Update at
+-- all anymore.
+-- A table-field function, not a bare `local function`, to avoid adding
+-- yet another top-level local -- see the standing 200-local-per-function
+-- note elsewhere in this file (the `HISTORY.IconSide`-style table-field
+-- pattern applies just as well to `preload`, which already exists).
+preload.step = function()
     local q = preload.queue
     if not q then return end
     local n = 0
@@ -2920,6 +2969,7 @@ function widget:Update(dt)
 end
 
 function widget:DrawScreen()
+    preload.step()
     DrawIcon()
 
     if panelVisible then
@@ -3133,7 +3183,7 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
         DrawGlossyRect      = DrawGlossyRect,
         DrawCardFrame       = DrawCardFrame,
         DrawTextWithShadow  = DrawTextWithShadow,
-        BestTwoLineSplit    = BestTwoLineSplit,
+        BestTwoLineSplit    = TEXTWRAP.BestTwoLineSplit,
         DrawWrappedCenteredText = DrawWrappedCenteredText,
         SubfolderBucket     = SubfolderBucket,
         ClassifyUnitType    = ClassifyUnitType,
@@ -3176,6 +3226,8 @@ if UNIT_FLASHCARDS_TEST_EXPORTS then
         RelayoutPanelIfNeeded = RelayoutPanelIfNeeded,
         getLastLayoutKey    = function() return lastLayoutX, lastLayoutY, lastLayoutQuizMode, lastLayoutPageSize end,
         getPreload          = function() return preload end,
+        PreloadStep         = preload.step,
+        getTwoLineSplitCache = function() return TEXTWRAP.cache end,
         getPanelRects       = function() return panelRects end,
         getPanelPos         = function() return panelPos end,
         setPanelPos         = function(x, y) panelPos.x, panelPos.y = x, y end,
